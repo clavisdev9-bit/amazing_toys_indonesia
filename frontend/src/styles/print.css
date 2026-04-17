@@ -1,0 +1,15 @@
+@media print {
+  body * { visibility: hidden; }
+  #print-receipt-layout,
+  #print-receipt-layout * { visibility: visible; }
+  #print-receipt-layout {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+  }
+}
+
+@page {
+  size: 80mm auto;
+  margin: 0;
+}

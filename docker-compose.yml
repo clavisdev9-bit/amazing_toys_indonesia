@@ -1,0 +1,89 @@
+version: "3.9"
+
+# =============================================================================
+# Amazing Toys SOS — Docker Compose
+# Usage:
+#   docker-compose up -d postgres     # start DB only
+#   docker-compose up -d              # start all services
+#   docker-compose logs -f backend    # stream backend logs
+# =============================================================================
+
+services:
+
+  # ── PostgreSQL Database ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: amazing_toys_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       amazing_toys_sos
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-localdev123}
+    ports:
+      - "3452:5432"           # host:container — maps to DB_PORT=3452
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_sos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API ──────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: amazing_toys_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV:        development
+      PORT:            3000
+      DB_HOST:         postgres
+      DB_PORT:         5432           # internal docker network port
+      DB_NAME:         amazing_toys_sos
+      DB_USER:         postgres
+      DB_PASSWORD:     ${DB_PASSWORD:-localdev123}
+      JWT_SECRET:      ${JWT_SECRET:-change_me_dev_secret_min_64_chars_here_abc123}
+      JWT_EXPIRES_IN:  8h
+      TXN_PENDING_TIMEOUT_MINUTES: 30
+      CORS_ORIGIN:     "http://localhost:5173,http://localhost:3001"
+      LOG_LEVEL:       debug
+      SMTP_HOST:       ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT:       ${SMTP_PORT:-587}
+      SMTP_USER:       ${SMTP_USER:-}
+      SMTP_PASS:       ${SMTP_PASS:-}
+      EMAIL_FROM:      ${EMAIL_FROM:-}
+      EMAIL_NOTIFY_TO: ${EMAIL_NOTIFY_TO:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src:ro     # hot-reload in dev via nodemon
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── pgAdmin (optional — DB management UI) ────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: amazing_toys_pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]             # only starts with: docker-compose --profile tools up
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    admin@amazingtoys.local
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-pgadminpass}
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+    name: amazing_toys_pgdata
