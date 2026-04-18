@@ -19,7 +19,13 @@ function parseTxnFromQr(raw) {
   return m ? m[0].toUpperCase() : null;
 }
 
-export default function QrScannerModal({ onResult, onClose }) {
+export default function QrScannerModal({
+  onResult,
+  onClose,
+  title = 'Scan QR Transaksi',
+  hint = 'Arahkan kamera ke QR code pada struk pelanggan',
+  resultParser = parseTxnFromQr,
+}) {
   const videoRef  = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
@@ -82,8 +88,8 @@ export default function QrScannerModal({ onResult, onClose }) {
       ctx.drawImage(video, 0, 0, w, h);
       const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
       if (code) {
-        const txnId = parseTxnFromQr(code.data);
-        if (txnId) { onResult(txnId); return; }
+        const parsed = resultParser(code.data);
+        if (parsed) { onResult(parsed); return; }
       }
       rafRef.current = requestAnimationFrame(scanLoop);
     }
@@ -103,7 +109,7 @@ export default function QrScannerModal({ onResult, onClose }) {
       <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm mx-0 sm:mx-4 z-10 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h2 className="font-semibold text-gray-900">Scan QR Transaksi</h2>
+          <h2 className="font-semibold text-gray-900">{title}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none p-1">✕</button>
         </div>
 
@@ -157,7 +163,7 @@ export default function QrScannerModal({ onResult, onClose }) {
 
         {/* Footer */}
         {!error
-          ? <p className="text-xs text-center text-gray-500 px-4 py-3">Arahkan kamera ke QR code pada struk pelanggan</p>
+          ? <p className="text-xs text-center text-gray-500 px-4 py-3">{hint}</p>
           : <div className="p-4"><button onClick={onClose} className="w-full py-2.5 rounded-xl bg-gray-100 text-sm font-medium text-gray-700 hover:bg-gray-200">Tutup</button></div>
         }
       </div>

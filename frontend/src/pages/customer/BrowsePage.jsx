@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProducts, getCategories } from '../../api/products';
 import { useCart } from '../../hooks/useCart';
@@ -7,11 +7,32 @@ import { useLang } from '../../context/LangContext';
 import Badge from '../../components/ui/Badge';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
+import { useTourTarget } from '../../hooks/useTourTarget';
+
+const QrScannerModal = lazy(() => import('../../components/ui/QrScannerModal'));
+
+function parseKatalogQr(raw) {
+  const text = (raw || '').trim();
+  if (!text) return null;
+  try {
+    const url = new URL(text);
+    const q = url.searchParams.get('q') || url.searchParams.get('search');
+    if (q) return q.trim() || null;
+  } catch { /* not a URL */ }
+  try {
+    const obj = JSON.parse(text);
+    const name = obj.product_name || obj.name || obj.q || obj.search;
+    if (name && typeof name === 'string') return name.trim() || null;
+  } catch { /* not JSON */ }
+  return text;
+}
 
 export default function BrowsePage() {
   const { addItem } = useCart();
   const navigate = useNavigate();
   const { t } = useLang();
+  const searchRef = useTourTarget('step-katalog-search');
+  const categoriesRef = useTourTarget('step-katalog-categories');
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [total, setTotal] = useState(0);
@@ -21,6 +42,7 @@ export default function BrowsePage() {
   const [category, setCategory] = useState('');
   const [inStockOnly, setInStockOnly] = useState(false);
   const [added, setAdded] = useState({});
+  const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => {
     getCategories().then((r) => setCategories(r.data.data ?? []));
@@ -73,17 +95,49 @@ export default function BrowsePage() {
     <div className="max-w-2xl mx-auto">
       {/* Search bar */}
       <div className="sticky top-[57px] bg-gray-50 px-4 pt-3 pb-2 z-20 border-b">
-        <input
-          type="text"
-          placeholder={t('search.placeholder')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+        <div className="relative flex items-center">
+          <input
+            ref={searchRef}
+            id="tour-search"
+            type="text"
+            placeholder={t('search.placeholder')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="button"
+            onClick={() => setShowScanner(true)}
+            aria-label="Scan QR code produk"
+            title="Scan QR"
+            className="absolute right-2 flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2" />
+              <rect x="7" y="7" width="4" height="4" rx="0.5" />
+              <rect x="13" y="7" width="4" height="4" rx="0.5" />
+              <rect x="7" y="13" width="4" height="4" rx="0.5" />
+              <circle cx="15" cy="15" r="1" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
       </div>
 
+      {/* QR Scanner Modal */}
+      {showScanner && (
+        <Suspense fallback={null}>
+          <QrScannerModal
+            onResult={(text) => { setSearch(text); setShowScanner(false); }}
+            onClose={() => setShowScanner(false)}
+            title="Scan Barcode Produk"
+            hint="Arahkan kamera ke barcode atau QR produk"
+            resultParser={parseKatalogQr}
+          />
+        </Suspense>
+      )}
+
       {/* Category filter */}
-      <div className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
+      <div ref={categoriesRef} id="tour-categories" className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setCategory('')}
           className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border transition-colors
@@ -122,8 +176,12 @@ export default function BrowsePage() {
         <EmptyState icon="🔍" title={t('product.notFound')} description={t('product.tryOther')} />
       ) : (
         <div className="grid grid-cols-2 gap-3 px-4 pb-4">
-          {products.map((p) => (
-            <div key={p.product_id} className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col">
+          {products.map((p, idx) => (
+            <div
+              key={p.product_id}
+              className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col"
+              {...(idx === 0 ? { 'data-tour': 'product-card' } : {})}
+            >
               <div
                 className="aspect-square bg-gray-100 flex items-center justify-center cursor-pointer"
                 onClick={() => navigate(`/katalog/${p.product_id}`)}
@@ -144,6 +202,7 @@ export default function BrowsePage() {
                 <button
                   onClick={() => handleAddToCart(p)}
                   disabled={p.stock_status === 'OUT_OF_STOCK'}
+                  {...(idx === 0 ? { 'data-tour': 'add-to-cart' } : {})}
                   className={`w-full mt-1 py-1.5 rounded-lg text-xs font-medium transition-colors
                     ${p.stock_status === 'OUT_OF_STOCK'
                       ? 'bg-gray-100 text-gray-400 cursor-not-allowed'

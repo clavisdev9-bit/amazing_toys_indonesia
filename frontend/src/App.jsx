@@ -5,6 +5,13 @@ import { CartProvider } from './context/CartContext';
 import { LangProvider } from './context/LangContext';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket } from './hooks/useWebSocket';
+import {
+  TourProvider,
+  TourOverlay,
+  TourHighlight,
+  TourTooltip,
+  TourWelcomeModal,
+} from './components/tour';
 
 import RequireAuth from './components/guards/RequireAuth';
 import RequireRole from './components/guards/RequireRole';
@@ -95,6 +102,10 @@ function AppRoutes() {
   return (
     <>
       <WSInit />
+      <TourWelcomeModal />
+      <TourOverlay />
+      <TourHighlight />
+      <TourTooltip />
       <Routes>
         {/* Always-accessible — staff login & the maintenance page itself */}
         <Route path="/staff/masuk" element={<LoginStaffPage />} />
@@ -181,7 +192,9 @@ export default function App() {
       <AuthProvider>
         <LangProvider>
           <CartProvider>
-            <AppRoutes />
+            <TourProvider>
+              <AppRoutes />
+            </TourProvider>
           </CartProvider>
         </LangProvider>
       </AuthProvider>

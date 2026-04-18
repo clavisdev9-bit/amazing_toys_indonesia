@@ -41,7 +41,7 @@ export default function OrderHistoryPage() {
       <div className="px-4 py-3 font-semibold text-gray-800 bg-white border-b sticky top-[57px] z-10">
         {t('orders.title')}
       </div>
-      <div className="divide-y bg-white">
+      <div id="tour-order-list" className="divide-y bg-white">
         {orders.map((order) => (
           <button
             key={order.transaction_id}

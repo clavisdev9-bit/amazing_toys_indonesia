@@ -4,13 +4,14 @@ import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
 import { useAppLogo } from '../../hooks/useAppLogo';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
-
+import { useTour } from '../../hooks/useTour';
 import MapModal from '../ui/MapModal';
 
-function NavItem({ to, icon, label, badge }) {
+function NavItem({ to, icon, label, badge, id }) {
   return (
     <NavLink
       to={to}
+      id={id}
       className={({ isActive }) =>
         `flex flex-col items-center gap-0.5 py-2 px-3 text-xs font-medium relative
         ${isActive ? 'text-blue-600' : 'text-gray-500'}`
@@ -44,6 +45,7 @@ export default function CustomerShell() {
   const navigate = useNavigate();
   const logoUrl = useAppLogo();
   const { lang, setLang, t } = useLang();
+  const { restartTour, isActive: isTourActive } = useTour();
   const [mapOpen, setMapOpen] = useState(false);
 
   function handleLogout() {
@@ -100,8 +102,18 @@ export default function CustomerShell() {
           </div>
         </div>
 
-        {/* Right — username + logout */}
+        {/* Right — tour replay + username + logout */}
         <div className="flex items-center gap-2 text-sm text-gray-600 shrink-0">
+          {!isTourActive && (
+            <button
+              onClick={restartTour}
+              title="Tur Panduan"
+              aria-label="Mulai ulang tur panduan"
+              className="text-base text-gray-400 hover:text-blue-500 transition-colors leading-none"
+            >
+              🗺️
+            </button>
+          )}
           <span className="hidden md:block text-xs">{user?.name || user?.phone}</span>
           <button onClick={handleLogout} className="text-red-500 hover:text-red-600 font-medium text-xs">
             Keluar
@@ -120,7 +132,7 @@ export default function CustomerShell() {
       {/* Bottom Nav */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around z-30">
         <NavItem to="/katalog" icon="🏪" label={t('nav.catalog')} />
-        <NavItem to="/keranjang" icon="🛒" label={t('nav.cart')} badge={totalItems} />
+        <NavItem to="/keranjang" icon="🛒" label={t('nav.cart')} badge={totalItems} id="tour-cart-nav" />
         <NavItem to="/pesanan" icon="📦" label={t('nav.orders')} />
       </nav>
     </div>

@@ -66,7 +66,7 @@ export default function CartPage() {
         {t('cart.title', { count: items.length })}
       </div>
 
-      <div className="divide-y bg-white">
+      <div id="tour-cart-items" className="divide-y bg-white">
         {items.map((item) => (
           <div key={item.product_id} className="px-4 py-3 flex gap-3">
             <div className="w-14 h-14 bg-gray-100 rounded-lg flex items-center justify-center shrink-0 text-2xl">
@@ -112,7 +112,7 @@ export default function CartPage() {
       </div>
 
       {/* Summary */}
-      <div className="p-4 bg-white border-t mt-2">
+      <div id="tour-cart-total" className="p-4 bg-white border-t mt-2">
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-3">
             {error}
@@ -125,9 +125,11 @@ export default function CartPage() {
         <p className="text-xs text-gray-400 mb-3">
           {t('cart.pendingNote')}
         </p>
-        <Button size="full" onClick={handleCheckout} loading={loading}>
-          {t('cart.checkout')}
-        </Button>
+        <div id="tour-checkout-btn">
+          <Button size="full" onClick={handleCheckout} loading={loading}>
+            {t('cart.checkout')}
+          </Button>
+        </div>
       </div>
     </div>
   );

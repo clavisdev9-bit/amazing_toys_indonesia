@@ -7,3 +7,21 @@
     @apply bg-gray-50 text-gray-900 font-sans;
   }
 }
+
+/* ── Tour Guide ──────────────────────────────────────────────────────────── */
+
+/* Elevate the highlighted element above the dim overlay (z-40) */
+.tour-active-target {
+  position: relative !important;
+  z-index: 41 !important;
+}
+
+@keyframes tour-ring-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+@keyframes tour-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
