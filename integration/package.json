@@ -1,0 +1,23 @@
+{
+  "name": "sos-odoo-integration",
+  "version": "1.0.0",
+  "description": "Integration middleware between Amazing Toys SOS API and Odoo 18 (FSD-AMZTOYS-2026-001)",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "migrate": "node migrations/run.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "node-cron": "^3.0.3",
+    "pg": "^8.11.0",
+    "uuid": "^9.0.0",
+    "winston": "^3.13.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

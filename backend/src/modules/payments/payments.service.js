@@ -5,6 +5,7 @@ const { AppError }               = require('../../middlewares/error.middleware')
 const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
 const { broadcastToCustomer }    = require('../../ws/websocket');
+const { fireWebhook }            = require('../../utils/webhook');
 
 /**
  * Cashier scans / searches transaction to review before payment.
@@ -127,12 +128,23 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       notificationsSvc.sendOrderNotification(tenant, transactionId).catch(() => {});
     }
 
+    const paidAt = new Date().toISOString();
+
+    // Notify integration service (Odoo order push)
+    fireWebhook('/webhook/order-paid', {
+      transactionId,
+      status: 'PAID',
+      totalAmount: parseFloat(txn.total_amount),
+      paidAt,
+      customerId: txn.customer_id,
+    });
+
     return {
       transactionId,
       status: 'PAID',
       paymentMethod,
       cashChange,
-      paidAt: new Date().toISOString(),
+      paidAt,
     };
   });
 }

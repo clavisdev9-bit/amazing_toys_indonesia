@@ -3,7 +3,15 @@
     "allow": [
       "Bash(python -c ':*)",
       "Bash(npm install:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Read(//c/Users/arist/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/eb3ee850-03b2-4ba4-8927-550d155bdd7e/c6e83be6-1728-4db2-a803-f70c291ac679/skills/docx/**)",
+      "Bash(pandoc --track-changes=all \"C:\\\\Users\\\\arist\\\\Downloads\\\\FSD_Odoo18_SOS_Integration.docx\" -o output.md)",
+      "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\eb3ee850-03b2-4ba4-8927-550d155bdd7e\\\\c6e83be6-1728-4db2-a803-f70c291ac679\\\\skills\\\\docx\\\\scripts\\\\office\\\\unpack.py\" \"C:\\\\Users\\\\arist\\\\Downloads\\\\FSD_Odoo18_SOS_Integration.docx\" \"C:\\\\Users\\\\arist\\\\Downloads\\\\FSD_unpacked\")",
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "Bash(node -e \"require\\('./src/config/env'\\); require\\('./src/utils/circuit.breaker'\\); require\\('./src/queue/retry.queue'\\); console.log\\('All modules load OK'\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"require\\('./src/utils/webhook'\\); console.log\\('webhook util OK'\\)\")"
     ]
   }
 }

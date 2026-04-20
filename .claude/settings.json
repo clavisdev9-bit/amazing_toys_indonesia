@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(PGPASSWORD=localdev123 psql -h localhost -p 3452 -U postgres -d amazing_toys_sos -t -c \"SELECT value FROM system_settings WHERE key = 'integration_config';\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(d.get\\('odoo_tenant_product_mapping','NOT SET'\\)\\)\")",
+      "Read(//temp/readonly/**)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\);process.stdin.on\\('end',\\(\\)=>{const p=JSON.parse\\(d\\);console.log\\('test script:',p.scripts?.test\\);console.log\\('jest config:',JSON.stringify\\(p.jest||p.jestConfig||'\\(none\\)'\\)\\);console.log\\('devDeps:',Object.keys\\(p.devDependencies||{}\\).filter\\(k=>k.includes\\('jest'\\)||k.includes\\('vitest'\\)||k.includes\\('mocha'\\)\\)\\)}\\)\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

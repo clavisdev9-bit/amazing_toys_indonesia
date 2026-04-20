@@ -29,5 +29,17 @@ export const adminCreateTenant = (data)      => client.post('/admin/tenants', da
 export const adminUpdateTenant = (id, data)  => client.patch(`/admin/tenants/${id}`, data);
 
 // ── Integration ────────────────────────────────────────────────────────────
-export const getIntegration  = ()     => client.get('/admin/integration');
-export const saveIntegration = (data) => client.put('/admin/integration', data);
+export const getIntegration     = ()             => client.get('/admin/integration');
+export const saveIntegration    = (data)         => client.put('/admin/integration', data);
+export const syncOdooProducts   = (force = false) => client.post('/admin/products/sync-odoo', { force });
+
+// ── Odoo lookups ───────────────────────────────────────────────────────────
+export const getOdooCategories     = ()                => client.get('/admin/odoo/categories');
+
+// ── Bulk Upload ────────────────────────────────────────────────────────────
+export const bulkUploadProducts = (products) => client.post('/admin/products/bulk-upload', { products });
+
+// ── Stock Sync ──────────────────────────────────────────────────────────────
+export const syncStock             = (productIds = null) =>
+  client.post('/admin/stock-sync', productIds ? { product_ids: productIds } : {});
+export const getStockSyncHistory   = (params)           => client.get('/admin/stock-sync/history', { params });

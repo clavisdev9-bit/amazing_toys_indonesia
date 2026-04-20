@@ -9,7 +9,7 @@ export const tourSteps = [
     page: 'any',
     targetSelector: null,
     title: 'Selamat Datang di SOS! 👋',
-    description: 'Kami akan memandumu mengenal cara memesan makanan di sistem ini. Ikuti langkah-langkah berikut — hanya butuh ~1 menit!',
+    description: 'Kami akan memandumu mengenal cara memesan barangmu mu di sistem ini. Ikuti langkah-langkah berikut — hanya butuh ~1 menit!',
     position: 'center',
   },
 

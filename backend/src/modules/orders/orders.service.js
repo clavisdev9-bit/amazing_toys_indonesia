@@ -6,6 +6,7 @@ const { generateTxnId }          = require('../../utils/txnId');
 const { generateTransactionQR }  = require('../../utils/qrcode');
 const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
+const { fireWebhook }            = require('../../utils/webhook');
 
 const PENDING_TIMEOUT_MINUTES = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
 
@@ -112,7 +113,7 @@ async function getTransaction(transactionId, requesterId, requesterRole) {
   }
 
   const itemsResult = await query(
-    `SELECT ti.*, p.product_name, p.image_url, ten.tenant_name, ten.booth_location
+    `SELECT ti.*, p.product_name, p.barcode, p.image_url, ten.tenant_name, ten.booth_location
      FROM transaction_items ti
      JOIN products p ON p.product_id = ti.product_id
      JOIN tenants ten ON ten.tenant_id = ti.tenant_id
@@ -159,6 +160,14 @@ async function cancelOrder(transactionId, customerId) {
       action: 'TXN_CANCELLED', actorId: customerId, actorRole: 'CUSTOMER',
       entityType: 'TRANSACTION', entityId: transactionId,
       oldValue: { status: 'PENDING' }, newValue: { status: 'CANCELLED' },
+    });
+
+    // Notify integration service (Odoo draft order cancellation)
+    fireWebhook('/webhook/order-cancelled', {
+      transactionId,
+      status: 'CANCELLED',
+      cancelledAt: new Date().toISOString(),
+      customerId,
     });
 
     return { transactionId, status: 'CANCELLED' };

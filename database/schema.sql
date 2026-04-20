@@ -69,6 +69,7 @@ CREATE TABLE products (
     stock_status    stock_status_enum   NOT NULL DEFAULT 'AVAILABLE',
     image_url       VARCHAR(500),
     description     TEXT,
+    odoo_categ_id   INTEGER,                                      -- Odoo product.category id
     is_active       BOOLEAN             NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ         NOT NULL DEFAULT NOW()

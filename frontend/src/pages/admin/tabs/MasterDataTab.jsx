@@ -1,23 +1,28 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import ProductBulkUpload from '../ProductBulkUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
-  adminDeleteProduct, uploadProductImage,
+  adminDeleteProduct, uploadProductImage, syncStock,
 } from '../../../api/admin';
+import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
 import { getCategories } from '../../../api/products';
 import { formatRupiah, formatDate } from '../../../utils/format';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import CategoryCombobox from '../../../components/ui/CategoryCombobox';
+import ComboboxField from '../../../components/ui/ComboboxField';
 import Modal from '../../../components/ui/Modal';
 import Spinner from '../../../components/ui/Spinner';
 import EmptyState from '../../../components/ui/EmptyState';
 import ToastContainer from '../../../components/ui/Toast';
 import { useToast } from '../../../hooks/useToast';
+import { useOdooProductCategories } from '../../../hooks/useOdooProductCategories';
 
 const EMPTY_FORM = {
   product_id: '', product_name: '', category: '', price: '',
   tenant_id: '', barcode: '', stock_quantity: '0', description: '', image_url: '',
+  odoo_categ_id: null, odoo_categ_name: '', is_active: true,
 };
 
 function fileToBase64(file) {
@@ -32,7 +37,7 @@ function fileToBase64(file) {
 // Defined outside MasterDataTab so its identity is stable across re-renders.
 // Defining it inside would cause React to unmount/remount inputs on every
 // keystroke (new component type each render), which destroys cursor focus.
-function FormFields({ isEdit, form, setForm, tenants, categories }) {
+function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories, odooLoading, odooError }) {
   return (
     <>
       {!isEdit && (
@@ -67,7 +72,7 @@ function FormFields({ isEdit, form, setForm, tenants, categories }) {
           required />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {!isEdit && (
+        {!isEdit ? (
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">Tenant *</label>
             <select
@@ -81,25 +86,62 @@ function FormFields({ isEdit, form, setForm, tenants, categories }) {
               ))}
             </select>
           </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">Tenant</label>
+            <select
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+              value={form.tenant_id}
+              disabled>
+              {tenants.map((t) => (
+                <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>
+              ))}
+            </select>
+          </div>
         )}
         <Input label="Stok *" type="number" min="0"
           value={form.stock_quantity}
           onChange={(e) => setForm((f) => ({ ...f, stock_quantity: e.target.value }))}
           required />
       </div>
+      <ComboboxField
+        label="Kategori Odoo *"
+        options={odooCategories.map(c => ({ value: c.id, label: c.completeName }))}
+        value={form.odoo_categ_id}
+        onChange={(opt) => setForm(f => ({ ...f, odoo_categ_id: opt?.value ?? null, odoo_categ_name: opt?.label ?? '' }))}
+        isLoading={odooLoading}
+        error={odooError}
+        required
+        placeholder="Ketik untuk mencari kategori Odoo..."
+      />
       <Input label="Deskripsi" value={form.description}
         onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+      <Input label="Image URL" placeholder="/uploads/... atau https://..."
+        value={form.image_url}
+        onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))} />
       {isEdit && (
-        <Input label="Image URL" placeholder="/uploads/... atau https://..."
-          value={form.image_url}
-          onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))} />
+        <div className="flex items-center gap-3 py-1">
+          <label className="text-sm font-medium text-gray-700">Status Produk</label>
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, is_active: !f.is_active }))}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${form.is_active ? 'bg-green-500' : 'bg-gray-300'}`}>
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${form.is_active ? 'translate-x-4' : 'translate-x-1'}`} />
+          </button>
+          <span className={`text-xs font-medium ${form.is_active ? 'text-green-600' : 'text-red-500'}`}>
+            {form.is_active ? 'Aktif' : 'Nonaktif'}
+          </span>
+        </div>
       )}
     </>
   );
 }
 
 export default function MasterDataTab() {
+  const { role } = useAuth();
   const { toasts, addToast, removeToast } = useToast();
+  const { categories: odooCategories, isLoading: odooLoading, error: odooError } = useOdooProductCategories();
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [products, setProducts]           = useState([]);
   const [tenants, setTenants]             = useState([]);
   const [categories, setCategories]       = useState([]);
@@ -121,23 +163,69 @@ export default function MasterDataTab() {
   const [uploading, setUploading]     = useState(false);
   const [previewUrl, setPreviewUrl]   = useState(null);
 
+  const [syncingToOdoo, setSyncingToOdoo] = useState(false);
+
+  // ── Pagination state ──────────────────────────────────────────────────────
+  const [page, setPage]           = useState(1);
+  const [pageSize, setPageSize]   = useState(20);
+  const [pagination, setPagination] = useState({ total: 0, page: 1, page_size: 20, total_pages: 1 });
+
   const fetchProducts = useCallback(() => {
     setLoading(true);
     getAdminProducts({
-      search:          search || undefined,
-      tenant_id:       filterTenant || undefined,
+      search:           search || undefined,
+      tenant_id:        filterTenant || undefined,
       include_inactive: String(includeInactive),
+      page,
+      page_size:        pageSize,
     })
-      .then((r) => setProducts(r.data.data?.items ?? []))
+      .then((r) => {
+        setProducts(r.data.data?.items ?? []);
+        if (r.data.data?.pagination) setPagination(r.data.data.pagination);
+      })
       .catch(() => addToast('Gagal memuat produk.', 'error'))
       .finally(() => setLoading(false));
-  }, [search, filterTenant, includeInactive]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, filterTenant, includeInactive, page, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset to page 1 whenever filters change
+  const resetPage = useCallback(() => setPage(1), []);
+
+  useEffect(() => { resetPage(); }, [search, filterTenant, includeInactive, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => {
     getTenants({ active_only: false }).then((r) => setTenants(r.data.data ?? []));
     getCategories().then((r) => setCategories(r.data.data ?? []));
   }, []);
+
+  const resolveCategory = useCallback((raw) => {
+    const match = categories.find((c) => c.toLowerCase() === raw.trim().toLowerCase());
+    return match ?? raw.trim();
+  }, [categories]);
+
+  if (showBulkUpload) {
+    return <ProductBulkUpload onBack={() => { setShowBulkUpload(false); fetchProducts(); }} />;
+  }
+
+  async function handleSyncToOdoo() {
+    if (syncingToOdoo) return;
+    setSyncingToOdoo(true);
+    try {
+      const data = (await syncStock()).data;
+      if (data?.total != null) {
+        const msg = data.skipped > 0
+          ? `Synced ${data.synced}/${data.total} — ${data.skipped} skipped`
+          : `Synced ${data.synced} products`;
+        addToast(msg, 'success');
+      } else {
+        addToast('Sync selesai.', 'success');
+      }
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message || err.message || 'Sync failed.', 'error');
+    } finally {
+      setSyncingToOdoo(false);
+    }
+  }
 
   function openCreate() {
     setForm({ ...EMPTY_FORM });
@@ -146,29 +234,29 @@ export default function MasterDataTab() {
   }
 
   function openEdit(p) {
+    const odooCat = odooCategories.find(c => c.id === p.odoo_categ_id) ?? null;
     setForm({
-      product_id:     p.product_id,
-      product_name:   p.product_name,
-      category:       p.category,
-      price:          String(p.price),
-      tenant_id:      p.tenant_id,
-      barcode:        p.barcode,
-      stock_quantity: String(p.stock_quantity),
-      description:    p.description || '',
-      image_url:      p.image_url   || '',
+      product_id:      p.product_id,
+      product_name:    p.product_name,
+      category:        p.category,
+      price:           String(p.price),
+      tenant_id:       p.tenant_id,
+      barcode:         p.barcode,
+      stock_quantity:  String(p.stock_quantity),
+      description:     p.description || '',
+      image_url:       p.image_url   || '',
+      odoo_categ_id:   p.odoo_categ_id ?? null,
+      odoo_categ_name: odooCat?.completeName ?? '',
+      is_active:       p.is_active ?? true,
     });
     setFormError('');
     setEditModal(p);
   }
 
-  const resolveCategory = useCallback((raw) => {
-    const match = categories.find((c) => c.toLowerCase() === raw.trim().toLowerCase());
-    return match ?? raw.trim();
-  }, [categories]);
-
   async function handleCreate(e) {
     e.preventDefault();
     setFormError('');
+    if (!form.odoo_categ_id) { setFormError('Kategori Odoo wajib dipilih.'); return; }
     setSaving(true);
     try {
       await adminCreateProduct({
@@ -178,6 +266,7 @@ export default function MasterDataTab() {
         stock_quantity: parseInt(form.stock_quantity, 10),
         image_url:      form.image_url || undefined,
         description:    form.description || undefined,
+        categ_id:       form.odoo_categ_id,
       });
       addToast('Produk berhasil dibuat.', 'success');
       setCreateModal(false);
@@ -192,6 +281,7 @@ export default function MasterDataTab() {
   async function handleEdit(e) {
     e.preventDefault();
     setFormError('');
+    if (!form.odoo_categ_id) { setFormError('Kategori Odoo wajib dipilih.'); return; }
     setSaving(true);
     try {
       await adminUpdateProduct(editModal.product_id, {
@@ -202,6 +292,8 @@ export default function MasterDataTab() {
         barcode:        form.barcode,
         description:    form.description || null,
         image_url:      form.image_url   || null,
+        categ_id:       form.odoo_categ_id,
+        is_active:      form.is_active,
       });
       addToast('Produk diperbarui.', 'success');
       setEditModal(null);
@@ -284,14 +376,26 @@ export default function MasterDataTab() {
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {/* Header bar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white mb-4">
+      <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white mb-0">
         <span className="text-base">📦</span>
         <h2 className="text-sm font-semibold flex-1">Daftar Produk</h2>
+        {role === 'ADMIN' && (
+          <Button size="sm" onClick={handleSyncToOdoo} disabled={syncingToOdoo}
+            className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+            {syncingToOdoo ? '⟳ Syncing…' : '↻ Sync to Odoo'}
+          </Button>
+        )}
+        <Button size="sm" onClick={() => setShowBulkUpload(true)}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          ⬆ Upload Massal
+        </Button>
         <Button size="sm" onClick={openCreate}
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
           + Tambah Produk
         </Button>
       </div>
+
+      <div className="mb-4" />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
@@ -366,13 +470,47 @@ export default function MasterDataTab() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination controls */}
+          <div className="flex items-center justify-between px-4 py-3 border-t bg-gray-50 text-xs text-gray-600">
+            <div className="flex items-center gap-2">
+              <span>Baris per halaman:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500">
+                {[10, 20, 50].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span className="text-gray-400">
+                {pagination.total === 0 ? '0' : `${(pagination.page - 1) * pagination.page_size + 1}–${Math.min(pagination.page * pagination.page_size, pagination.total)}`} dari {pagination.total}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-2 py-1 rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">
+                ‹ Prev
+              </button>
+              <span className="px-3 py-1 font-medium">
+                {pagination.page} / {pagination.total_pages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(pagination.total_pages, p + 1))}
+                disabled={page >= pagination.total_pages}
+                className="px-2 py-1 rounded border border-gray-300 disabled:opacity-40 hover:bg-gray-100 disabled:cursor-not-allowed">
+                Next ›
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Create Modal */}
       <Modal open={createModal} onClose={() => setCreateModal(false)} title="Tambah Produk Baru">
         <form onSubmit={handleCreate} className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-          <FormFields isEdit={false} form={form} setForm={setForm} tenants={tenants} categories={categories} />
+          <FormFields isEdit={false} form={form} setForm={setForm} tenants={tenants} categories={categories}
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}
@@ -389,7 +527,8 @@ export default function MasterDataTab() {
           <p className="text-xs text-gray-400 font-mono">
             {editModal?.product_id} &bull; Tenant: {editModal?.tenant_name}
           </p>
-          <FormFields isEdit={true} form={form} setForm={setForm} tenants={tenants} categories={categories} />
+          <FormFields isEdit={true} form={form} setForm={setForm} tenants={tenants} categories={categories}
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}
@@ -442,6 +581,7 @@ export default function MasterDataTab() {
           </div>
         </div>
       </Modal>
+
     </>
   );
 }

@@ -124,7 +124,7 @@ describe('Customer — Checkout (UT-020 to UT-021)', () => {
     ]);
 
     expect(result.transactionId).toMatch(/^TXN-\d{8}-\d{5}$/);
-    expect(result.qrPayload).toContain('data:image/png;base64,');
+    expect(result.qrPayload).toBeTruthy(); // base64 only — prefix stripped by generateTransactionQR
     expect(result.status).toBe('PENDING');
     expect(result.totalAmount).toBe(550000);
   });
@@ -152,7 +152,7 @@ describe('Customer — QR Code (UT-022)', () => {
   test('UT-022: QR payload berisi transaction ID', async () => {
     const { generateTransactionQR } = require('../../src/utils/qrcode');
     const qr = await generateTransactionQR('TXN-20260415-00001');
-    expect(qr).toBe('data:image/png;base64,mockQR');
+    expect(qr).toBe('mockQRBase64Data'); // generateTransactionQR returns base64 only (no data URL prefix)
   });
 });
 

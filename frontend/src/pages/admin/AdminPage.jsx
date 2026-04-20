@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import ErrorBoundary  from '../../components/ErrorBoundary';
 import MasterDataTab  from './tabs/MasterDataTab';
 import UserRoleTab    from './tabs/UserRoleTab';
 import BoothTab       from './tabs/BoothTab';
@@ -12,7 +13,7 @@ const TABS = [
   { key: 'booth',       label: 'Booth Tenant', icon: '🏪', active: 'bg-emerald-600 text-white shadow',desc: 'Kelola data booth & kontak' },
   { key: 'config',      label: 'Konfigurasi',  icon: '⚙️',  active: 'bg-amber-500 text-white shadow',  desc: 'Setup event & logo' },
   { key: 'audit-log',   label: 'Audit Log',    icon: '📋', active: 'bg-slate-600 text-white shadow',  desc: 'Monitor aktivitas' },
-  { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'POS & Payment API' },
+  { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
 ];
 
 export default function AdminPage() {
@@ -64,12 +65,14 @@ export default function AdminPage() {
       </p>
 
       {/* ── Tab content ───────────────────────────────────────────────────── */}
-      {tab === 'master-data' && <MasterDataTab />}
-      {tab === 'user-role'   && <UserRoleTab />}
-      {tab === 'booth'       && <BoothTab />}
-      {tab === 'config'      && <ConfigTab />}
-      {tab === 'audit-log'   && <AuditLogTab />}
-      {tab === 'integration' && <IntegrationTab />}
+      <ErrorBoundary key={tab}>
+        {tab === 'master-data' && <MasterDataTab />}
+        {tab === 'user-role'   && <UserRoleTab />}
+        {tab === 'booth'       && <BoothTab />}
+        {tab === 'config'      && <ConfigTab />}
+        {tab === 'audit-log'   && <AuditLogTab />}
+        {tab === 'integration' && <IntegrationTab />}
+      </ErrorBoundary>
     </div>
   );
 }

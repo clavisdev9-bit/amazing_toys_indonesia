@@ -33,6 +33,10 @@ const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
 const notifSvc = require('./modules/notifications/notifications.service');
 notifSvc.setWsBroadcast(wsBroadcast);
 
+// Scheduler
+const { initializeScheduledJobs } = require('./modules/scheduler/JobBootstrap');
+const adminSvcScheduler = require('./modules/admin/admin.service');
+
 // ── App setup ────────────────────────────────────────────────────────────────
 
 const app = express();
@@ -113,6 +117,8 @@ setupWebSocket(server);
 server.listen(PORT, () => {
   logger.info(`[Server] Amazing Toys SOS API running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   logger.info(`[Server] WebSocket available at ws://localhost:${PORT}/ws`);
+  // DB pool is ready on first query; initialize scheduler after server is up.
+  initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
 });
 
 // Graceful shutdown

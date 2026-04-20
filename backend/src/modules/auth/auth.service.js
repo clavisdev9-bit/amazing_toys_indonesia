@@ -5,6 +5,7 @@ const jwt      = require('jsonwebtoken');
 const { query } = require('../../config/database');
 const { AppError } = require('../../middlewares/error.middleware');
 const { sendLoginAlert } = require('../../services/email.service');
+const { fireWebhook } = require('../../utils/webhook');
 
 // ── Internal users (Cashier / Tenant / Leader / Admin) ──────────────────────
 
@@ -58,6 +59,16 @@ async function registerCustomer({ full_name, phone_number, email, gender }) {
   );
   const customer = result.rows[0];
   const token = issueCustomerToken(customer);
+
+  // Notify integration service (Odoo res.partner sync)
+  fireWebhook('/webhook/customer-registered', {
+    customer_id: customer.customer_id,
+    full_name: customer.full_name,
+    phone_number: customer.phone_number,
+    email: customer.email || null,
+    gender: customer.gender || null,
+  });
+
   return { token, customer };
 }
 
