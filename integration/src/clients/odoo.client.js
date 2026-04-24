@@ -133,12 +133,17 @@ async function execute(model, method, ids) {
   return callKw(model, method, [ids]);
 }
 
-// Resolve IDR currency id, payment journal IDs, and custom field availability at startup.
+// Resolve IDR currency id, payment journal IDs, warehouse ID, customer location,
+// and custom field availability at startup.
 async function resolveStartupRefs() {
-  const [currencies, journals, sosFields] = await Promise.all([
+  const [currencies, journals, sosFields, warehouses, custLocs] = await Promise.all([
     searchRead('res.currency', [['name', '=', 'IDR']], ['id', 'name']),
     searchRead('account.journal', [['type', 'in', ['cash', 'bank']]], ['id', 'name', 'type']),
     searchRead('ir.model.fields', [['model', '=', 'sale.order'], ['name', 'in', ['x_studio_sos_transaction_id', 'x_studio_sos_tenant_ids']]], ['name']),
+    // Default warehouse: prefer code='WH', fall back to first available.
+    searchRead('stock.warehouse', [['code', '=', 'WH']], ['id', 'name', 'code'], { limit: 1 }),
+    // Customer virtual location — required so action_confirm can create delivery orders.
+    searchRead('stock.location', [['usage', '=', 'customer'], ['active', '=', true]], ['id', 'name'], { limit: 1 }),
   ]);
 
   _cache.currencyIdIdr = currencies[0]?.id || null;
@@ -149,10 +154,14 @@ async function resolveStartupRefs() {
   const fieldNames = sosFields.map(f => f.name);
   _cache.hasSosTransactionId = fieldNames.includes('x_studio_sos_transaction_id');
   _cache.hasSosTenantId = fieldNames.includes('x_studio_sos_tenant_ids');
+  _cache.warehouseId = warehouses[0]?.id || null;
+  _cache.customerLocationId = custLocs[0]?.id || null;
   logger.info('Odoo startup refs resolved', {
     currencyIdIdr: _cache.currencyIdIdr,
     journals: Object.keys(_cache.journals),
     hasSosFields: _cache.hasSosTransactionId,
+    warehouseId: _cache.warehouseId,
+    customerLocationId: _cache.customerLocationId,
   });
 }
 

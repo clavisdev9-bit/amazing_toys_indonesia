@@ -1,7 +1,7 @@
 version: "3.9"
 
 # =============================================================================
-# Amazing Toys SOS — Docker Compose
+# Amazing Toys Systems — Docker Compose
 # Usage:
 #   docker-compose up -d postgres     # start DB only
 #   docker-compose up -d              # start all services
@@ -13,10 +13,10 @@ services:
   # ── PostgreSQL Database ──────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: amazing_toys_db
+    container_name: amazing_toys_system
     restart: unless-stopped
     environment:
-      POSTGRES_DB:       amazing_toys_sos
+      POSTGRES_DB:       amazing_toys_sos_db
       POSTGRES_USER:     postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD:-localdev123}
     ports:
@@ -57,6 +57,9 @@ services:
       SMTP_PASS:       ${SMTP_PASS:-}
       EMAIL_FROM:      ${EMAIL_FROM:-}
       EMAIL_NOTIFY_TO: ${EMAIL_NOTIFY_TO:-}
+      # Integration service — host.docker.internal reaches the host from inside Docker
+      INTEGRATION_WEBHOOK_URL: ${INTEGRATION_WEBHOOK_URL:-http://host.docker.internal:4000}
+      WEBHOOK_SECRET:  ${WEBHOOK_SECRET:-}
     ports:
       - "3000:3000"
     depends_on:
