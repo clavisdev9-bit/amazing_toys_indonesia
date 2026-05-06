@@ -14,9 +14,15 @@ const logger = require('../../../../config/logger');
  *   5. Write inventory_quantity + call action_apply_inventory (absolute, idempotent).
  */
 class OdooStockAdapter {
-  /** @param {import('../http/OdooHttpClient').OdooHttpClient} httpClient */
-  constructor(httpClient) {
+  /**
+   * @param {import('../http/OdooHttpClient').OdooHttpClient} httpClient
+   * @param {number|null} [companyId] — when set, warehouse and location lookups
+   *   include an explicit company_id domain filter to avoid picking resources
+   *   from a different company in a multi-company Odoo instance.
+   */
+  constructor(httpClient, companyId = null) {
     this._http          = httpClient;
+    this._companyId     = companyId ? Number(companyId) : null;
     this._locationId    = null;   // WH/Stock location ID  (cached)
     this._invAdjLocId   = null;   // Virtual inventory-adjustment location ID (cached)
   }
@@ -25,24 +31,29 @@ class OdooStockAdapter {
 
   /**
    * Load and cache both the main stock location and the virtual inventory-adjustment
-   * location for the same company.  Called lazily; only one RPC round-trip.
+   * location for the configured company.  Called lazily; only one RPC round-trip.
    */
   async _initWarehouse() {
     if (this._locationId) return;
 
+    const warehouseDomain = this._companyId
+      ? [['company_id', '=', this._companyId]]
+      : [];
+
     const warehouses = await this._http.callKw(
-      'stock.warehouse', 'search_read', [[]],
+      'stock.warehouse', 'search_read', [warehouseDomain],
       { fields: ['id', 'lot_stock_id', 'company_id'], limit: 1 }
     );
 
     if (warehouses?.length && warehouses[0].lot_stock_id?.[0]) {
       this._locationId = warehouses[0].lot_stock_id[0];
-      const companyId  = warehouses[0].company_id?.[0];
+      // Use the company resolved from the warehouse record (or the configured one).
+      const resolvedCompanyId = warehouses[0].company_id?.[0] ?? this._companyId;
 
       // Find the virtual inventory-adjustment location for this company
       const adjLocs = await this._http.callKw(
         'stock.location', 'search_read',
-        [[['usage', '=', 'inventory'], ['company_id', '=', companyId]]],
+        [[['usage', '=', 'inventory'], ['company_id', '=', resolvedCompanyId]]],
         { fields: ['id', 'name'], limit: 1 }
       );
       this._invAdjLocId = adjLocs?.[0]?.id ?? null;
@@ -50,18 +61,26 @@ class OdooStockAdapter {
     }
 
     // Fallback — search by name (multi-warehouse edge case)
+    const nameDomain = this._companyId
+      ? [['usage', '=', 'internal'], ['complete_name', 'ilike', 'WH/Stock'], ['company_id', '=', this._companyId]]
+      : [['usage', '=', 'internal'], ['complete_name', 'ilike', 'WH/Stock']];
+
     const locations = await this._http.callKw(
       'stock.location', 'search_read',
-      [[['usage', '=', 'internal'], ['complete_name', 'ilike', 'WH/Stock']]],
+      [nameDomain],
       { fields: ['id', 'complete_name'], limit: 1 }
     );
     if (!locations?.length) throw new Error('Main stock location (WH/Stock) not found in Odoo.');
     this._locationId = locations[0].id;
 
-    // Also cache inventory adjustment location without company constraint
+    // Also cache inventory adjustment location, scoped by company when available
+    const adjDomain = this._companyId
+      ? [['usage', '=', 'inventory'], ['company_id', '=', this._companyId]]
+      : [['usage', '=', 'inventory'], ['name', '=', 'Inventory adjustment']];
+
     const adjLocs = await this._http.callKw(
       'stock.location', 'search_read',
-      [[['usage', '=', 'inventory'], ['name', '=', 'Inventory adjustment']]],
+      [adjDomain],
       { fields: ['id'], limit: 1 }
     );
     this._invAdjLocId = adjLocs?.[0]?.id ?? null;

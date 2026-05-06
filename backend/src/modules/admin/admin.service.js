@@ -202,6 +202,24 @@ async function adminUpdateProduct(productId, data) {
   return result.rows[0];
 }
 
+async function adminBulkUpdateCategory(category) {
+  if (!category) throw new AppError('category wajib diisi.', 422);
+  const result = await query(
+    `UPDATE products SET category = $1, updated_at = NOW()`,
+    [category]
+  );
+  return { updated: result.rowCount };
+}
+
+async function adminBulkUpdateOdooCategory(odoo_categ_id) {
+  if (!odoo_categ_id) throw new AppError('odoo_categ_id wajib diisi.', 422);
+  const result = await query(
+    `UPDATE products SET odoo_categ_id = $1, updated_at = NOW()`,
+    [parseInt(odoo_categ_id, 10)]
+  );
+  return { updated: result.rowCount };
+}
+
 async function adminDeleteProduct(productId) {
   const result = await query(
     `UPDATE products SET is_active = FALSE, updated_at = NOW() WHERE product_id = $1
@@ -372,6 +390,8 @@ const DEFAULT_INTEGRATION_CONFIG = {
   odoo_db: '',
   odoo_login: '',
   odoo_password: '',
+  odoo_company_id: null,
+  odoo_company_name: '',
   odoo_walkin_partner_id: '',
   odoo_webhook_secret: '',
   odoo_low_stock_threshold: 10,
@@ -435,13 +455,16 @@ async function getIntegrationConfigRaw() {
 
 /**
  * Authenticate with Odoo and return a ready-to-use odooRpc function.
+ * company_id from config is injected into every RPC context to scope all
+ * records to the correct company in a multi-company Odoo instance.
  */
 async function _connectOdoo() {
   const cfg      = await getIntegrationConfigRaw();
-  const baseUrl  = cfg.odoo_base_url  || process.env.ODOO_URL;
+  const baseUrl  = cfg.odoo_base_url  || process.env.ODOO_BASE_URL;
   const db       = cfg.odoo_db        || process.env.ODOO_DB;
   const login    = cfg.odoo_login     || process.env.ODOO_LOGIN;
   const password = cfg.odoo_password  || process.env.ODOO_PASSWORD;
+  const companyId = cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null;
 
   if (!baseUrl || !db || !login || !password)
     throw new AppError('Odoo credentials not configured. Set via Admin → Integrasi → Integration with Odoo.', 500);
@@ -463,6 +486,19 @@ async function _connectOdoo() {
 
   let _rpcSeq = 10;
   const odooRpc = async (model, method, args, kwargs = {}) => {
+    if (companyId) {
+      kwargs = {
+        ...kwargs,
+        context: {
+          lang: 'en_US',
+          tz: 'Asia/Jakarta',
+          uid,
+          ...(kwargs.context || {}),
+          allowed_company_ids: [companyId],
+          company_id: companyId,
+        },
+      };
+    }
     const raw  = await fetch(`${baseUrl}/web/dataset/call_kw`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', ...(sessionCookie ? { Cookie: sessionCookie } : {}) },
@@ -475,7 +511,59 @@ async function _connectOdoo() {
     return body.result;
   };
 
-  return { odooRpc, uid };
+  return { odooRpc, uid, companyId };
+}
+
+/**
+ * Verify Odoo credentials and return the list of companies the user can access.
+ * Used by the connection wizard in the admin UI.
+ */
+async function verifyOdooConnection({ base_url, db, login, password }) {
+  const authRaw = await fetch(`${base_url}/web/session/authenticate`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ jsonrpc: '2.0', method: 'call', id: 1, params: { db, login, password } }),
+    signal:  AbortSignal.timeout(15000),
+  }).catch(err => { throw new AppError(`Cannot reach Odoo at ${base_url}: ${err.message}`, 502); });
+
+  const authBody = await authRaw.json();
+  const uid = authBody?.result?.uid;
+  if (!uid) throw new AppError('Odoo authentication failed — invalid credentials.', 401);
+
+  const sessionCookie = authRaw.headers.get('set-cookie')
+    ?.split(',').map(c => c.trim())
+    .find(c => c.startsWith('session_id='))
+    ?.split(';')[0];
+
+  // company_ids from auth result = all companies the user has access to.
+  const allowedIds  = authBody.result?.company_ids || [];
+  const defaultId   = Array.isArray(authBody.result?.company_id)
+    ? authBody.result.company_id[0]
+    : authBody.result?.company_id;
+
+  const domain = allowedIds.length ? [['id', 'in', allowedIds]] : [];
+  const rpcRaw = await fetch(`${base_url}/web/dataset/call_kw`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', ...(sessionCookie ? { Cookie: sessionCookie } : {}) },
+    body:    JSON.stringify({
+      jsonrpc: '2.0', method: 'call', id: 2,
+      params: {
+        model: 'res.company', method: 'search_read',
+        args:   [domain],
+        kwargs: { fields: ['id', 'name'], limit: 50 },
+      },
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const rpcBody  = await rpcRaw.json();
+  const rawList  = Array.isArray(rpcBody?.result) ? rpcBody.result : [];
+  const companies = rawList.map(c => ({
+    id:        c.id,
+    name:      c.name,
+    isDefault: c.id === defaultId,
+  }));
+
+  return { uid, companies };
 }
 
 /** Build the Odoo product.template field values from a SOS product row. */
@@ -486,9 +574,9 @@ function _buildProductVals(p) {
     sale_ok:        true,
     active:         true,
     type:           'consu',
-    invoice_policy: 'order',
     is_storable:    true,
-    ...(p.barcode       ? { barcode:  p.barcode }       : {}),
+    invoice_policy: 'order',
+    route_ids:      [[5, 0, 0]],
     ...(p.odoo_categ_id ? { categ_id: p.odoo_categ_id } : {}),
   };
 }
@@ -498,70 +586,115 @@ function _buildProductVals(p) {
  * Returns { action: 'created'|'updated'|'skipped', odooId }.
  */
 async function _pushOneProductToOdoo(p, odooRpc, existingOdooId, force) {
-  const odooVals = _buildProductVals(p);
-  const odooValsNoBarcode = { ...odooVals };
-  delete odooValsNoBarcode.barcode;
+  const odooVals      = _buildProductVals(p);
+  const odooValsNoCateg = { ...odooVals };
+  delete odooValsNoCateg.categ_id;
 
   let odooId = existingOdooId;
   let action;
 
   const isBarcodeError = (err) => /barcode/i.test(err.message) && /already/i.test(err.message);
+  const isCategError   = (err) => err.message.includes('product.category') && err.message.includes('does not exist');
 
-  if (existingOdooId) {
-    if (!force) {
-      const cur = await odooRpc('product.template', 'read', [[existingOdooId]],
-        { fields: ['name', 'list_price', 'barcode'] });
-      const ex  = cur?.[0];
-      if (ex && ex.name === p.product_name && Number(ex.list_price) === Number(p.price)
-          && (ex.barcode || '') === (p.barcode || '')) {
-        return { action: 'skipped', odooId: existingOdooId };
-      }
-    }
+  // Write barcode to product.product (the correct model in Odoo 18).
+  // Barcode is a variant-level field; product.template.barcode is read-only/related.
+  async function writeVariantBarcode(templateId) {
+    if (!p.barcode) return;
+    const tmpl = await odooRpc('product.template', 'read', [[templateId]], { fields: ['product_variant_ids'] });
+    const variantId = tmpl?.[0]?.product_variant_ids?.[0];
+    if (!variantId) return;
     try {
-      await odooRpc('product.template', 'write', [[existingOdooId], odooVals]);
+      await odooRpc('product.product', 'write', [[variantId], { barcode: p.barcode }]);
     } catch (err) {
       if (!isBarcodeError(err)) throw err;
-      // Barcode claimed by another Odoo record — update everything except barcode
-      await odooRpc('product.template', 'write', [[existingOdooId], odooValsNoBarcode]);
+      // Barcode already assigned to another product — skip silently.
     }
-    action = 'updated';
-  } else {
-    odooId = null;
-    if (p.barcode) {
-      const found = await odooRpc('product.template', 'search_read',
-        [[['barcode', '=', p.barcode]]], { fields: ['id'], limit: 1 });
-      if (found?.length > 0) {
-        const candidateId = found[0].id;
-        // Check if this Odoo product is already claimed by a different SOS product
-        const clash = await query(
-          `SELECT sos_id FROM integration_xref WHERE entity_type='product' AND odoo_id=$1`,
-          [candidateId]
-        );
-        if (!clash.rows.length) {
-          odooId = candidateId;
-          await odooRpc('product.template', 'write', [[odooId], odooVals]);
-          action = 'updated';
-        }
-        // If already claimed by another sos_id, fall through to create a new Odoo product
+  }
+
+  async function odooWrite(id, vals) {
+    try {
+      await odooRpc('product.template', 'write', [[id], vals]);
+    } catch (err) {
+      if (isCategError(err)) {
+        const v = { ...vals }; delete v.categ_id;
+        await odooRpc('product.template', 'write', [[id], v]);
+      } else {
+        throw err;
       }
     }
-    if (!odooId) {
-      // Create without barcode if the barcode is already in use in Odoo
-      try {
-        odooId = await odooRpc('product.template', 'create', [odooVals]);
-      } catch (err) {
-        if (!isBarcodeError(err)) throw err;
-        odooId = await odooRpc('product.template', 'create', [odooValsNoBarcode]);
-      }
-      action = 'created';
+  }
+
+  async function odooCreate(vals) {
+    try {
+      return await odooRpc('product.template', 'create', [vals]);
+    } catch (err) {
+      if (isCategError(err)) return odooRpc('product.template', 'create', [odooValsNoCateg]);
+      throw err;
     }
+  }
+
+  async function upsertXref(sosId, oId) {
+    // Remove any stale xref pointing the same Odoo ID to a different SOS product.
+    await query(
+      `DELETE FROM integration_xref WHERE entity_type='product' AND odoo_id=$1 AND sos_id<>$2`,
+      [oId, sosId],
+    );
     await query(
       `INSERT INTO integration_xref (entity_type, sos_id, odoo_id, status, sync_metadata)
        VALUES ('product', $1, $2, 'ACTIVE', $3)
        ON CONFLICT (entity_type, sos_id)
        DO UPDATE SET odoo_id=EXCLUDED.odoo_id, sync_metadata=EXCLUDED.sync_metadata, updated_at=NOW()`,
-      [p.product_id, odooId, JSON.stringify({ barcode: p.barcode })],
+      [sosId, oId, JSON.stringify({ barcode: p.barcode })],
     );
+  }
+
+  if (existingOdooId) {
+    const cur = await odooRpc('product.template', 'read', [[existingOdooId]],
+      { fields: ['name', 'list_price'] });
+    const ex = cur?.[0];
+
+    if (!ex) {
+      existingOdooId = null;
+      odooId = null;
+    } else {
+      if (!force && ex.name === p.product_name && Number(ex.list_price) === Number(p.price)) {
+        return { action: 'skipped', odooId: existingOdooId };
+      }
+      await odooWrite(existingOdooId, odooVals);
+      await writeVariantBarcode(existingOdooId);
+      action = 'updated';
+      await upsertXref(p.product_id, existingOdooId);
+    }
+  }
+
+  if (!existingOdooId) {
+    odooId = null;
+    if (p.barcode) {
+      // Search on product.product — barcode lives on the variant in Odoo 18.
+      const found = await odooRpc('product.product', 'search_read',
+        [[['barcode', '=', p.barcode]]], { fields: ['id', 'product_tmpl_id'], limit: 1 });
+      if (found?.length > 0) {
+        const candidateId = Array.isArray(found[0].product_tmpl_id)
+          ? found[0].product_tmpl_id[0]
+          : found[0].product_tmpl_id;
+        const clash = await query(
+          `SELECT sos_id FROM integration_xref WHERE entity_type='product' AND odoo_id=$1`,
+          [candidateId],
+        );
+        if (!clash.rows.length) {
+          odooId = candidateId;
+          await odooWrite(odooId, odooVals);
+          await writeVariantBarcode(odooId);
+          action = 'updated';
+        }
+      }
+    }
+    if (!odooId) {
+      odooId = await odooCreate(odooVals);
+      await writeVariantBarcode(odooId);
+      action = 'created';
+    }
+    await upsertXref(p.product_id, odooId);
   }
   return { action, odooId };
 }
@@ -695,6 +828,35 @@ async function getOdooProductCategories() {
 }
 
 /**
+ * Find all PAID transactions not yet pushed to Odoo and fire webhooks for each.
+ * Returns immediately with a count; actual push is fire-and-forget per transaction.
+ */
+async function resyncUnsyncedTransactions() {
+  const result = await query(`
+    SELECT t.transaction_id FROM transactions t
+    LEFT JOIN integration_xref x
+           ON x.entity_type = 'order'
+          AND x.sos_id      = t.transaction_id
+          AND x.status      = 'ACTIVE'
+    WHERE t.status = 'PAID'
+      AND (x.odoo_id IS NULL OR (x.sync_metadata->>'confirmFailed')::boolean = true)
+    ORDER BY t.paid_at ASC
+  `);
+
+  const rows = result.rows;
+  const { fireWebhook } = require('../../utils/webhook');
+  for (const row of rows) {
+    fireWebhook('/webhook/order-paid', {
+      transactionId: row.transaction_id,
+      status: 'PAID',
+    });
+  }
+
+  logger.info(`[resync] Fired ${rows.length} unsynced PAID transactions to integration`);
+  return { queued: rows.length, transaction_ids: rows.map(r => r.transaction_id) };
+}
+
+/**
  * List transactions by status — used by the integration service expiry sweep.
  */
 async function listTransactions({ status, limit = 200 } = {}) {
@@ -721,7 +883,8 @@ module.exports = {
   // Users
   listUsers, createUser, updateUser, resetPassword, deleteUser,
   // Products
-  adminListProducts, adminCreateProduct, adminUpdateProduct, adminDeleteProduct, saveProductImage,
+  adminListProducts, adminCreateProduct, adminUpdateProduct, adminDeleteProduct,
+  adminBulkUpdateCategory, adminBulkUpdateOdooCategory, saveProductImage,
   // Tenants (booth master data)
   adminListTenants, adminCreateTenant, adminUpdateTenant,
   // Audit log
@@ -729,9 +892,10 @@ module.exports = {
   // Config
   getSystemConfig, saveSystemConfig,
   // Integration
-  getIntegrationConfig, saveIntegrationConfig,
+  getIntegrationConfig, saveIntegrationConfig, getIntegrationConfigRaw,
   // Transactions (integration sweep)
-  listTransactions,
-  // Odoo sync & lookups
+  listTransactions, resyncUnsyncedTransactions,
+  // Odoo sync, lookups & connection wizard
   syncOdooProducts, syncSingleProductToOdoo, getOdooProductCategories,
+  verifyOdooConnection,
 };

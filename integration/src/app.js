@@ -8,6 +8,7 @@ const odoo = require('./clients/odoo.client');
 const sos = require('./clients/sos.client');
 const scheduler = require('./scheduler/scheduler');
 const webhookRouter = require('./routes/webhook.router');
+const syncRouter    = require('./routes/sync.router');
 const { router: healthRouter } = require('./routes/health.router');
 
 const app = express();
@@ -16,8 +17,9 @@ app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); },
 }));
 
-app.use('/health', healthRouter);
+app.use('/health',  healthRouter);
 app.use('/webhook', webhookRouter);
+app.use('/sync',    syncRouter);
 
 // 404
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));

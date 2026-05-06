@@ -113,10 +113,16 @@ async function getTransaction(transactionId, requesterId, requesterRole) {
   }
 
   const itemsResult = await query(
-    `SELECT ti.*, p.product_name, p.barcode, p.image_url, ten.tenant_name, ten.booth_location
+    `SELECT ti.*, p.product_name, p.barcode, p.image_url,
+            x.odoo_id AS product_odoo_id,
+            ten.tenant_name, ten.booth_location
      FROM transaction_items ti
      JOIN products p ON p.product_id = ti.product_id
      JOIN tenants ten ON ten.tenant_id = ti.tenant_id
+     LEFT JOIN integration_xref x
+            ON x.entity_type = 'product'
+           AND x.sos_id = ti.product_id::text
+           AND x.status = 'ACTIVE'
      WHERE ti.transaction_id = $1`,
     [transactionId]
   );

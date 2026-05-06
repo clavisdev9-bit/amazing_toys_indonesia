@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import ProductBulkUpload from '../ProductBulkUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
-  adminDeleteProduct, uploadProductImage, syncStock,
+  adminDeleteProduct, uploadProductImage, syncOdooProducts, syncStock,
+  adminBulkUpdateCategory, adminBulkUpdateOdooCategory,
 } from '../../../api/admin';
 import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
@@ -164,6 +165,13 @@ export default function MasterDataTab() {
   const [previewUrl, setPreviewUrl]   = useState(null);
 
   const [syncingToOdoo, setSyncingToOdoo] = useState(false);
+  const [bulkCatModal, setBulkCatModal]   = useState(false);
+  const [bulkCatValue, setBulkCatValue]   = useState('Others');
+  const [bulkCatSaving, setBulkCatSaving] = useState(false);
+
+  const [bulkOdooCatModal, setBulkOdooCatModal]   = useState(false);
+  const [bulkOdooCatOpt,   setBulkOdooCatOpt]     = useState(null); // { value, label }
+  const [bulkOdooCatSaving, setBulkOdooCatSaving] = useState(false);
 
   // ── Pagination state ──────────────────────────────────────────────────────
   const [page, setPage]           = useState(1);
@@ -210,21 +218,64 @@ export default function MasterDataTab() {
     if (syncingToOdoo) return;
     setSyncingToOdoo(true);
     try {
-      const data = (await syncStock()).data;
-      if (data?.total != null) {
-        const msg = data.skipped > 0
-          ? `Synced ${data.synced}/${data.total} — ${data.skipped} skipped`
-          : `Synced ${data.synced} products`;
-        addToast(msg, 'success');
-      } else {
-        addToast('Sync selesai.', 'success');
+      // Step 1: push product master data (create / update product.template in Odoo)
+      const masterData = (await syncOdooProducts(true)).data;
+      const s = masterData.stats ?? {};
+
+      // Step 2: sync stock quantities for all now-mapped products
+      const stockData = (await syncStock()).data;
+
+      const masterPart = `Master: +${s.created ?? 0} baru, ${s.updated ?? 0} diperbarui, ${s.skipped ?? 0} skip`;
+      const stockPart  = `Stok: ${stockData.synced ?? 0}/${stockData.total ?? 0} synced`;
+      const hasErrors  = (s.failed ?? 0) > 0 || (stockData.failed ?? 0) > 0;
+      addToast(`${masterPart} | ${stockPart}`, hasErrors ? 'error' : 'success');
+
+      if (masterData.errors?.length) {
+        masterData.errors.slice(0, 3).forEach(e => addToast(e, 'error'));
       }
       fetchProducts();
     } catch (err) {
-      addToast(err.response?.data?.message || err.message || 'Sync failed.', 'error');
+      addToast(err.response?.data?.message || err.message || 'Sync gagal.', 'error');
     } finally {
       setSyncingToOdoo(false);
     }
+  }
+
+  async function handleBulkCategory() {
+    setBulkCatSaving(true);
+    try {
+      const r = await adminBulkUpdateCategory(bulkCatValue.trim());
+      addToast(`Kategori semua produk diubah ke "${bulkCatValue.trim()}" (${r.data.updated} produk).`, 'success');
+      setBulkCatModal(false);
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal update kategori.', 'error');
+    } finally {
+      setBulkCatSaving(false);
+    }
+  }
+
+  async function handleBulkOdooCategory() {
+    if (!bulkOdooCatOpt) return;
+    setBulkOdooCatSaving(true);
+    try {
+      const r = await adminBulkUpdateOdooCategory(bulkOdooCatOpt.value);
+      addToast(`Kategori Odoo semua produk diubah ke "${bulkOdooCatOpt.label}" (${r.data.updated} produk).`, 'success');
+      setBulkOdooCatModal(false);
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal update Kategori Odoo.', 'error');
+    } finally {
+      setBulkOdooCatSaving(false);
+    }
+  }
+
+  function openBulkOdooCat() {
+    const othersOpt = odooCategories
+      .map(c => ({ value: c.id, label: c.completeName }))
+      .find(o => o.label.toLowerCase().includes('others') || o.label.toLowerCase() === 'other');
+    setBulkOdooCatOpt(othersOpt ?? null);
+    setBulkOdooCatModal(true);
   }
 
   function openCreate() {
@@ -383,6 +434,18 @@ export default function MasterDataTab() {
           <Button size="sm" onClick={handleSyncToOdoo} disabled={syncingToOdoo}
             className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
             {syncingToOdoo ? '⟳ Syncing…' : '↻ Sync to Odoo'}
+          </Button>
+        )}
+        {role === 'ADMIN' && (
+          <Button size="sm" onClick={() => { setBulkCatValue('Others'); setBulkCatModal(true); }}
+            className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+            Set Kategori
+          </Button>
+        )}
+        {role === 'ADMIN' && (
+          <Button size="sm" onClick={openBulkOdooCat}
+            className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+            Set Kategori Odoo
           </Button>
         )}
         <Button size="sm" onClick={() => setShowBulkUpload(true)}
@@ -566,6 +629,56 @@ export default function MasterDataTab() {
             <Button type="submit" className="flex-1" loading={uploading} disabled={!uploadFile}>Upload</Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Bulk Category Modal */}
+      <Modal open={bulkCatModal} onClose={() => setBulkCatModal(false)} title="Set Kategori Semua Produk">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Ubah field <span className="font-semibold">Kategori</span> untuk <span className="font-semibold">semua produk</span> menjadi:
+          </p>
+          <Input
+            label="Kategori"
+            value={bulkCatValue}
+            onChange={(e) => setBulkCatValue(e.target.value)}
+            required
+          />
+          <p className="text-xs text-amber-600">Perhatian: tindakan ini akan mengubah kategori semua produk sekaligus.</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setBulkCatModal(false)}>Batal</Button>
+            <Button className="flex-1" loading={bulkCatSaving} disabled={!bulkCatValue.trim()} onClick={handleBulkCategory}>
+              Terapkan
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Odoo Category Modal */}
+      <Modal open={bulkOdooCatModal} onClose={() => setBulkOdooCatModal(false)} title="Set Kategori Odoo Semua Produk">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Ubah field <span className="font-semibold">Kategori Odoo</span> untuk{' '}
+            <span className="font-semibold">semua produk</span> menjadi:
+          </p>
+          <ComboboxField
+            label="Kategori Odoo *"
+            options={odooCategories.map(c => ({ value: c.id, label: c.completeName }))}
+            value={bulkOdooCatOpt?.value ?? null}
+            onChange={(opt) => setBulkOdooCatOpt(opt ?? null)}
+            isLoading={odooLoading}
+            error={odooError}
+            placeholder="Ketik untuk mencari kategori Odoo..."
+          />
+          <p className="text-xs text-amber-600">
+            Perhatian: tindakan ini akan mengubah Kategori Odoo semua produk sekaligus.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setBulkOdooCatModal(false)}>Batal</Button>
+            <Button className="flex-1" loading={bulkOdooCatSaving} disabled={!bulkOdooCatOpt} onClick={handleBulkOdooCategory}>
+              Terapkan
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       {/* Delete Confirm */}

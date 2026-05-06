@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { getIntegration, saveIntegration } from '../../../api/admin';
+import { getIntegration, saveIntegration, resyncTransactions, verifyOdooConnection, saveOdooConfig } from '../../../api/admin';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import Spinner from '../../../components/ui/Spinner';
@@ -14,8 +14,16 @@ const SUB_TABS = [
   { key: 'odoo',    label: '🔶 Integration with Odoo' },
 ];
 
-const ODOO_REQUIRED = ['odoo_base_url', 'odoo_db', 'odoo_login', 'odoo_password', 'odoo_walkin_partner_id'];
+const ODOO_REQUIRED = ['odoo_walkin_partner_id'];
 
+// Wizard step: 'idle' → user fills credentials
+//              'verifying' → calling /admin/odoo/verify
+//              'verified'  → company dropdown enabled
+//              'error'     → inline error shown
+const WIZARD_IDLE      = 'idle';
+const WIZARD_VERIFYING = 'verifying';
+const WIZARD_VERIFIED  = 'verified';
+const WIZARD_ERROR     = 'error';
 
 export default function IntegrationTab() {
   const { toasts, addToast, removeToast } = useToast();
@@ -26,10 +34,25 @@ export default function IntegrationTab() {
   const [showKey, setShowKey]     = useState(false);
   const [errors, setErrors]       = useState({});
   const [saved, setSaved]         = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+
+  // Wizard state
+  const [wizardState,   setWizardState]   = useState(WIZARD_IDLE);
+  const [verifyError,   setVerifyError]   = useState('');
+  const [companies,     setCompanies]     = useState([]);
+  const [odooSaving,    setOdooSaving]    = useState(false);
 
   useEffect(() => {
     getIntegration()
-      .then((r) => setConfig(r.data.data))
+      .then((r) => {
+        const cfg = r.data.data;
+        setConfig(cfg);
+        // If a company is already saved, pre-populate wizard as verified
+        if (cfg?.odoo_company_id) {
+          setCompanies([{ id: cfg.odoo_company_id, name: cfg.odoo_company_name || `Company ${cfg.odoo_company_id}`, isDefault: false }]);
+          setWizardState(WIZARD_VERIFIED);
+        }
+      })
       .catch(() => addToast('Gagal memuat konfigurasi integrasi.', 'error'))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -37,6 +60,71 @@ export default function IntegrationTab() {
   function set(key, value) {
     setConfig((c) => ({ ...c, [key]: value }));
     if (errors[key]) setErrors((e) => { const n = { ...e }; delete n[key]; return n; });
+    // If credentials change, reset wizard to idle so user must re-verify
+    if (['odoo_base_url', 'odoo_db', 'odoo_login', 'odoo_password'].includes(key)) {
+      setWizardState(WIZARD_IDLE);
+      setCompanies([]);
+      setVerifyError('');
+    }
+  }
+
+  async function handleVerify() {
+    const { odoo_base_url, odoo_db, odoo_login, odoo_password } = config || {};
+    const errs = {};
+    if (!String(odoo_base_url || '').trim()) errs.odoo_base_url = 'Wajib diisi';
+    if (!String(odoo_db       || '').trim()) errs.odoo_db       = 'Wajib diisi';
+    if (!String(odoo_login    || '').trim()) errs.odoo_login    = 'Wajib diisi';
+    if (!String(odoo_password || '').trim() || odoo_password === MASKED) errs.odoo_password = 'Wajib diisi';
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setWizardState(WIZARD_VERIFYING);
+    setVerifyError('');
+    try {
+      const r = await verifyOdooConnection({
+        base_url: odoo_base_url,
+        db:       odoo_db,
+        login:    odoo_login,
+        password: odoo_password,
+      });
+      const list = r.data?.data?.companies || [];
+      setCompanies(list);
+      setWizardState(WIZARD_VERIFIED);
+      // Auto-select the default company if none currently saved
+      if (!config.odoo_company_id) {
+        const def = list.find(c => c.isDefault) || list[0];
+        if (def) {
+          setConfig(c => ({ ...c, odoo_company_id: def.id, odoo_company_name: def.name }));
+        }
+      }
+    } catch (err) {
+      const msg = err.response?.data?.message || err.message || 'Koneksi gagal';
+      setVerifyError(msg);
+      setWizardState(WIZARD_ERROR);
+    }
+  }
+
+  async function handleOdooSave() {
+    if (!config.odoo_company_id) {
+      addToast('Pilih company terlebih dahulu.', 'error');
+      return;
+    }
+    setOdooSaving(true);
+    try {
+      await saveOdooConfig({
+        base_url:     config.odoo_base_url,
+        db:           config.odoo_db,
+        login:        config.odoo_login,
+        password:     config.odoo_password !== MASKED ? config.odoo_password : undefined,
+        company_id:   config.odoo_company_id,
+        company_name: config.odoo_company_name || '',
+      });
+      addToast('Koneksi Odoo & company tersimpan.', 'success');
+      setSaved(true);
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menyimpan koneksi Odoo.', 'error');
+    } finally {
+      setOdooSaving(false);
+    }
   }
 
   function validateOdoo() {
@@ -182,7 +270,7 @@ export default function IntegrationTab() {
               <Toggle checked={!!config.odoo_is_active} onChange={(v) => set('odoo_is_active', v)} activeColor="bg-orange-500" />
             </div>
 
-            {/* Section 1: Koneksi — all MANDATORY */}
+            {/* Section 1: Koneksi Odoo — connection wizard */}
             <section>
               <SectionTitle color="orange">🔗 Koneksi Odoo</SectionTitle>
               <div className="space-y-3">
@@ -190,21 +278,21 @@ export default function IntegrationTab() {
                   hint="→ ODOO_BASE_URL"
                   value={config.odoo_base_url || ''}
                   onChange={(e) => set('odoo_base_url', e.target.value)}
-                  placeholder="http://localhost:8069"
+                  placeholder="https://your-instance.odoo.com"
                   error={errors.odoo_base_url} />
 
                 <Input label="Database Name" required
                   hint="→ ODOO_DB"
                   value={config.odoo_db || ''}
                   onChange={(e) => set('odoo_db', e.target.value)}
-                  placeholder="odoo18"
+                  placeholder="your-db-name"
                   error={errors.odoo_db} />
 
                 <Input label="Login Username" required
                   hint="→ ODOO_LOGIN"
                   value={config.odoo_login || ''}
                   onChange={(e) => set('odoo_login', e.target.value)}
-                  placeholder="admin"
+                  placeholder="admin@example.com"
                   error={errors.odoo_login} />
 
                 <Input label="Password" required
@@ -216,7 +304,85 @@ export default function IntegrationTab() {
                   error={errors.odoo_password} />
 
                 <ShowKeysToggle checked={showKey} onChange={setShowKey} />
+
+                {/* Verify button */}
+                <div className="flex items-center gap-3 pt-1">
+                  <Button type="button"
+                    loading={wizardState === WIZARD_VERIFYING}
+                    disabled={wizardState === WIZARD_VERIFYING}
+                    onClick={handleVerify}
+                    className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-5">
+                    {wizardState === WIZARD_VERIFYING ? '⟳ Memverifikasi…' : '🔍 Verify Connection'}
+                  </Button>
+                  {wizardState === WIZARD_VERIFIED && (
+                    <span className="text-xs text-green-600 font-medium">✓ Koneksi berhasil</span>
+                  )}
+                </div>
+
+                {/* Inline auth error */}
+                {wizardState === WIZARD_ERROR && (
+                  <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
+                    <span className="mt-0.5">✕</span>
+                    <span>{verifyError}</span>
+                  </div>
+                )}
               </div>
+            </section>
+
+            {/* Company dropdown — enabled only after successful verify */}
+            <section>
+              <SectionTitle color="orange">
+                🏢 Pilih Company
+                {wizardState !== WIZARD_VERIFIED && (
+                  <span className="ml-2 text-xs font-normal text-gray-400">(verify koneksi terlebih dahulu)</span>
+                )}
+              </SectionTitle>
+
+              {wizardState === WIZARD_VERIFIED && companies.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-sm font-medium text-gray-700">
+                      Company <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                      value={config.odoo_company_id || ''}
+                      onChange={(e) => {
+                        const selected = companies.find(c => c.id === Number(e.target.value));
+                        if (selected) {
+                          set('odoo_company_id', selected.id);
+                          set('odoo_company_name', selected.name);
+                        }
+                      }}>
+                      <option value="">-- Pilih Company --</option>
+                      {companies.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}{c.isDefault ? ' (default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {config.odoo_company_id && (
+                      <p className="text-xs text-gray-400">
+                        Terpilih: <strong>{config.odoo_company_name}</strong> (ID: {config.odoo_company_id})
+                      </p>
+                    )}
+                  </div>
+
+                  <Button type="button"
+                    loading={odooSaving}
+                    disabled={odooSaving || !config.odoo_company_id}
+                    onClick={handleOdooSave}
+                    className="bg-orange-500 hover:bg-orange-600 text-white text-sm px-5">
+                    {odooSaving ? '⟳ Menyimpan…' : '💾 Simpan Koneksi & Company'}
+                  </Button>
+                </div>
+              ) : (
+                <div className="border border-dashed border-gray-200 rounded-lg px-4 py-3 text-xs text-gray-400">
+                  {wizardState === WIZARD_VERIFIED && companies.length === 0
+                    ? 'Tidak ada company ditemukan untuk akun ini.'
+                    : 'Lakukan Verify Connection untuk memuat daftar company dari Odoo.'}
+                </div>
+              )}
             </section>
 
             {/* Section 2: Walk-in Partner — MANDATORY */}
@@ -371,6 +537,40 @@ export default function IntegrationTab() {
           )}
         </div>
       </form>
+
+      {/* Odoo Actions — shown when on Odoo sub-tab */}
+      {subTab === 'odoo' && (
+        <div className="max-w-xl mt-4">
+          <div className="flex items-center justify-between py-2 border-t border-gray-100">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Sync Transaksi ke Odoo</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Push semua transaksi PAID yang belum masuk ke Odoo (termasuk transaksi lama yang terlewat).
+              </p>
+            </div>
+            <Button type="button" loading={resyncing} disabled={resyncing}
+              className="ml-4 bg-orange-500 hover:bg-orange-600 text-white text-xs px-4 whitespace-nowrap"
+              onClick={async () => {
+                setResyncing(true);
+                try {
+                  const r = (await resyncTransactions()).data;
+                  addToast(
+                    r.queued === 0
+                      ? 'Semua transaksi sudah tersinkron.'
+                      : `${r.queued} transaksi dikirim ke integration service.`,
+                    'success'
+                  );
+                } catch (err) {
+                  addToast(err.response?.data?.message || 'Gagal memulai resync.', 'error');
+                } finally {
+                  setResyncing(false);
+                }
+              }}>
+              {resyncing ? '⟳ Syncing…' : '↻ Sync Transaksi'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Restart banner — shown after Odoo config saved */}
       {subTab === 'odoo' && saved && (

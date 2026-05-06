@@ -6,11 +6,11 @@ export default defineConfig({
   server: {
     port: 5173,
     host: '0.0.0.0',
-    allowedHosts: 'all',
+    allowedHosts: true,
     proxy: {
-      '/api':     'http://localhost:3000',
-      '/uploads': 'http://localhost:3000',
-      '/ws':      { target: 'ws://localhost:3000', ws: true },
+      '/api':     'http://localhost:3001',
+      '/uploads': 'http://localhost:3001',
+      '/ws':      { target: 'ws://localhost:3001', ws: true },
     },
   },
 });

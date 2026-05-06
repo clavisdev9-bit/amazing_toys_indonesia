@@ -7,6 +7,7 @@ const db = require('../config/database');
 
 let _sessionId = null;
 let _authPromise = null;
+let _uid = null;
 
 // Cache for startup lookups (currency ID, journal IDs)
 const _cache = {};
@@ -17,6 +18,7 @@ let _creds = null;
 /**
  * Load Odoo credentials from system_settings (set via admin panel),
  * falling back to .env vars so local dev without a DB entry still works.
+ * Also loads company_id for multi-company context injection.
  */
 async function loadCredentials() {
   try {
@@ -26,19 +28,21 @@ async function loadCredentials() {
       if (typeof cfg === 'string') cfg = JSON.parse(cfg);
       if (cfg.odoo_base_url && cfg.odoo_db && cfg.odoo_login && cfg.odoo_password) {
         return {
-          baseUrl:  cfg.odoo_base_url,
-          db:       cfg.odoo_db,
-          login:    cfg.odoo_login,
-          password: cfg.odoo_password,
+          baseUrl:   cfg.odoo_base_url,
+          db:        cfg.odoo_db,
+          login:     cfg.odoo_login,
+          password:  cfg.odoo_password,
+          companyId: cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null,
         };
       }
     }
   } catch (_) { /* fall through to env */ }
   return {
-    baseUrl:  env.ODOO_BASE_URL,
-    db:       env.ODOO_DB,
-    login:    env.ODOO_LOGIN,
-    password: env.ODOO_PASSWORD,
+    baseUrl:   env.ODOO_BASE_URL,
+    db:        env.ODOO_DB,
+    login:     env.ODOO_LOGIN,
+    password:  env.ODOO_PASSWORD,
+    companyId: null,
   };
 }
 
@@ -61,6 +65,7 @@ async function authenticate() {
   if (!result?.uid) throw new Error('Odoo auth failed: ' + JSON.stringify(res.data?.error));
   _sessionId = res.headers['set-cookie']?.find(c => c.startsWith('session_id='))?.split(';')[0];
   if (!_sessionId) throw new Error('Odoo: session_id cookie not found');
+  _uid = result.uid;
   logger.info('Odoo: authenticated uid=' + result.uid);
   return _sessionId;
 }
@@ -74,14 +79,46 @@ async function ensureAuth() {
 
 function invalidateSession() {
   _sessionId = null;
+  _uid = null;
 }
 
 function isOdooError(data) {
   return data?.error != null;
 }
 
-async function callKw(model, method, args, kwargs = {}, retrying = false) {
+function isRateLimitError(err) {
+  if (!err) return false;
+  if (err?.code === 429 || err?.status === 429) return true;
+  const msg = err?.data?.message || err?.message || '';
+  return /too many requests/i.test(msg);
+}
+
+const _sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * _state: { sessionRetried?: boolean, rlAttempts?: number }
+ * Tracks per-call retry context to avoid mixing session-retry and rate-limit-retry.
+ */
+async function callKw(model, method, args, kwargs = {}, _state = {}) {
   const session = await ensureAuth();
+
+  // Inject company_id into every RPC context so all records are scoped to the
+  // correct company in a multi-company Odoo instance.
+  const companyId = _creds?.companyId;
+  if (companyId) {
+    kwargs = {
+      ...kwargs,
+      context: {
+        lang: 'en_US',
+        tz: 'Asia/Jakarta',
+        ...(kwargs.context || {}),
+        uid: _uid,                          // always current uid (post re-auth)
+        allowed_company_ids: [companyId],
+        company_id: companyId,
+      },
+    };
+  }
+
   const body = {
     jsonrpc: '2.0',
     method: 'call',
@@ -89,22 +126,51 @@ async function callKw(model, method, args, kwargs = {}, retrying = false) {
     params: { model, method, args, kwargs },
   };
   const baseUrl = _creds?.baseUrl || env.ODOO_BASE_URL;
-  const res = await axios.post(
-    `${baseUrl}/web/dataset/call_kw`,
-    body,
-    {
-      headers: { Cookie: session, 'Content-Type': 'application/json' },
-      timeout: 20000,
+
+  let res;
+  try {
+    res = await axios.post(
+      `${baseUrl}/web/dataset/call_kw`,
+      body,
+      {
+        headers: { Cookie: session, 'Content-Type': 'application/json' },
+        timeout: 20000,
+      }
+    );
+  } catch (axiosErr) {
+    // Odoo Online can return HTTP 429 — axios throws for non-2xx
+    if (axiosErr.response?.status === 429) {
+      const rlAttempts = _state.rlAttempts || 0;
+      if (rlAttempts < 3) {
+        const waitMs = 2000 * Math.pow(2, rlAttempts);
+        logger.warn(`Odoo HTTP 429 [${model}.${method}] — waiting ${waitMs}ms (attempt ${rlAttempts + 1}/3)`);
+        await _sleep(waitMs);
+        return callKw(model, method, args, kwargs, { ..._state, rlAttempts: rlAttempts + 1 });
+      }
     }
-  );
+    throw axiosErr;
+  }
 
   if (isOdooError(res.data)) {
     const err = res.data.error;
-    // Session expiry
-    if (!retrying && err?.data?.name?.includes('SessionExpiredException')) {
+
+    // Session expiry — re-auth and retry once
+    if (!_state.sessionRetried && err?.data?.name?.includes('SessionExpiredException')) {
       invalidateSession();
-      return callKw(model, method, args, kwargs, true);
+      return callKw(model, method, args, kwargs, { ..._state, sessionRetried: true });
     }
+
+    // Rate limit in JSON-RPC body — wait and retry with exponential backoff
+    if (isRateLimitError(err)) {
+      const rlAttempts = _state.rlAttempts || 0;
+      if (rlAttempts < 3) {
+        const waitMs = 2000 * Math.pow(2, rlAttempts);
+        logger.warn(`Odoo rate limit [${model}.${method}] — waiting ${waitMs}ms (attempt ${rlAttempts + 1}/3)`);
+        await _sleep(waitMs);
+        return callKw(model, method, args, kwargs, { ..._state, rlAttempts: rlAttempts + 1 });
+      }
+    }
+
     const msg = `Odoo RPC error [${model}.${method}]: ${err?.data?.message || JSON.stringify(err)}`;
     throw Object.assign(new Error(msg), { odooError: err, fatal: isFatalOdooError(err) });
   }
@@ -136,32 +202,66 @@ async function execute(model, method, ids) {
 // Resolve IDR currency id, payment journal IDs, warehouse ID, customer location,
 // and custom field availability at startup.
 async function resolveStartupRefs() {
-  const [currencies, journals, sosFields, warehouses, custLocs] = await Promise.all([
-    searchRead('res.currency', [['name', '=', 'IDR']], ['id', 'name']),
-    searchRead('account.journal', [['type', 'in', ['cash', 'bank']]], ['id', 'name', 'type']),
-    searchRead('ir.model.fields', [['model', '=', 'sale.order'], ['name', 'in', ['x_studio_sos_transaction_id', 'x_studio_sos_tenant_ids']]], ['name']),
-    // Default warehouse: prefer code='WH', fall back to first available.
-    searchRead('stock.warehouse', [['code', '=', 'WH']], ['id', 'name', 'code'], { limit: 1 }),
-    // Customer virtual location — required so action_confirm can create delivery orders.
-    searchRead('stock.location', [['usage', '=', 'customer'], ['active', '=', true]], ['id', 'name'], { limit: 1 }),
-  ]);
+  const companyId = _creds?.companyId;
+
+  // Build company-scoped domains for warehouse and journal lookups so that in a
+  // multi-company Odoo instance we always pick resources that belong to the
+  // configured company rather than the first record found across all companies.
+  const warehouseDomain = companyId
+    ? [['company_id', '=', companyId]]
+    : [['code', '=', 'WH']];
+
+  const journalDomain = companyId
+    ? [['type', 'in', ['cash', 'bank']], ['company_id', '=', companyId]]
+    : [['type', 'in', ['cash', 'bank']]];
+
+  const custLocDomain = companyId
+    ? [['usage', '=', 'customer'], ['active', '=', true], ['company_id', '=', companyId]]
+    : [['usage', '=', 'customer'], ['active', '=', true]];
+
+  // Sequential calls with small gaps to avoid bursting Odoo Online's rate limit.
+  // (5 parallel requests at startup are enough to trigger HTTP 429 on trial instances.)
+  const currencies  = await searchRead('res.currency', [['name', '=', 'IDR']], ['id', 'name']);
+  await _sleep(150);
+  const journals    = await searchRead('account.journal', journalDomain, ['id', 'name', 'type']);
+  await _sleep(150);
+  const sosFields   = await searchRead('ir.model.fields', [['model', '=', 'sale.order'], ['name', 'in', ['x_studio_sos_transaction_id', 'x_studio_sos_tenant_ids']]], ['name', 'ttype', 'relation']);
+  await _sleep(150);
+  const warehouses  = await searchRead('stock.warehouse', warehouseDomain, ['id', 'name', 'code'], { limit: 1 });
+  await _sleep(150);
+  const custLocs    = await searchRead('stock.location', custLocDomain, ['id', 'name'], { limit: 1 });
+  await _sleep(150);
+  // Prefer a "Buy" route for replenishment; fall back to any product-selectable route.
+  // Used by order.push.js when action_confirm fails with a route error.
+  const buyRoutes   = await searchRead('stock.route', [['name', 'ilike', 'Buy'], ['product_selectable', '=', true]], ['id', 'name'], { limit: 1 });
+  const fallbackRoutes = buyRoutes.length > 0
+    ? buyRoutes
+    : await searchRead('stock.route', [['product_selectable', '=', true]], ['id', 'name'], { limit: 1 });
 
   _cache.currencyIdIdr = currencies[0]?.id || null;
   _cache.journals = {};
   for (const j of journals) {
     _cache.journals[j.name.toUpperCase()] = j.id;
   }
-  const fieldNames = sosFields.map(f => f.name);
-  _cache.hasSosTransactionId = fieldNames.includes('x_studio_sos_transaction_id');
-  _cache.hasSosTenantId = fieldNames.includes('x_studio_sos_tenant_ids');
+  const txnField    = sosFields.find(f => f.name === 'x_studio_sos_transaction_id');
+  const tenantField = sosFields.find(f => f.name === 'x_studio_sos_tenant_ids');
+  _cache.hasSosTransactionId    = !!txnField;
+  _cache.hasSosTenantId         = !!tenantField;
+  _cache.tenantIdFieldType      = tenantField?.ttype     || null;
+  _cache.tenantIdFieldRelation  = tenantField?.relation  || null;
   _cache.warehouseId = warehouses[0]?.id || null;
   _cache.customerLocationId = custLocs[0]?.id || null;
+  _cache.fallbackRouteId = fallbackRoutes[0]?.id || null;
+  _cache.fallbackRouteName = fallbackRoutes[0]?.name || null;
   logger.info('Odoo startup refs resolved', {
     currencyIdIdr: _cache.currencyIdIdr,
-    journals: Object.keys(_cache.journals),
-    hasSosFields: _cache.hasSosTransactionId,
-    warehouseId: _cache.warehouseId,
     customerLocationId: _cache.customerLocationId,
+    hasSosFields: _cache.hasSosTransactionId,
+    journals: Object.keys(_cache.journals),
+    warehouseId: _cache.warehouseId,
+    fallbackRouteId: _cache.fallbackRouteId,
+    fallbackRouteName: _cache.fallbackRouteName,
+    companyId,
   });
 }
 

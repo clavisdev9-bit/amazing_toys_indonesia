@@ -24,14 +24,19 @@ router.get('/recap',
   }
 );
 
-// GET /api/v1/cashier/transactions — transactions handled today
+// GET /api/v1/cashier/transactions — transactions handled today (scoped to caller's session)
+// CASHIER: always sees only their own transactions.
+// LEADER/ADMIN: sees their own by default; pass ?cashier_id=<uuid> to inspect another cashier.
 router.get('/transactions',
   authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
-  [qv('date').optional().isDate()],
+  [qv('date').optional().isDate(), qv('cashier_id').optional().isUUID()],
   validate,
   async (req, res, next) => {
     try {
-      const data = await cashierSvc.getCashierTransactions(req.query.date);
+      const cashierId = req.user.role === 'CASHIER'
+        ? req.user.userId
+        : (req.query.cashier_id || null);
+      const data = await cashierSvc.getCashierTransactions(cashierId, req.query.date);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   }

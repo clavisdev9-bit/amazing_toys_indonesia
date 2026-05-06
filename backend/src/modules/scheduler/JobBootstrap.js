@@ -62,7 +62,10 @@ async function initializeScheduledJobs(getConfigFn) {
     );
   } catch (err) {
     // Non-fatal: app still starts; admin can fix config and call re-init via API.
-    logger.error(`[Scheduler] initializeScheduledJobs failed: ${err.message}`);
+    logger.error('[Scheduler] initializeScheduledJobs failed', {
+      error: err?.message || String(err),
+      stack: err?.stack,
+    });
   }
 }
 

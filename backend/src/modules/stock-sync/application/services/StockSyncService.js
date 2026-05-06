@@ -20,10 +20,11 @@ class StockSyncService {
       "SELECT value FROM system_settings WHERE key = 'integration_config'"
     );
     const cfg      = result.rows[0]?.value ? JSON.parse(result.rows[0].value) : {};
-    const baseUrl  = cfg.odoo_base_url || process.env.ODOO_URL;
+    const baseUrl  = cfg.odoo_base_url || process.env.ODOO_BASE_URL;
     const database = cfg.odoo_db       || process.env.ODOO_DB;
     const login    = cfg.odoo_login    || process.env.ODOO_LOGIN;
     const password = cfg.odoo_password || process.env.ODOO_PASSWORD;
+    const companyId = cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null;
 
     if (!baseUrl || !database || !login || !password) {
       throw Object.assign(
@@ -31,7 +32,7 @@ class StockSyncService {
         { statusCode: 502 }
       );
     }
-    return { baseUrl, db: database, login, password };
+    return { baseUrl, db: database, login, password, companyId };
   }
 
   /**
@@ -42,9 +43,9 @@ class StockSyncService {
    */
   async syncStock({ triggeredBy, productIds = null }) {
     const config          = await this._loadOdooConfig();
-    const httpClient      = new OdooHttpClient(config);
+    const httpClient      = new OdooHttpClient(config);           // companyId injected into RPC context
     const productAdapter  = new OdooProductAdapter(httpClient);
-    const stockAdapter    = new OdooStockAdapter(httpClient);
+    const stockAdapter    = new OdooStockAdapter(httpClient, config.companyId);  // explicit domain filters
     const chatterAdapter  = new OdooChatterAdapter(httpClient);
 
     // All Odoo writes flow through OdooProductRepository (single entry point).

@@ -33,13 +33,22 @@ export const getIntegration     = ()             => client.get('/admin/integrati
 export const saveIntegration    = (data)         => client.put('/admin/integration', data);
 export const syncOdooProducts   = (force = false) => client.post('/admin/products/sync-odoo', { force });
 
+// ── Odoo connection wizard ──────────────────────────────────────────────────
+export const verifyOdooConnection = (data)       => client.post('/admin/odoo/verify', data);
+export const saveOdooConfig       = (data)       => client.post('/admin/odoo/config', data);
+
 // ── Odoo lookups ───────────────────────────────────────────────────────────
 export const getOdooCategories     = ()                => client.get('/admin/odoo/categories');
 
 // ── Bulk Upload ────────────────────────────────────────────────────────────
-export const bulkUploadProducts = (products) => client.post('/admin/products/bulk-upload', { products });
+export const bulkUploadProducts      = (products)  => client.post('/admin/products/bulk-upload', { products });
+export const adminBulkUpdateCategory    = (category)     => client.patch('/admin/products/bulk-category', { category });
+export const adminBulkUpdateOdooCategory = (odoo_categ_id) => client.patch('/admin/products/bulk-odoo-category', { odoo_categ_id });
 
 // ── Stock Sync ──────────────────────────────────────────────────────────────
 export const syncStock             = (productIds = null) =>
   client.post('/admin/stock-sync', productIds ? { product_ids: productIds } : {});
 export const getStockSyncHistory   = (params)           => client.get('/admin/stock-sync/history', { params });
+
+// ── Transaction Resync ──────────────────────────────────────────────────────
+export const resyncTransactions = () => client.post('/admin/transactions/resync');

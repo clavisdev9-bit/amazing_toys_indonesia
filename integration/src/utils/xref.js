@@ -36,4 +36,11 @@ async function getOdooIdBySosId(entityType, sosId) {
   return xref?.odoo_id || null;
 }
 
-module.exports = { getXref, upsertXref, markXrefCancelled, getOdooIdBySosId };
+async function deleteXref(entityType, sosId) {
+  await query(
+    `DELETE FROM integration_xref WHERE entity_type = $1 AND sos_id = $2`,
+    [entityType, sosId]
+  );
+}
+
+module.exports = { getXref, upsertXref, markXrefCancelled, getOdooIdBySosId, deleteXref };

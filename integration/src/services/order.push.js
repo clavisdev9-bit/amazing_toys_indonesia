@@ -11,11 +11,26 @@ const logger = require('../config/logger');
 
 const TXN_ID_REGEX = /^TXN-[0-9]{8}-[0-9]{5}$/;
 
+const toOdooDatetime = (iso) =>
+  new Date(iso || undefined).toISOString().replace('T', ' ').slice(0, 19);
+
 /**
- * Resolve Odoo product_id from SOS product barcode/name.
- * Returns null if the product cannot be found; throws if Odoo is unreachable.
+ * Resolve Odoo product.product id for a SOS order line item.
+ * Strategy (in order):
+ *   1. product_odoo_id (template ID from SOS products table) → find the variant
+ *   2. barcode lookup on product.product
+ *   3. name ilike lookup on product.product
+ * Returns null if unresolvable; throws if Odoo is unreachable.
  */
 async function resolveOdooProduct(sosItem) {
+  if (sosItem.product_odoo_id) {
+    const variants = await odoo.searchRead(
+      'product.product',
+      [['product_tmpl_id', '=', sosItem.product_odoo_id]],
+      ['id', 'name']
+    );
+    if (variants.length > 0) return variants[0].id;
+  }
   if (sosItem.barcode) {
     const products = await odoo.searchRead(
       'product.product',
@@ -48,7 +63,6 @@ async function pushOrder(transactionId) {
   try {
     return await _doPushOrder(transactionId);
   } catch (err) {
-    // Safety net: any unhandled exception re-queues rather than silently dropping.
     logger.error('Order push: unexpected error — re-queuing for retry', {
       transactionId,
       error: err.message,
@@ -61,17 +75,19 @@ async function pushOrder(transactionId) {
 
 async function _doPushOrder(transactionId) {
   // Warm startup cache (currency ID, custom field availability).
-  // Non-fatal if Odoo is temporarily unreachable — will be retried below.
   const cache = odoo.getCache();
   if (cache.hasSosTransactionId === undefined) {
     try {
       await odoo.resolveStartupRefs();
     } catch (err) {
-      logger.warn('Order push: startup refs not resolved — custom fields will be skipped', {
+      logger.error('Order push: Odoo startup refs failed — custom fields and idempotency check disabled. Verify Odoo credentials.', {
         transactionId,
         error: err.message,
       });
     }
+  }
+  if (!cache.hasSosTransactionId) {
+    logger.warn('Order push: x_studio_sos_transaction_id not found in Odoo — idempotency check disabled, duplicate orders possible on retry', { transactionId });
   }
 
   if (cb.isOpen('odoo')) {
@@ -117,8 +133,11 @@ async function _doPushOrder(transactionId) {
         cancelledOdooId: existingOrder.id,
       });
     }
-  } catch (_err) {
-    // x_studio field may not be configured yet — continue without it.
+  } catch (err) {
+    logger.warn('Order push: Odoo idempotency check failed — proceeding without it', {
+      transactionId,
+      error: err.message,
+    });
   }
 
   const startAt = Date.now();
@@ -148,7 +167,6 @@ async function _doPushOrder(transactionId) {
   // ── Resolve Odoo product IDs for all line items ──────────────────────────────
   const items = txn.items || [];
   const lines = [];
-  let allResolved = true;
 
   for (const item of items) {
     let odooProductId;
@@ -179,8 +197,8 @@ async function _doPushOrder(transactionId) {
         status: 'FAILED',
         error_message: `Unresolved product: ${item.product_name}`,
       });
-      allResolved = false;
-      break;
+      retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
+      return { success: false, odoo_order_id: null, error: `Unresolved product in Odoo: ${item.product_name}` };
     }
 
     lines.push([0, 0, {
@@ -192,13 +210,9 @@ async function _doPushOrder(transactionId) {
     }]);
   }
 
-  if (!allResolved) {
-    retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
-    return { success: false, odoo_order_id: null, error: 'One or more products could not be resolved in Odoo' };
-  }
-
   // ── Build order values ───────────────────────────────────────────────────────
-  const tenantIds = [...new Set(items.map(i => i.tenant_id).filter(Boolean))].join(',');
+  const tenantIdList = [...new Set(items.map(i => i.tenant_id).filter(Boolean))];
+  const tenantIds    = tenantIdList.join(',');
 
   // Payment details captured in note (FR-005).
   const paymentNote = [
@@ -210,9 +224,7 @@ async function _doPushOrder(transactionId) {
     `Paid At: ${txn.paid_at || '-'}`,
   ].join(' | ');
 
-  const dateOrder = txn.paid_at
-    ? new Date(txn.paid_at).toISOString().replace('T', ' ').slice(0, 19)
-    : new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const dateOrder = toOdooDatetime(txn.paid_at);
 
   const orderVals = {
     partner_id: partnerId,
@@ -225,7 +237,24 @@ async function _doPushOrder(transactionId) {
   // warehouse_id is required for action_confirm to resolve delivery routes.
   if (cache.warehouseId) orderVals.warehouse_id = cache.warehouseId;
   if (cache.hasSosTransactionId) orderVals.x_studio_sos_transaction_id = transactionId;
-  if (cache.hasSosTenantId) orderVals.x_studio_sos_tenant_ids = tenantIds;
+  if (cache.hasSosTenantId) {
+    if (cache.tenantIdFieldType === 'many2many') {
+      const odooTenantIds = [];
+      for (const tid of tenantIdList) {
+        const odooId = await xref.getOdooIdBySosId('tenant', tid);
+        if (odooId) {
+          odooTenantIds.push(odooId);
+        } else {
+          logger.warn('Order push: no Odoo xref for tenant — skipping tenant field entry', { transactionId, tenantId: tid });
+        }
+      }
+      if (odooTenantIds.length > 0) {
+        orderVals.x_studio_sos_tenant_ids = [[6, 0, odooTenantIds]];
+      }
+    } else {
+      orderVals.x_studio_sos_tenant_ids = tenantIds;
+    }
+  }
 
   // ── Step 1: Create draft sale.order (Quotation) ──────────────────────────────
   let odooOrderId;
@@ -249,27 +278,58 @@ async function _doPushOrder(transactionId) {
   }
 
   // ── Step 2: Confirm → state = 'sale' ────────────────────────────────────────
-  // Per BR-009: action_confirm failures require manual resolution — do NOT retry.
   try {
     await odoo.execute('sale.order', 'action_confirm', [odooOrderId]);
     logger.info('Order push: order confirmed (state=sale)', { transactionId, odooOrderId });
   } catch (err) {
-    logger.error('Order push: action_confirm FAILED — manual resolution required', {
-      transactionId,
-      odooOrderId,
-      error: err.message,
-    });
-    audit.log({
-      operation_type: 'ORDER_PUSH',
-      sos_entity_id: transactionId,
-      odoo_entity_id: odooOrderId,
-      action: 'FAIL',
-      status: 'FAILED',
-      error_message: `action_confirm failed: ${err.message}`,
-      duration_ms: Date.now() - startAt,
-    });
-    await xref.upsertXref('order', transactionId, odooOrderId, { tenantIds, confirmFailed: true });
-    return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed: ${err.message}` };
+    const isRouteError = err.message.includes('No rule has been found to replenish');
+    if (isRouteError && cache.fallbackRouteId) {
+      // Route misconfiguration: set a fallback route on all order lines and retry confirm once.
+      try {
+        const orderLines = await odoo.searchRead(
+          'sale.order.line', [['order_id', '=', odooOrderId]], ['id']
+        );
+        const lineIds = orderLines.map(l => l.id);
+        if (lineIds.length > 0) {
+          await odoo.write('sale.order.line', lineIds, { route_id: cache.fallbackRouteId });
+        }
+        await odoo.execute('sale.order', 'action_confirm', [odooOrderId]);
+        logger.info('Order push: order confirmed after applying fallback route', {
+          transactionId, odooOrderId, fallbackRouteId: cache.fallbackRouteId,
+        });
+        // Confirmed — fall through to lock step.
+      } catch (retryErr) {
+        logger.error('Order push: action_confirm failed even after fallback route fix', {
+          transactionId, odooOrderId, error: retryErr.message,
+        });
+        audit.log({
+          operation_type: 'ORDER_PUSH',
+          sos_entity_id: transactionId,
+          odoo_entity_id: odooOrderId,
+          action: 'FAIL',
+          status: 'FAILED',
+          error_message: `action_confirm failed (route+fallback): ${retryErr.message}`,
+          duration_ms: Date.now() - startAt,
+        });
+        await xref.upsertXref('order', transactionId, odooOrderId, { tenantIds, confirmFailed: true });
+        return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed: ${retryErr.message}` };
+      }
+    } else {
+      logger.error('Order push: action_confirm FAILED — manual resolution required', {
+        transactionId, odooOrderId, error: err.message,
+      });
+      audit.log({
+        operation_type: 'ORDER_PUSH',
+        sos_entity_id: transactionId,
+        odoo_entity_id: odooOrderId,
+        action: 'FAIL',
+        status: 'FAILED',
+        error_message: `action_confirm failed: ${err.message}`,
+        duration_ms: Date.now() - startAt,
+      });
+      await xref.upsertXref('order', transactionId, odooOrderId, { tenantIds, confirmFailed: true });
+      return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed: ${err.message}` };
+    }
   }
 
   // ── Step 3: Lock order → locked = true ──────────────────────────────────────
@@ -339,10 +399,47 @@ async function _reConfirmOrder(transactionId, odooOrderId, meta) {
     } catch (_) { /* non-fatal */ }
   }
 
+  // Verify the draft order still exists and is in a confirmable state.
+  let orderState;
+  try {
+    const orders = await odoo.searchRead('sale.order', [['id', '=', odooOrderId]], ['id', 'state']);
+    orderState = orders[0]?.state;
+  } catch (_) { /* non-fatal — proceed and let action_confirm report the error */ }
+
+  if (!orderState) {
+    // Order was deleted from Odoo — clear the stale xref so a fresh order gets created.
+    logger.warn('Order push: draft order deleted from Odoo — clearing xref for recreation', { transactionId, odooOrderId });
+    await xref.deleteXref('order', transactionId);
+    return { success: false, odoo_order_id: null, error: 'Draft order deleted; xref cleared for recreation' };
+  }
+
+  if (orderState !== 'draft' && orderState !== 'sent') {
+    // Already confirmed (or cancelled). Clear the flag and treat as success if confirmed.
+    const newMeta = { ...meta };
+    delete newMeta.confirmFailed;
+    await xref.upsertXref('order', transactionId, odooOrderId, newMeta);
+    const isSuccess = orderState === 'sale' || orderState === 'done';
+    logger.info('Order push: order already past draft state — clearing confirmFailed', { transactionId, odooOrderId, orderState });
+    return { success: isSuccess, odoo_order_id: odooOrderId, error: isSuccess ? null : `Order state: ${orderState}` };
+  }
+
   try {
     await odoo.execute('sale.order', 'action_confirm', [odooOrderId]);
     logger.info('Order push: re-confirmation succeeded', { transactionId, odooOrderId });
   } catch (err) {
+    const isRouteError = err.message.includes('No rule has been found to replenish');
+    if (isRouteError) {
+      // Route misconfiguration in Odoo — order created but can't be auto-confirmed.
+      // Accept the draft and stop retrying; Odoo admin must confirm manually.
+      logger.warn('Order push: route error on confirmation — leaving as draft for manual confirmation in Odoo', {
+        transactionId, odooOrderId,
+      });
+      const newMeta = { ...meta };
+      delete newMeta.confirmFailed;
+      newMeta.manualConfirmRequired = true;
+      await xref.upsertXref('order', transactionId, odooOrderId, newMeta);
+      return { success: true, odoo_order_id: odooOrderId, error: null };
+    }
     logger.error('Order push: re-confirmation failed — manual resolution required', {
       transactionId, odooOrderId, error: err.message,
     });
@@ -353,7 +450,6 @@ async function _reConfirmOrder(transactionId, odooOrderId, meta) {
     await odoo.execute('sale.order', 'action_lock', [odooOrderId]);
   } catch (_) { /* non-fatal */ }
 
-  // Clear confirmFailed flag now that confirmation succeeded.
   const newMeta = { ...meta };
   delete newMeta.confirmFailed;
   await xref.upsertXref('order', transactionId, odooOrderId, newMeta);

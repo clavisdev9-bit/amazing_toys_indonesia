@@ -57,20 +57,37 @@ function start() {
     }
   });
 
-  // ── ORDER_PAID polling fallback (every POLLING_INTERVAL_SEC seconds) ───────
+  // ── ORDER_PAID polling fallback (every POLLING_INTERVAL_SEC seconds) ──────
+  // Queries the shared DB directly so ALL historical PAID transactions are
+  // covered — not just today's (which a date-filtered cashier API would miss).
+  const { query } = require('../config/database');
   setInterval(async () => {
     try {
-      const data = await sos.get('/cashier/transactions?status=PAID&limit=50');
-      const txns = data.transactions || data.data || [];
+      const result = await query(`
+        SELECT t.transaction_id FROM transactions t
+        LEFT JOIN integration_xref x
+               ON x.entity_type = 'order'
+              AND x.sos_id      = t.transaction_id
+              AND x.status      = 'ACTIVE'
+        WHERE t.status = 'PAID'
+          AND (x.odoo_id IS NULL OR (x.sync_metadata->>'confirmFailed')::boolean = true)
+        ORDER BY t.paid_at DESC
+        LIMIT 100
+      `);
 
-      for (const txn of txns) {
-        const existing = await xref.getXref('order', txn.transaction_id);
-        if (existing) continue; // already pushed
-        logger.info('Polling: detected unpushed PAID transaction', { transactionId: txn.transaction_id });
-        orderPush.pushOrder(txn.transaction_id).catch(() => {});
+      for (const row of result.rows) {
+        logger.info('Polling: unpushed PAID transaction detected', {
+          transactionId: row.transaction_id,
+        });
+        orderPush.pushOrder(row.transaction_id).catch((err) =>
+          logger.error('Polling: order push error', {
+            transactionId: row.transaction_id,
+            error: err.message,
+          })
+        );
       }
     } catch (err) {
-      // Polling is best-effort; swallow errors silently
+      logger.error('Polling: DB query failed', { error: err.message });
     }
   }, env.POLLING_INTERVAL_SEC * 1000);
 

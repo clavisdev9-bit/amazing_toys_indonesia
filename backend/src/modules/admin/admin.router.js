@@ -53,14 +53,40 @@ const { bulkUploadProducts } = require('./bulkUpload.controller');
 router.post('/products/bulk-upload', ...adminOnly, bulkUploadProducts);
 
 router.post('/products/sync-odoo', ...adminOnly, async (req, res, next) => {
+  const { force = false } = req.body;
+  const integrationUrl = process.env.INTEGRATION_WEBHOOK_URL || 'http://localhost:4000';
+  const secret         = process.env.WEBHOOK_SECRET || '';
+
+  let resp;
   try {
-    const { force = false } = req.body;
-    const result = await adminSvc.syncOdooProducts(force);
-    res.json({ success: true, ...result });
+    resp = await fetch(`${integrationUrl}/sync/push/products`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
+      body:    JSON.stringify({ force }),
+      signal:  AbortSignal.timeout(120_000), // 2-min ceiling; products sync can be slow
+    });
   } catch (err) {
-    if (err.statusCode === 409) return res.status(409).json({ success: false, message: err.message });
-    next(err);
+    // Network-level failure (integration service down, timeout, DNS)
+    const label =
+      err.name === 'TimeoutError'
+        ? 'Sync timed out — integration service took > 2 minutes'
+        : `Cannot reach integration service at ${integrationUrl}: ${err.message}`;
+    return next(new AppError(label, 502));
   }
+
+  let body;
+  try {
+    body = await resp.json();
+  } catch {
+    return next(new AppError(`Integration service returned non-JSON (HTTP ${resp.status})`, 502));
+  }
+
+  if (!resp.ok) {
+    const status = resp.status === 409 ? 409 : 502;
+    return res.status(status).json({ success: false, message: body.message || 'Integration service error' });
+  }
+
+  res.json(body);
 });
 
 router.post('/products/upload-image', ...adminOnly, async (req, res, next) => {
@@ -89,6 +115,24 @@ router.post('/products', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminCreateProduct(req.body);
     res.status(201).json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.patch('/products/bulk-category', ...adminOnly, async (req, res, next) => {
+  try {
+    const { category } = req.body;
+    if (!category) throw new AppError('category wajib diisi.', 422);
+    const data = await adminSvc.adminBulkUpdateCategory(category);
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+router.patch('/products/bulk-odoo-category', ...adminOnly, async (req, res, next) => {
+  try {
+    const { odoo_categ_id } = req.body;
+    if (!odoo_categ_id) throw new AppError('odoo_categ_id wajib diisi.', 422);
+    const data = await adminSvc.adminBulkUpdateOdooCategory(odoo_categ_id);
+    res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
 
@@ -141,6 +185,18 @@ router.get('/transactions', ...adminOnly, async (req, res, next) => {
       limit:  parseInt(req.query.limit || '200', 10),
     });
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /admin/transactions/resync
+ * Push all PAID transactions that are not yet in integration_xref to Odoo.
+ * Fire-and-forget per transaction; returns count immediately.
+ */
+router.post('/transactions/resync', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await adminSvc.resyncUnsyncedTransactions();
+    res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
 
@@ -200,6 +256,58 @@ const { syncToOdoo, getSyncHistory } = require('../stock-sync/presentation/contr
 
 router.post('/stock-sync',         ...adminOnly, syncToOdoo);
 router.get('/stock-sync/history',  ...adminOnly, getSyncHistory);
+
+// ── Odoo connection wizard ────────────────────────────────────────────────────
+
+/**
+ * POST /admin/odoo/verify
+ * Authenticate against Odoo and return accessible companies.
+ * Body: { base_url, db, login, password }
+ */
+router.post('/odoo/verify', ...adminOnly, async (req, res, next) => {
+  try {
+    const { base_url, db, login, password } = req.body;
+    if (!base_url || !db || !login || !password) {
+      throw new AppError('base_url, db, login, password wajib diisi.', 422);
+    }
+    const data = await adminSvc.verifyOdooConnection({ base_url, db, login, password });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /admin/odoo/config
+ * Return current Odoo connection config (password masked).
+ */
+router.get('/odoo/config', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getIntegrationConfig();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /admin/odoo/config
+ * Save Odoo connection config including selected company.
+ * Body: { base_url, db, login, password, company_id, company_name }
+ */
+router.post('/odoo/config', ...adminOnly, async (req, res, next) => {
+  try {
+    const { base_url, db, login, password, company_id, company_name } = req.body;
+    if (!base_url || !db || !login || !company_id) {
+      throw new AppError('base_url, db, login, company_id wajib diisi.', 422);
+    }
+    const data = await adminSvc.saveIntegrationConfig({
+      odoo_base_url:    base_url,
+      odoo_db:          db,
+      odoo_login:       login,
+      ...(password ? { odoo_password: password } : {}),
+      odoo_company_id:   Number(company_id),
+      odoo_company_name: company_name || '',
+    });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
 
 // ── Odoo lookups ──────────────────────────────────────────────────────────────
 

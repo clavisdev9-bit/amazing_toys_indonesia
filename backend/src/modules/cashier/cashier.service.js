@@ -32,19 +32,26 @@ async function getDailyRecap(cashierId, date) {
 }
 
 /**
- * Get list of transactions processed by a cashier on a given day.
+ * Get transactions processed by a specific cashier on a given day.
+ * LEADER/ADMIN may pass cashierId=null to get all cashiers for that date.
  */
-async function getCashierTransactions(date) {
+async function getCashierTransactions(cashierId, date) {
   const shiftDate = date || new Date().toLocaleString('sv', { timeZone: 'Asia/Jakarta' }).slice(0, 10);
+  const params = [shiftDate];
+  const cashierFilter = cashierId
+    ? (() => { params.push(cashierId); return `AND t.cashier_id = $${params.length}`; })()
+    : '';
   const result = await query(
     `SELECT t.transaction_id, t.status, t.total_amount, t.payment_method, t.paid_at,
-            c.full_name AS customer_name
+            c.full_name AS customer_name, u.display_name AS cashier_name
      FROM transactions t
      JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN users u ON u.user_id = t.cashier_id
      WHERE DATE(t.paid_at AT TIME ZONE 'Asia/Jakarta') = $1
        AND t.status = 'PAID'
+       ${cashierFilter}
      ORDER BY t.paid_at DESC`,
-    [shiftDate]
+    params
   );
   return result.rows;
 }
