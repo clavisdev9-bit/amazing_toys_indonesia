@@ -42,7 +42,7 @@ async function loginUser({ username, password }) {
 
 // ── Customer auth (phone-number based, no password) ─────────────────────────
 
-async function registerCustomer({ full_name, phone_number, email, gender }) {
+async function registerCustomer({ full_name, phone_number, email, gender, birth_date }) {
   const exists = await query(
     `SELECT customer_id FROM customers WHERE phone_number = $1`,
     [phone_number]
@@ -52,10 +52,10 @@ async function registerCustomer({ full_name, phone_number, email, gender }) {
   }
 
   const result = await query(
-    `INSERT INTO customers (full_name, phone_number, email, gender)
-     VALUES ($1, $2, $3, $4)
-     RETURNING customer_id, full_name, phone_number, email, gender, registered_at`,
-    [full_name, phone_number, email || null, gender]
+    `INSERT INTO customers (full_name, phone_number, email, gender, birth_date)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING customer_id, full_name, phone_number, email, gender, birth_date, registered_at`,
+    [full_name, phone_number, email || null, gender, birth_date || null]
   );
   const customer = result.rows[0];
   const token = issueCustomerToken(customer);

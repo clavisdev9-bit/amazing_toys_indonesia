@@ -8,6 +8,11 @@
   }
 }
 
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
 /* ── Tour Guide ──────────────────────────────────────────────────────────── */
 
 /* Elevate the highlighted element above the dim overlay (z-40) */
@@ -25,3 +30,37 @@
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* ── Payment Notification System ─────────────────────────────────────────── */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@500&display=swap');
+
+@keyframes payToastIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-14px) scale(.97); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0)      scale(1);  }
+}
+
+@keyframes payToastShrink {
+  from { width: 100%; }
+  to   { width: 0%;   }
+}
+
+@keyframes payToastRing {
+  0%   { transform: scale(1);   opacity: .6; }
+  100% { transform: scale(1.9); opacity: 0;  }
+}
+
+@keyframes paySheetUp {
+  from { transform: translateY(60px); opacity: .6; }
+  to   { transform: translateY(0);    opacity: 1;  }
+}
+
+@keyframes payBellWiggle {
+  0%,100% { transform: rotate(0);     }
+  20%     { transform: rotate(-14deg);}
+  40%     { transform: rotate(14deg); }
+  60%     { transform: rotate(-8deg); }
+  80%     { transform: rotate(8deg);  }
+}
+
+.pay-bell-active { animation: payBellWiggle .6s ease; }

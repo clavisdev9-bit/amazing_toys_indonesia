@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { loginCustomer } from '../../api/auth';
 import { useAuth } from '../../hooks/useAuth';
 import Button from '../../components/ui/Button';
@@ -8,8 +8,12 @@ import { useAppLogo } from '../../hooks/useAppLogo';
 import { useLang } from '../../context/LangContext';
 
 export default function LoginCustomerPage() {
-  const { login } = useAuth();
+  const { login, isAuthenticated, role } = useAuth();
   const navigate = useNavigate();
+
+  if (isAuthenticated && role === 'CUSTOMER') {
+    return <Navigate to="/katalog" replace />;
+  }
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

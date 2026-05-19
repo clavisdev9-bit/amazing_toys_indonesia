@@ -19,6 +19,7 @@ router.post('/register',
       .matches(/^(08|\+628)\d{8,11}$/).withMessage('Format nomor telepon tidak valid.'),
     body('gender').isIn(['MALE', 'FEMALE', 'PREFER_NOT_TO_SAY']).withMessage('Gender tidak valid.'),
     body('email').optional().isEmail().withMessage('Format email tidak valid.'),
+    body('birth_date').optional({ checkFalsy: true }).isDate({ format: 'YYYY-MM-DD' }).withMessage('Format tanggal lahir tidak valid.'),
   ],
   validate,
   async (req, res, next) => {

@@ -1,234 +1,235 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getProducts, getCategories } from '../../api/products';
-import { useCart } from '../../hooks/useCart';
-import { formatRupiah } from '../../utils/format';
-import { useLang } from '../../context/LangContext';
-import Badge from '../../components/ui/Badge';
-import Spinner from '../../components/ui/Spinner';
-import EmptyState from '../../components/ui/EmptyState';
-import { useTourTarget } from '../../hooks/useTourTarget';
-
-const QrScannerModal = lazy(() => import('../../components/ui/QrScannerModal'));
-
-function parseKatalogQr(raw) {
-  const text = (raw || '').trim();
-  if (!text) return null;
-  try {
-    const url = new URL(text);
-    const q = url.searchParams.get('q') || url.searchParams.get('search');
-    if (q) return q.trim() || null;
-  } catch { /* not a URL */ }
-  try {
-    const obj = JSON.parse(text);
-    const name = obj.product_name || obj.name || obj.q || obj.search;
-    if (name && typeof name === 'string') return name.trim() || null;
-  } catch { /* not JSON */ }
-  return text;
-}
+import { useCatalogueState }    from '../../hooks/useCatalogueState';
+import { FLOOR_NAMES, PRODUCT_MAP, STORE_MAP } from '../../data/mockData';
+import { useTourTarget }        from '../../hooks/useTourTarget';
+import ModeToggle               from '../../components/catalogue/ModeToggle';
+import CategoryChips            from '../../components/catalogue/CategoryChips';
+import FloorChips               from '../../components/catalogue/FloorChips';
+import ProductGrid              from '../../components/catalogue/ProductGrid';
+import StoreList                from '../../components/catalogue/StoreList';
+import FilterBanner             from '../../components/catalogue/FilterBanner';
+import StickyActionBar          from '../../components/catalogue/StickyActionBar';
+import ProductBottomSheet       from '../../components/catalogue/ProductBottomSheet';
+import QrScannerModal           from '../../components/ui/QrScannerModal';
 
 export default function BrowsePage() {
-  const { addItem } = useCart();
   const navigate = useNavigate();
-  const { t } = useLang();
-  const searchRef = useTourTarget('step-katalog-search');
-  const categoriesRef = useTourTarget('step-katalog-categories');
-  const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('');
-  const [inStockOnly, setInStockOnly] = useState(false);
-  const [added, setAdded] = useState({});
+  const { state, actions } = useCatalogueState();
+  const searchRef      = useTourTarget('step-katalog-search');
+  const categoriesRef  = useTourTarget('step-katalog-categories');
   const [showScanner, setShowScanner] = useState(false);
+  const [toast, setToast] = useState('');
+
+  const {
+    mode, curCat, curFloor,
+    selectedStoreIds, selectedStores,
+    storeCat, showFilteredProducts,
+    search, selectedProduct,
+    productModeProducts, storeModeProducts, storesByFloor,
+  } = state;
 
   useEffect(() => {
-    getCategories().then((r) => setCategories(r.data.data ?? []));
-  }, []);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(''), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
-  const fetchProducts = useCallback(async (reset = false) => {
-    setLoading(true);
-    try {
-      const currentPage = reset ? 1 : page;
-      const res = await getProducts({ search, category, in_stock_only: inStockOnly || undefined, page: currentPage, limit: 20 });
-      const { items, total: t } = res.data.data;
-      if (reset) {
-        setProducts(items);
-        setPage(1);
-      } else {
-        setProducts((p) => (currentPage === 1 ? items : [...p, ...items]));
-      }
-      setTotal(t);
-    } finally {
-      setLoading(false);
+  function handleQrResult(text) {
+    setShowScanner(false);
+    if (PRODUCT_MAP[text]) {
+      navigate(`/product/${text}`);
+    } else if (STORE_MAP[text]) {
+      actions.setMode('store');
+      actions.toggleStore(text);
+    } else {
+      setToast('QR tidak dikenali');
     }
-  }, [search, category, inStockOnly, page]);
-
-  useEffect(() => {
-    fetchProducts(true);
-  }, [search, category, inStockOnly]);
-
-  function handleAddToCart(product) {
-    if (product.stock_status === 'OUT_OF_STOCK') return;
-    addItem(product, 1);
-    setAdded((a) => ({ ...a, [product.product_id]: true }));
-    setTimeout(() => setAdded((a) => ({ ...a, [product.product_id]: false })), 1500);
   }
-
-  function loadMore() {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    setLoading(true);
-    getProducts({ search, category, in_stock_only: inStockOnly || undefined, page: nextPage, limit: 20 })
-      .then((res) => {
-        const { items } = res.data.data;
-        setProducts((p) => [...p, ...items]);
-      })
-      .finally(() => setLoading(false));
-  }
-
-  const hasMore = products.length < total;
 
   return (
-    <div className="max-w-2xl mx-auto">
-      {/* Search bar */}
-      <div className="sticky top-[57px] bg-gray-50 px-4 pt-3 pb-2 z-20 border-b">
-        <div className="relative flex items-center">
-          <input
-            ref={searchRef}
-            id="tour-search"
-            type="text"
-            placeholder={t('search.placeholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+    <div className="max-w-[390px] mx-auto">
+
+      {/* ── Sticky controls bar ───────────────────────────────────────── */}
+      <div className="sticky top-[57px] z-20 bg-white border-b px-4 pt-3 pb-2.5 flex flex-col gap-2">
+
+        {/* Search + QR button */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 105 11a6 6 0 0012 0z" />
+            </svg>
+            <input
+              ref={searchRef}
+              id="tour-search"
+              type="text"
+              value={search}
+              onChange={e => actions.setSearch(e.target.value)}
+              placeholder={mode === 'product' ? 'Search products…' : 'Search stores…'}
+              className="w-full pl-9 pr-9 py-2 bg-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#AFA9EC] placeholder:text-gray-400"
+            />
+            {search && (
+              <button
+                onClick={() => actions.setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+
+          {/* QR scan button */}
           <button
-            type="button"
             onClick={() => setShowScanner(true)}
-            aria-label="Scan QR code produk"
-            title="Scan QR"
-            className="absolute right-2 flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            className="shrink-0 w-9 h-9 flex items-center justify-center bg-gray-100 rounded-xl text-gray-500 hover:bg-gray-200 transition-colors"
+            aria-label="Scan QR"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2" />
-              <rect x="7" y="7" width="4" height="4" rx="0.5" />
-              <rect x="13" y="7" width="4" height="4" rx="0.5" />
-              <rect x="7" y="13" width="4" height="4" rx="0.5" />
-              <circle cx="15" cy="15" r="1" fill="currentColor" />
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75V16.5zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
             </svg>
           </button>
         </div>
+
+        {/* Mode toggle */}
+        <ModeToggle mode={mode} onSetMode={actions.setMode} />
       </div>
 
-      {/* QR Scanner Modal */}
-      {showScanner && (
-        <Suspense fallback={null}>
-          <QrScannerModal
-            onResult={(text) => { setSearch(text); setShowScanner(false); }}
-            onClose={() => setShowScanner(false)}
-            title="Scan Barcode Produk"
-            hint="Arahkan kamera ke barcode atau QR produk"
-            resultParser={parseKatalogQr}
+      {/* ══════════════════════════════════════════════════════════════════
+          BY PRODUCT MODE
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode === 'product' && (
+        <>
+          {/* Category chips — tour target */}
+          <div ref={categoriesRef} id="tour-categories">
+            <CategoryChips
+              selected={curCat}
+              onSelect={actions.setCurCat}
+              variant="product"
+            />
+          </div>
+
+          {/* Section header */}
+          <div className="flex items-center justify-between px-4 pb-2">
+            <span className="text-xs font-medium text-gray-700">
+              {curCat === 'All' ? 'All products' : curCat}
+            </span>
+            <span className="text-[11px] text-gray-400">
+              {productModeProducts.length} item{productModeProducts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {/* Product grid */}
+          <ProductGrid
+            products={productModeProducts}
+            firstCardTourAttr={{ 'data-tour': 'product-card' }}
           />
-        </Suspense>
+        </>
       )}
 
-      {/* Category filter */}
-      <div ref={categoriesRef} id="tour-categories" className="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar">
-        <button
-          onClick={() => setCategory('')}
-          className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border transition-colors
-            ${!category ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-        >
-          {t('filter.all')}
-        </button>
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setCategory(cat === category ? '' : cat)}
-            className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium border transition-colors
-              ${cat === category ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-          >
-            {cat}
-          </button>
-        ))}
-      </div>
+      {/* ══════════════════════════════════════════════════════════════════
+          BY STORE MODE
+      ══════════════════════════════════════════════════════════════════ */}
+      {mode === 'store' && (
+        <>
+          {/* Floor chips */}
+          <FloorChips selected={curFloor} onSelect={actions.setCurFloor} />
 
-      {/* In-stock toggle */}
-      <div className="px-4 pb-2 flex items-center gap-2 text-sm text-gray-600">
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={inStockOnly}
-            onChange={(e) => setInStockOnly(e.target.checked)}
-            className="rounded"
-          />
-          {t('filter.inStockOnly')}
-        </label>
-        <span className="ml-auto text-gray-400 text-xs">{t('filter.productCount', { count: total })}</span>
-      </div>
+          {/* Section header */}
+          <div className="flex items-center justify-between px-4 pb-2">
+            <span className="text-xs font-medium text-gray-700">
+              {FLOOR_NAMES[curFloor]}
+            </span>
+            <span className="text-[11px] text-[#534AB7] cursor-pointer hover:underline">Map view</span>
+          </div>
 
-      {/* Products grid */}
-      {products.length === 0 && !loading ? (
-        <EmptyState icon="🔍" title={t('product.notFound')} description={t('product.tryOther')} />
-      ) : (
-        <div className="grid grid-cols-2 gap-3 px-4 pb-4">
-          {products.map((p, idx) => (
-            <div
-              key={p.product_id}
-              className="bg-white rounded-xl shadow-sm border overflow-hidden flex flex-col"
-              {...(idx === 0 ? { 'data-tour': 'product-card' } : {})}
-            >
-              <div
-                className="aspect-square bg-gray-100 flex items-center justify-center cursor-pointer"
-                onClick={() => navigate(`/katalog/${p.product_id}`)}
-              >
-                {p.image_url ? (
-                  <img src={p.image_url} alt={p.product_name} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-4xl">🧸</span>
-                )}
-              </div>
-              <div className="p-2 flex flex-col gap-1 flex-1">
-                <p className="text-xs font-medium text-gray-800 line-clamp-2 leading-tight">{p.product_name}</p>
-                <p className="text-xs text-gray-400">{p.tenant_name}</p>
-                <div className="flex items-center justify-between mt-auto pt-1">
-                  <span className="text-sm font-bold text-blue-700">{formatRupiah(p.price)}</span>
-                  <Badge status={p.stock_status} />
-                </div>
+          {/* Filter banner — only when stores selected */}
+          {selectedStores.length > 0 && (
+            <FilterBanner
+              selectedStores={selectedStores}
+              onClear={actions.clearStores}
+            />
+          )}
+
+          {/* State C: filtered product view */}
+          {showFilteredProducts && selectedStoreIds.length > 0 ? (
+            <>
+              {/* Back button replaces sticky bar */}
+              <div className="px-4 mb-2">
                 <button
-                  onClick={() => handleAddToCart(p)}
-                  disabled={p.stock_status === 'OUT_OF_STOCK'}
-                  {...(idx === 0 ? { 'data-tour': 'add-to-cart' } : {})}
-                  className={`w-full mt-1 py-1.5 rounded-lg text-xs font-medium transition-colors
-                    ${p.stock_status === 'OUT_OF_STOCK'
-                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                      : added[p.product_id]
-                        ? 'bg-green-500 text-white'
-                        : 'bg-blue-600 text-white hover:bg-blue-700'
-                    }`}
+                  onClick={() => actions.setShowFilteredProducts(false)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-[#085041] bg-[#E1F5EE] border border-[#5DCAA5] px-3 py-2 rounded-xl w-full justify-center hover:bg-[#c6ead9] transition-colors"
                 >
-                  {added[p.product_id] ? t('product.added') : t('product.addToCart')}
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Back to store list
                 </button>
               </div>
-            </div>
-          ))}
-        </div>
+
+              {/* Category chips for store mode */}
+              <CategoryChips
+                selected={storeCat}
+                onSelect={actions.setStoreCat}
+                variant="store"
+              />
+
+              {/* Section header */}
+              <div className="flex items-center justify-between px-4 pb-2">
+                <span className="text-xs font-medium text-gray-700">
+                  {storeModeProducts.length} product{storeModeProducts.length !== 1 ? 's' : ''} in selected stores
+                </span>
+              </div>
+
+              {/* Filtered product grid */}
+              <ProductGrid products={storeModeProducts} />
+            </>
+          ) : (
+            <>
+              {/* State A/B: store list */}
+              <StoreList
+                stores={storesByFloor}
+                selectedIds={selectedStoreIds}
+                onToggle={actions.toggleStore}
+              />
+
+              {/* State B: sticky action bar */}
+              {selectedStoreIds.length > 0 && (
+                <StickyActionBar
+                  count={storeModeProducts.length}
+                  onView={() => actions.setShowFilteredProducts(true)}
+                />
+              )}
+            </>
+          )}
+        </>
       )}
 
-      {loading && <Spinner />}
+      {/* ── Product bottom sheet ──────────────────────────────────────── */}
+      {selectedProduct && (
+        <ProductBottomSheet
+          product={selectedProduct}
+          onClose={() => actions.setSelectedProduct(null)}
+        />
+      )}
 
-      {hasMore && !loading && (
-        <div className="px-4 pb-6">
-          <button
-            onClick={loadMore}
-            className="w-full py-2 border border-blue-600 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-50"
-          >
-            {t('product.loadMore')}
-          </button>
+      {/* ── QR Scanner Modal ─────────────────────────────────────────── */}
+      {showScanner && (
+        <QrScannerModal
+          title="Scan QR Produk / Toko"
+          hint="Arahkan kamera ke QR code produk atau toko"
+          resultParser={text => text}
+          onResult={handleQrResult}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {/* ── Toast ────────────────────────────────────────────────────── */}
+      {toast && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] bg-gray-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg pointer-events-none">
+          {toast}
         </div>
       )}
     </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspens
 import { getTenantOrders, handover } from '../../api/tenantOrders';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { usePaymentNotifications } from '../../hooks/usePaymentNotifications';
 import { useToast } from '../../hooks/useToast';
 import { useLang } from '../../context/LangContext';
 import Badge from '../../components/ui/Badge';
@@ -9,11 +10,11 @@ import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 import ToastContainer from '../../components/ui/Toast';
+import PaymentToast from '../../components/tenant/PaymentToast';
+import PaymentNotifSheet from '../../components/tenant/PaymentNotifSheet';
 
-// Lazy-load QR scanner so a camera/library error never crashes this page
 const QrScannerModal = lazy(() => import('../../components/ui/QrScannerModal'));
 
-// Group flat rows by transaction_id
 function groupOrders(rows = []) {
   const map = new Map();
   for (const row of rows) {
@@ -30,24 +31,57 @@ function groupOrders(rows = []) {
   return Array.from(map.values());
 }
 
-// Case-insensitive partial match on transaction_id
 function matchesSearch(group, query) {
   if (!query) return true;
   return group.transaction_id.toLowerCase().includes(query.toLowerCase());
 }
 
-export default function TenantOrdersPage() {
-  const { subscribe }                   = useWebSocket();
-  const { toasts, addToast, removeToast } = useToast();
-  const { t }                           = useLang();
+/* ── Bell button ─────────────────────────────────────────────────────────── */
+function BellButton({ unreadCount, isNew, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative w-10 h-10 rounded-xl border flex items-center justify-center transition-colors shrink-0 ${
+        unreadCount > 0
+          ? 'bg-blue-50 border-blue-200 text-blue-600'
+          : 'bg-gray-50 border-gray-300 text-gray-500 hover:bg-gray-100'
+      } ${isNew ? 'pay-bell-active' : ''}`}
+      aria-label="Notifikasi pembayaran"
+    >
+      <svg
+        width="20" height="20" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      >
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+      </svg>
 
-  const [orders, setOrders]         = useState([]);
-  const [loading, setLoading]       = useState(true);
-  const [fetchError, setFetchError] = useState(null);
-  const [processing, setProcessing] = useState({});
+      {unreadCount > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-[3px] shadow-[0_0_0_2px_white]">
+          {unreadCount > 9 ? '9+' : unreadCount}
+        </span>
+      )}
+    </button>
+  );
+}
+
+export default function TenantOrdersPage() {
+  const { subscribe }                      = useWebSocket();
+  const { toasts, addToast, removeToast }  = useToast();
+  const { t }                              = useLang();
+  const {
+    notifs, toast, unreadCount,
+    markRead, markAll, dismissToast, simulatePayment,
+  } = usePaymentNotifications();
+
+  const [orders, setOrders]           = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [fetchError, setFetchError]   = useState(null);
+  const [processing, setProcessing]   = useState({});
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [sheetOpen,  setSheetOpen]    = useState(false);
   const debounceRef = useRef(null);
 
   const fetchOrders = useCallback(() => {
@@ -63,14 +97,14 @@ export default function TenantOrdersPage() {
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
+  // Refresh orders on new payment; the notification bell/toast/chime is handled
+  // by usePaymentNotifications
   useEffect(() => {
-    return subscribe('ORDER_PAID', (payload) => {
-      addToast(t('tenantOrders.newOrder', { id: payload.transactionId }), 'info');
+    return subscribe('ORDER_PAID', () => {
       fetchOrders();
     });
-  }, [subscribe, fetchOrders, addToast, t]);
+  }, [subscribe, fetchOrders]);
 
-  // Debounce typed input 300 ms; QR results bypass debounce (applied immediately)
   function handleSearchChange(value) {
     setSearchInput(value);
     clearTimeout(debounceRef.current);
@@ -117,6 +151,12 @@ export default function TenantOrdersPage() {
     [grouped, searchQuery],
   );
 
+  // For the toast: look up customer name from orders
+  const toastCustomer = useMemo(() => {
+    if (!toast) return null;
+    return grouped.find(g => g.transaction_id === toast.txn)?.customer_name ?? null;
+  }, [toast, grouped]);
+
   const isFiltering = searchQuery.length > 0;
   const noResults   = isFiltering && ready.length === 0 && done.length === 0;
 
@@ -124,9 +164,28 @@ export default function TenantOrdersPage() {
 
   return (
     <>
+      {/* ── Handover action toasts (success/error) ────────────────────────── */}
       <ToastContainer toasts={toasts} removeToast={removeToast} />
 
-      {/* QR scanner — lazy loaded, isolated from main render tree */}
+      {/* ── Incoming payment toast ────────────────────────────────────────── */}
+      <PaymentToast
+        notif={toast}
+        customerName={toastCustomer}
+        onDismiss={dismissToast}
+      />
+
+      {/* ── Notification bottom sheet ─────────────────────────────────────── */}
+      {sheetOpen && (
+        <PaymentNotifSheet
+          notifs={notifs}
+          groups={grouped}
+          onClose={() => setSheetOpen(false)}
+          onMarkRead={markRead}
+          onMarkAll={markAll}
+        />
+      )}
+
+      {/* ── QR scanner ───────────────────────────────────────────────────── */}
       {scannerOpen && (
         <Suspense fallback={null}>
           <QrScannerModal
@@ -138,19 +197,46 @@ export default function TenantOrdersPage() {
 
       <div className="max-w-2xl">
 
-        {/* Header */}
+        {/* ── Page header ──────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold text-gray-900">{t('tenantOrders.title')}</h1>
-          <button onClick={fetchOrders} className="text-sm text-blue-600 hover:underline">
-            {t('tenantOrders.refresh')}
-          </button>
+
+          <div className="flex items-center gap-2">
+            <button onClick={fetchOrders} className="text-sm text-blue-600 hover:underline">
+              {t('tenantOrders.refresh')}
+            </button>
+            <BellButton
+              unreadCount={unreadCount}
+              isNew={!!toast}
+              onClick={() => setSheetOpen(true)}
+            />
+          </div>
         </div>
 
-        {/* Search bar */}
+        {/* ── Stats strip ──────────────────────────────────────────────────── */}
+        {notifs.length > 0 && (
+          <div className="grid grid-cols-2 gap-2 mb-4">
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Notifikasi Hari Ini</p>
+              <p className="text-2xl font-bold text-gray-900 font-mono">{notifs.length}</p>
+            </div>
+            <div className={`rounded-xl border px-4 py-3 ${
+              unreadCount > 0 ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'
+            }`}>
+              <p className={`text-[10px] uppercase tracking-wide mb-1 ${
+                unreadCount > 0 ? 'text-blue-600' : 'text-gray-400'
+              }`}>Belum Dibaca</p>
+              <p className={`text-2xl font-bold font-mono ${
+                unreadCount > 0 ? 'text-blue-600' : 'text-gray-900'
+              }`}>{unreadCount}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Search bar ───────────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 mb-4">
           <div className="relative flex-1">
             <svg
-              xmlns="http://www.w3.org/2000/svg"
               className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
             >
@@ -170,14 +256,14 @@ export default function TenantOrdersPage() {
                 onClick={handleClearSearch}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             )}
           </div>
 
-          {/* QR Scan button */}
+          {/* QR scan */}
           <button
             onClick={() => setScannerOpen(true)}
             title="Scan QR Code"
@@ -185,7 +271,7 @@ export default function TenantOrdersPage() {
                        bg-white hover:bg-gray-50 hover:border-blue-400 text-gray-600 hover:text-blue-600
                        transition-colors shrink-0"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
               <path strokeLinecap="round" strokeLinejoin="round"
                 d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2" />
               <rect x="7" y="7" width="4" height="4" rx="0.5" />
@@ -196,7 +282,7 @@ export default function TenantOrdersPage() {
           </button>
         </div>
 
-        {/* API error */}
+        {/* ── API error ─────────────────────────────────────────────────────── */}
         {fetchError && (
           <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center justify-between">
             <span>{fetchError}</span>
@@ -204,7 +290,7 @@ export default function TenantOrdersPage() {
           </div>
         )}
 
-        {/* No results for current search */}
+        {/* ── No search results ─────────────────────────────────────────────── */}
         {!fetchError && noResults && (
           <div className="text-center py-12">
             <div className="text-4xl mb-2">🔍</div>
@@ -216,7 +302,7 @@ export default function TenantOrdersPage() {
           </div>
         )}
 
-        {/* Empty state — no PAID orders at all */}
+        {/* ── Empty state ───────────────────────────────────────────────────── */}
         {!fetchError && !isFiltering && ready.length === 0 && done.length === 0 && (
           <EmptyState
             icon="🕐"
@@ -263,7 +349,7 @@ export default function TenantOrdersPage() {
           </div>
         )}
 
-        {/* ── Done (collapsible, auto-opens when filtering) ─────────────────── */}
+        {/* ── Done (collapsible) ────────────────────────────────────────────── */}
         {done.length > 0 && (
           <details className="bg-white rounded-xl border overflow-hidden" {...(isFiltering ? { open: true } : {})}>
             <summary className="px-4 py-3 text-sm font-semibold text-gray-500 cursor-pointer hover:bg-gray-50 select-none">
@@ -281,6 +367,29 @@ export default function TenantOrdersPage() {
               ))}
             </div>
           </details>
+        )}
+
+        {/* ── Dev simulator ─────────────────────────────────────────────────── */}
+        {import.meta.env.DEV && (
+          <div className="mt-6 bg-[#0F172A] rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_6px_#4ade80]" />
+              <p className="text-[10px] text-slate-500 uppercase tracking-widest">Simulasi · /cashier</p>
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed mb-4">
+              Tekan tombol untuk mensimulasikan pembayaran. Notifikasi, bunyi chime, dan badge akan muncul di atas.
+            </p>
+            <button
+              onClick={() => simulatePayment()}
+              className="w-full py-3 rounded-xl bg-green-500 hover:bg-green-400 active:bg-green-600 text-white text-sm font-bold tracking-wide transition-colors flex items-center justify-center gap-2.5 shadow-[0_4px_20px_rgba(34,197,94,.3)]"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="4" width="22" height="16" rx="2"/>
+                <line x1="1" y1="10" x2="23" y2="10"/>
+              </svg>
+              Bayar di Kasir
+            </button>
+          </div>
         )}
 
       </div>
