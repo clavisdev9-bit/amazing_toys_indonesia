@@ -369,28 +369,6 @@ export default function TenantOrdersPage() {
           </details>
         )}
 
-        {/* ── Dev simulator ─────────────────────────────────────────────────── */}
-        {import.meta.env.DEV && (
-          <div className="mt-6 bg-[#0F172A] rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_6px_#4ade80]" />
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest">Simulasi · /cashier</p>
-            </div>
-            <p className="text-xs text-slate-500 leading-relaxed mb-4">
-              Tekan tombol untuk mensimulasikan pembayaran. Notifikasi, bunyi chime, dan badge akan muncul di atas.
-            </p>
-            <button
-              onClick={() => simulatePayment()}
-              className="w-full py-3 rounded-xl bg-green-500 hover:bg-green-400 active:bg-green-600 text-white text-sm font-bold tracking-wide transition-colors flex items-center justify-center gap-2.5 shadow-[0_4px_20px_rgba(34,197,94,.3)]"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1" y="4" width="22" height="16" rx="2"/>
-                <line x1="1" y1="10" x2="23" y2="10"/>
-              </svg>
-              Bayar di Kasir
-            </button>
-          </div>
-        )}
 
       </div>
     </>
