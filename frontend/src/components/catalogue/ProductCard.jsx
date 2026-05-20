@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../../hooks/useCart';
+import { useLang } from '../../context/LangContext';
+import { useWishlist } from '../../hooks/useWishlist';
 import { getStockStatus, canAddToCart } from '../../utils/stockUtils';
 
 function formatPrice(price) {
@@ -26,10 +28,11 @@ function StockBadge({ level, label }) {
 export default function ProductCard({ product, tourAttr }) {
   const navigate    = useNavigate();
   const { addItem } = useCart();
+  const { t } = useLang();
+  const { isWished, toggleWish } = useWishlist();
   const [added, setAdded] = useState(false);
-  const [wished, setWished] = useState(false);
 
-  const { label: stockLabel, level: stockLevel } = getStockStatus(product.stock);
+  const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
 
   function goToDetail() {
@@ -52,7 +55,7 @@ export default function ProductCard({ product, tourAttr }) {
 
   function handleWish(e) {
     e.stopPropagation();
-    setWished(w => !w);
+    toggleWish(product.id);
   }
 
   return (
@@ -89,7 +92,7 @@ export default function ProductCard({ product, tourAttr }) {
           }}
           aria-label="Wishlist"
         >
-          {wished ? '❤️' : '🤍'}
+          {isWished(product.id) ? '❤️' : '🤍'}
         </button>
       </button>
 
@@ -107,7 +110,7 @@ export default function ProductCard({ product, tourAttr }) {
 
         <div className="flex items-center justify-between gap-1">
           <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(product.price)}</span>
-          <StockBadge level={stockLevel} label={stockLabel} />
+          <StockBadge level={stockLevel} label={t(stockKey)} />
         </div>
 
         {/* Add to cart button */}
@@ -129,7 +132,7 @@ export default function ProductCard({ product, tourAttr }) {
                   }
             }
           >
-            {added ? '✓ Ditambahkan' : '+ Keranjang'}
+            {added ? t('product.added') : t('product.addToCart')}
           </button>
         ) : (
           <button
@@ -141,7 +144,7 @@ export default function ProductCard({ product, tourAttr }) {
               border: '1px solid rgba(200,205,230,0.5)',
             }}
           >
-            Stok Habis
+            {t('product.outOfStock')}
           </button>
         )}
       </div>

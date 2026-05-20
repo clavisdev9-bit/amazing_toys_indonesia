@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getProduct } from '../../api/products';
 import { getStockStatus } from '../../utils/stockUtils';
 import { useCart } from '../../hooks/useCart';
+import { useLang } from '../../context/LangContext';
+import { useWishlist } from '../../hooks/useWishlist';
 import Spinner from '../../components/ui/Spinner';
 
 function formatPrice(price) {
@@ -50,11 +52,12 @@ export default function MockProductDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { addItem } = useCart();
+  const { t } = useLang();
+  const { isWished, toggleWish } = useWishlist();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
-  const [wished, setWished] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -79,7 +82,7 @@ export default function MockProductDetailPage() {
   }
 
   const stock = product.stock_quantity ?? 0;
-  const { label: stockLabel, level: stockLevel } = getStockStatus(stock);
+  const { key: stockKey, level: stockLevel } = getStockStatus(stock);
   const stockBadge = STOCK_BADGE[stockLevel] ?? STOCK_BADGE.available;
   const inStock = stock > 0;
   const categName = product.odoo_categ_name || product.category || '-';
@@ -145,7 +148,7 @@ export default function MockProductDetailPage() {
 
         {/* Wishlist button */}
         <button
-          onClick={() => setWished(w => !w)}
+          onClick={() => product && toggleWish(product.product_id ?? product.id)}
           aria-label="Wishlist"
           style={{
             position: 'absolute', top: 14, right: 14,
@@ -158,7 +161,7 @@ export default function MockProductDetailPage() {
             cursor: 'pointer', fontSize: 17, lineHeight: 1,
           }}
         >
-          {wished ? '❤️' : '🤍'}
+          {product && isWished(product.product_id ?? product.id) ? '❤️' : '🤍'}
         </button>
       </div>
 
@@ -188,7 +191,7 @@ export default function MockProductDetailPage() {
             padding: '3px 12px', borderRadius: 20,
             ...stockBadge,
           }}>
-            {stockLabel}
+            {t(stockKey)}
           </span>
         </div>
 

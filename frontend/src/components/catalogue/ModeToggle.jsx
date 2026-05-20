@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLang } from '../../context/LangContext';
 
 const GLASS_PANEL = {
   background: 'rgba(255,255,255,0.45)',
@@ -11,6 +12,7 @@ const GLASS_PANEL = {
 };
 
 export default function ModeToggle({ mode, onSetMode }) {
+  const { t } = useLang();
   return (
     <div style={GLASS_PANEL} className="flex gap-1">
       <button
@@ -22,7 +24,7 @@ export default function ModeToggle({ mode, onSetMode }) {
             : { background: 'transparent', color: 'rgba(80,90,140,0.75)' }
         }
       >
-        🏷️ By product
+        {t('browse.byProduct')}
       </button>
       <button
         onClick={() => onSetMode('store')}
@@ -33,7 +35,7 @@ export default function ModeToggle({ mode, onSetMode }) {
             : { background: 'transparent', color: 'rgba(80,90,140,0.75)' }
         }
       >
-        🏪 By store
+        {t('browse.byStore')}
       </button>
     </div>
   );

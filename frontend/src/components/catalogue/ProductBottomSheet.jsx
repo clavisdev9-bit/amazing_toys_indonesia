@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
+import { useLang } from '../../context/LangContext';
 
 function formatPrice(price) {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price ?? 0);
 }
 
 export default function ProductBottomSheet({ product, onClose }) {
+  const { t } = useLang();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -18,7 +20,7 @@ export default function ProductBottomSheet({ product, onClose }) {
     setTimeout(onClose, 250);
   }
 
-  const { label: stockLabel, level: stockLevel } = getStockStatus(product.stock);
+  const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const { bg: badgeBg, text: badgeText } = getStockBadgeStyle(stockLevel);
 
   return (
@@ -59,7 +61,7 @@ export default function ProductBottomSheet({ product, onClose }) {
               className="text-[10px] font-medium px-2 py-1 rounded-full shrink-0"
               style={{ background: badgeBg, color: badgeText }}
             >
-              {stockLabel}
+              {t(stockKey)}
             </span>
           </div>
 

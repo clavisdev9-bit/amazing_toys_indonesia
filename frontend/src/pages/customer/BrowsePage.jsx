@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useLang }                  from '../../context/LangContext';
 import { useCatalogueState }    from '../../hooks/useCatalogueState';
 import { FLOOR_NAMES }          from '../../data/mockData';
 import { useTourTarget }        from '../../hooks/useTourTarget';
@@ -16,6 +17,7 @@ import Spinner                  from '../../components/ui/Spinner';
 
 export default function BrowsePage() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const { state, actions } = useCatalogueState();
   const searchRef      = useTourTarget('step-katalog-search');
   const categoriesRef  = useTourTarget('step-katalog-categories');
@@ -80,7 +82,7 @@ export default function BrowsePage() {
               type="text"
               value={search}
               onChange={e => actions.setSearch(e.target.value)}
-              placeholder={mode === 'product' ? 'Cari produk...' : 'Cari toko...'}
+              placeholder={mode === 'product' ? t('search.placeholder') : t('search.storePlaceholder')}
               className="flex-1 bg-transparent border-none outline-none text-sm font-medium"
               style={{ color: '#1A1A2E', fontFamily: 'inherit' }}
             />
@@ -143,10 +145,10 @@ export default function BrowsePage() {
           {/* Section header */}
           <div className="flex items-center justify-between px-4 pb-2 pt-1">
             <h2 className="text-[15px] font-extrabold" style={{ color: 'rgba(30,40,100,0.90)', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>
-              {curCat === 'All' ? 'Semua Produk' : curCat}
+              {curCat === 'All' ? t('browse.allProducts') : curCat}
             </h2>
             <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
-              {productModeProducts.length} item
+              {t('browse.items', { count: productModeProducts.length })}
             </span>
           </div>
 
@@ -172,7 +174,7 @@ export default function BrowsePage() {
               {floorLabel}
             </h2>
             <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
-              {storeModeProducts.length} produk
+              {t('browse.products', { count: storeModeProducts.length })}
             </span>
           </div>
 
@@ -203,7 +205,7 @@ export default function BrowsePage() {
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                   </svg>
-                  Back to store list
+                  {t('browse.backToStores')}
                 </button>
               </div>
 
@@ -218,10 +220,10 @@ export default function BrowsePage() {
               {/* Section header */}
               <div className="flex items-center justify-between px-4 pb-2 pt-1">
                 <h2 className="text-[15px] font-extrabold" style={{ color: 'rgba(30,40,100,0.90)', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>
-                  Produk Terpilih
+                  {t('browse.selectedProducts')}
                 </h2>
                 <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
-                  {storeModeProducts.length} item
+                  {t('browse.items', { count: storeModeProducts.length })}
                 </span>
               </div>
 
@@ -260,8 +262,8 @@ export default function BrowsePage() {
       {/* ── QR Scanner Modal ─────────────────────────────────────────── */}
       {showScanner && (
         <QrScannerModal
-          title="Scan QR Produk"
-          hint="Arahkan kamera ke QR code produk"
+          title={t('browse.scanQRTitle')}
+          hint={t('browse.scanQRHint')}
           resultParser={text => text}
           onResult={handleQrResult}
           onClose={() => setShowScanner(false)}

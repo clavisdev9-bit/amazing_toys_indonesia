@@ -1,13 +1,15 @@
 import React from 'react';
 import ProductCard from './ProductCard';
+import { useLang } from '../../context/LangContext';
 
 export default function ProductGrid({ products, firstCardTourAttr }) {
+  const { t } = useLang();
   if (products.length === 0) {
     return (
       <div className="py-12 text-center col-span-2 px-4">
         <div className="text-4xl mb-3">😔</div>
-        <p className="text-sm font-bold mb-1" style={{ color: 'rgba(30,40,100,0.80)' }}>Produk tidak ditemukan</p>
-        <p className="text-xs" style={{ color: 'rgba(80,95,160,0.60)' }}>Coba kategori atau kata kunci lain</p>
+        <p className="text-sm font-bold mb-1" style={{ color: 'rgba(30,40,100,0.80)' }}>{t('product.notFound')}</p>
+        <p className="text-xs" style={{ color: 'rgba(80,95,160,0.60)' }}>{t('product.tryOther')}</p>
       </div>
     );
   }

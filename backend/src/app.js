@@ -85,6 +85,7 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
     res.json({ success: true, data: {
       logo_url:         config.logo_url,
       event_name:       config.event_name,
+      venue:            config.venue || '',
       map_embed_url:    config.map_embed_url || '',
       map_image_url:    config.map_image_url || '',
       maintenance_mode: config.maintenance_mode || false,
@@ -101,6 +102,7 @@ app.use(`${API}/tenant-orders`, tenantOrdersRouter);
 app.use(`${API}/tenant-reports`, tenantReportsRouter);
 app.use(`${API}/leader`,        leaderRouter);
 app.use(`${API}/notifications`, notifRouter);
+app.use(`${API}/wishlist`,     require('./modules/wishlist/wishlist.router'));
 app.use(`${API}/admin`,        adminRouter);
 app.use(`${API}/receipts`,     receiptsRouter);
 app.use(`${API}/print`,        printRouter);

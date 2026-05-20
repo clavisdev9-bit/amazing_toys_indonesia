@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
-import { useAppLogo } from '../../hooks/useAppLogo';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
 import { useTour } from '../../hooks/useTour';
 import MapModal from '../ui/MapModal';
@@ -66,7 +66,10 @@ export default function CustomerShell() {
   const { user, logout } = useAuth();
   const { totalItems } = useCart();
   const navigate = useNavigate();
-  const logoUrl = useAppLogo();
+  const publicConfig = usePublicConfig();
+  const logoUrl   = publicConfig?.logo_url ?? null;
+  const eventName = publicConfig?.event_name ?? 'Amazing Toys Fair';
+  const venue     = publicConfig?.venue ?? 'Marketplace';
   const { lang, setLang, t } = useLang();
   const { restartTour, isActive: isTourActive } = useTour();
   const [mapOpen, setMapOpen] = useState(false);
@@ -113,8 +116,8 @@ export default function CustomerShell() {
             }
           </div>
           <div>
-            <div className="text-[15px] font-extrabold text-[#3B5BDB] leading-none">ToysWorld</div>
-            <div className="text-[10px] text-[#868E96] font-medium">Marketplace</div>
+            <div className="text-[15px] font-extrabold text-[#3B5BDB] leading-none">{eventName}</div>
+            <div className="text-[10px] text-[#868E96] font-medium">{venue}</div>
           </div>
         </div>
 

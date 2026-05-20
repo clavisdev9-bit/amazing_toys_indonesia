@@ -1,7 +1,7 @@
 export function getStockStatus(stock) {
-  if (stock === 0) return { label: 'Habis',         level: 'out'       };
-  if (stock <= 3)  return { label: 'Stok Terbatas', level: 'low'       };
-  return              { label: 'Tersedia',      level: 'available' };
+  if (stock === 0) return { key: 'product.outOfStock', label: 'Habis',         level: 'out'       };
+  if (stock <= 3)  return { key: 'badge.LOW_STOCK',    label: 'Stok Terbatas', level: 'low'       };
+  return              { key: 'badge.AVAILABLE',     label: 'Tersedia',      level: 'available' };
 }
 
 export function getStockBadgeStyle(level) {
