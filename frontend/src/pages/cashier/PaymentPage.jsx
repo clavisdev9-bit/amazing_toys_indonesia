@@ -12,10 +12,6 @@ import ToastContainer from '../../components/ui/Toast';
 import PrintReceiptButton from '../../components/cashier/PrintReceiptButton';
 import PrintConfirmationModal from '../../components/cashier/PrintConfirmationModal';
 import { sendEReceipt } from '../../services/sendEReceipt';
-import '../../styles/print.css';
-
-const EVENT_NAME = 'Amazing Toys Fair 2026';
-const EVENT_VENUE = 'JCC Senayan, Jakarta';
 
 const METHODS = ['CASH', 'QRIS', 'EDC', 'TRANSFER'];
 
@@ -37,13 +33,16 @@ export default function PaymentPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
-    lookupPayment(transactionId)
+    const controller = new AbortController();
+    lookupPayment(transactionId, { signal: controller.signal })
       .then((r) => setTxn(r.data.data))
       .catch((err) => {
+        if (err.code === 'ERR_CANCELED') return;
         const status = err.response?.status;
         if (status === 409) {
-          // Transaction already paid — show the receipt directly
           navigate(`/pesanan/${transactionId}/receipt`, { replace: true });
+        } else if (status === 422) {
+          setError('Transaksi sudah dibatalkan.');
         } else if (status === 410) {
           setError('Transaksi telah kadaluarsa.');
         } else {
@@ -51,6 +50,7 @@ export default function PaymentPage() {
         }
       })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, [transactionId]);
 
   async function handleProcess(e) {
@@ -73,7 +73,6 @@ export default function PaymentPage() {
 
   async function handleConfirmPrint(sendEmail) {
     setIsModalOpen(false);
-    window.print();
     if (sendEmail && customer?.email) {
       const result = await sendEReceipt(txn, success, customer);
       if (result.success) {
@@ -131,41 +130,10 @@ export default function PaymentPage() {
           success={success}
           cashierName={cashierName}
           customer={customer}
+          cashReceived={method === 'CASH' && cashReceived ? parseFloat(cashReceived) : null}
           onClose={() => setIsModalOpen(false)}
           onConfirmPrint={handleConfirmPrint}
         />
-
-        {/* Hidden element rendered only when printing */}
-        <div
-          id="print-receipt-layout"
-          className="hidden print:block"
-          style={{ fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.5', color: '#000', background: '#fff', padding: '12px' }}
-        >
-          <p style={{ textAlign: 'center', fontWeight: 'bold', marginBottom: '2px' }}>{EVENT_NAME}</p>
-          <p style={{ textAlign: 'center', fontSize: '10px', marginBottom: '8px' }}>{EVENT_VENUE}</p>
-          <p style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
-          <p>ID: {txn.transaction_id}</p>
-          <p>Tgl: {formatDate(success.paidAt)}</p>
-          <p>Kasir: {cashierName}</p>
-          <p style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
-          {(txn.items ?? []).map((item, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{item.product_name} × {item.quantity}</span>
-              <span>{formatRupiah(item.unit_price * item.quantity)}</span>
-            </div>
-          ))}
-          <p style={{ borderTop: '1px solid #000', margin: '6px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '13px' }}>
-            <span>Total</span>
-            <span>{formatRupiah(txn.total_amount)}</span>
-          </div>
-          <p>Metode: {success.paymentMethod}</p>
-          {success.cashChange != null && (
-            <p>Kembalian: {formatRupiah(success.cashChange)}</p>
-          )}
-          <p style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px' }}>All prices include tax</p>
-          <p style={{ textAlign: 'center', marginTop: '8px' }}>Terima kasih!</p>
-        </div>
 
         <ToastContainer toasts={toasts} removeToast={removeToast} />
       </>
@@ -204,10 +172,32 @@ export default function PaymentPage() {
                   </div>
                 ))}
               </div>
-              <div className="border-t pt-2 mt-2 flex justify-between font-bold">
-                <span>Total</span>
-                <span className="text-blue-700 text-lg">{formatRupiah(txn.total_amount)}</span>
-              </div>
+              {(() => {
+                const subtotal = parseFloat(txn.subtotal_amount ?? 0);
+                const taxAmt   = parseFloat(txn.tax_amount ?? 0);
+                const taxRate  = parseFloat(txn.tax_rate ?? 12);
+                const hasTax   = taxAmt > 0;
+                return (
+                  <div className="border-t pt-2 mt-2 space-y-1 text-sm">
+                    {hasTax && (
+                      <>
+                        <div className="flex justify-between text-gray-500">
+                          <span>Subtotal</span>
+                          <span>{formatRupiah(subtotal)}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-500">
+                          <span>PPN {taxRate}%</span>
+                          <span>{formatRupiah(taxAmt)}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between font-bold">
+                      <span>Total</span>
+                      <span className="text-blue-700 text-lg">{formatRupiah(txn.total_amount)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Payment form */}

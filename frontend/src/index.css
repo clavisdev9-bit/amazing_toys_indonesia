@@ -1,16 +1,28 @@
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   body {
-    @apply bg-gray-50 text-gray-900 font-sans;
+    font-family: 'Nunito', sans-serif;
+    color: #1A1A2E;
+    -webkit-tap-highlight-color: transparent;
   }
 }
 
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar { display: none; }
   .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.48);
+    backdrop-filter: blur(18px) saturate(1.8);
+    -webkit-backdrop-filter: blur(18px) saturate(1.8);
+    border: 1.5px solid rgba(255, 255, 255, 0.75);
+  }
 }
 
 /* ── Tour Guide ──────────────────────────────────────────────────────────── */
@@ -32,8 +44,6 @@
 }
 
 /* ── Payment Notification System ─────────────────────────────────────────── */
-
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@500&display=swap');
 
 @keyframes payToastIn {
   from { opacity: 0; transform: translateX(-50%) translateY(-14px) scale(.97); }

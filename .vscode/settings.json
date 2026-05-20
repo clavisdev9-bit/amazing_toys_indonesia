@@ -1,0 +1,8 @@
+{
+  "css.validate": false,
+  "css.lint.unknownAtRules": "ignore",
+  "scss.validate": false,
+  "tailwindCSS.emmetCompletions": true,
+  "edgeDevTools.browserFlavor": "Stable",
+  "css.lint.compatibleVendorPrefixes": "ignore"
+}

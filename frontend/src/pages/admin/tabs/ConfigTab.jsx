@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getConfig, saveConfig, uploadLogo } from '../../../api/admin';
+import { getConfig, saveConfig, uploadLogo, getPrinterStatus, getUsers } from '../../../api/admin';
 import { bustPublicConfigCache } from '../../../hooks/useAppLogo';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
@@ -39,11 +39,22 @@ export default function ConfigTab() {
   const [saving, setSaving]     = useState(false);
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState(null);
-  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingLogo,   setUploadingLogo]   = useState(false);
+  const [printerStatus,      setPrinterStatus]      = useState(null);
+  const [testingPrinter,     setTestingPrinter]     = useState(false);
+  const [cashiers,           setCashiers]           = useState([]);   // list of CASHIER users
+  const [cashierTestStatus,  setCashierTestStatus]  = useState({});   // { [user_id]: { connected, address, message } | 'testing' }
+  const [testingUserId,      setTestingUserId]       = useState(null);
 
   useEffect(() => {
-    getConfig()
-      .then((r) => setConfig(r.data.data))
+    Promise.all([
+      getConfig(),
+      getUsers({ role: 'CASHIER' }),
+    ])
+      .then(([cfgRes, usersRes]) => {
+        setConfig(cfgRes.data.data);
+        setCashiers(usersRes.data.data ?? []);
+      })
       .catch(() => addToast('Gagal memuat konfigurasi.', 'error'))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -74,6 +85,54 @@ export default function ConfigTab() {
       addToast(err.response?.data?.message ?? 'Gagal upload logo.', 'error');
     } finally {
       setUploadingLogo(false);
+    }
+  }
+
+  async function handleTestPrinter() {
+    setTestingPrinter(true);
+    setPrinterStatus(null);
+    try {
+      const r = await getPrinterStatus();
+      setPrinterStatus(r.data);
+    } catch (err) {
+      setPrinterStatus({ configured: false, connected: false, message: err.response?.data?.message ?? 'Gagal menghubungi server.' });
+    } finally {
+      setTestingPrinter(false);
+    }
+  }
+
+  // Update a single field for a per-cashier printer assignment
+  function setCashierPrinter(userId, field, value) {
+    setConfig((c) => {
+      const assignments = [...(c.printer_assignments || [])];
+      const idx = assignments.findIndex((a) => a.user_id === userId);
+      if (idx >= 0) {
+        assignments[idx] = { ...assignments[idx], [field]: value };
+      } else {
+        assignments.push({ user_id: userId, printer_ip: '', printer_port: 9100, [field]: value });
+      }
+      return { ...c, printer_assignments: assignments };
+    });
+    setCashierTestStatus((s) => ({ ...s, [userId]: null }));
+  }
+
+  function getCashierAssignment(userId) {
+    return (config?.printer_assignments || []).find((a) => a.user_id === userId) ?? { printer_ip: '', printer_port: 9100 };
+  }
+
+  async function handleTestCashierPrinter(userId) {
+    setTestingUserId(userId);
+    setCashierTestStatus((s) => ({ ...s, [userId]: 'testing' }));
+    try {
+      const r = await getPrinterStatus(userId);
+      setCashierTestStatus((s) => ({ ...s, [userId]: r.data }));
+    } catch (err) {
+      setCashierTestStatus((s) => ({
+        ...s,
+        [userId]: { configured: false, connected: false, message: err.response?.data?.message ?? 'Gagal.' },
+      }));
+    } finally {
+      setTestingUserId(null);
     }
   }
 
@@ -245,6 +304,151 @@ export default function ConfigTab() {
                   value={config.max_items_per_order ?? 20}
                   onChange={(e) => set('max_items_per_order', parseInt(e.target.value, 10))} />
               </div>
+            </div>
+          </section>
+
+          {/* ── Printer Thermal ──────────────────────────────────────────── */}
+          <section>
+            <SectionHeader color="slate" icon="🖨️" title="Printer Thermal (ESC/POS)" />
+
+            {/* Global / fallback printer */}
+            <div className="bg-white rounded-xl border p-4 space-y-3">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Printer Global (Fallback)</p>
+              <p className="text-xs text-gray-400">
+                Digunakan jika kasir tidak memiliki printer yang ditetapkan secara khusus.
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Input label="IP Address"
+                    placeholder="Contoh: 192.168.0.105"
+                    value={config.printer_ip || ''}
+                    onChange={(e) => { set('printer_ip', e.target.value); setPrinterStatus(null); }} />
+                </div>
+                <div>
+                  <Input label="Port" type="number" min="1" max="65535"
+                    placeholder="9100"
+                    value={config.printer_port ?? 9100}
+                    onChange={(e) => { set('printer_port', parseInt(e.target.value, 10) || 9100); setPrinterStatus(null); }} />
+                </div>
+              </div>
+
+              {printerStatus && (
+                <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm border
+                  ${printerStatus.connected
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-red-50 border-red-200 text-red-800'}`}>
+                  <span className="text-base leading-none mt-0.5">{printerStatus.connected ? '✅' : '❌'}</span>
+                  <div>
+                    <p className="font-medium">{printerStatus.connected ? 'Printer terhubung' : 'Printer tidak terjangkau'}</p>
+                    <p className="text-xs mt-0.5 opacity-80">{printerStatus.message}</p>
+                    {printerStatus.configured && !printerStatus.connected && (
+                      <p className="text-xs mt-1">Pastikan printer menyala, di jaringan yang sama, dan port tidak diblokir firewall.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button type="button" onClick={handleTestPrinter} disabled={testingPrinter}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 text-sm hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                  {testingPrinter
+                    ? <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Menguji…</>
+                    : <>🔌 Test Koneksi</>}
+                </button>
+                <span className="text-xs text-gray-400">Test menggunakan nilai yang sudah <strong>tersimpan</strong>.</span>
+              </div>
+            </div>
+
+            {/* Per-cashier printer assignments */}
+            <div className="bg-white rounded-xl border p-4 space-y-3 mt-3">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Printer per Kasir</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Jika diisi, kasir tersebut akan selalu mencetak ke printer khusus ini, mengabaikan printer global di atas.
+                  Kosongkan IP untuk menggunakan printer global.
+                </p>
+              </div>
+
+              {cashiers.length === 0 ? (
+                <p className="text-sm text-gray-400 py-2">Belum ada akun kasir. Tambahkan kasir di tab User &amp; Role.</p>
+              ) : (
+                <div className="divide-y">
+                  {cashiers.map((cashier) => {
+                    const assignment   = getCashierAssignment(cashier.user_id);
+                    const testResult   = cashierTestStatus[cashier.user_id];
+                    const isTesting    = testingUserId === cashier.user_id;
+                    const hasIp        = !!assignment.printer_ip;
+
+                    return (
+                      <div key={cashier.user_id} className="py-3 space-y-2">
+                        {/* Cashier name + status badge */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-gray-800">{cashier.display_name}</span>
+                            <span className="text-xs text-gray-400 font-mono">@{cashier.username}</span>
+                            {!cashier.is_active && (
+                              <span className="text-xs bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">nonaktif</span>
+                            )}
+                          </div>
+                          {hasIp && (
+                            <span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 font-mono">
+                              {assignment.printer_ip}:{assignment.printer_port || 9100}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* IP + Port inputs */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="col-span-2">
+                            <input
+                              type="text"
+                              placeholder="IP Printer (kosong = gunakan global)"
+                              value={assignment.printer_ip || ''}
+                              onChange={(e) => setCashierPrinter(cashier.user_id, 'printer_ip', e.target.value)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 font-mono"
+                            />
+                          </div>
+                          <div>
+                            <input
+                              type="number"
+                              min="1" max="65535"
+                              placeholder="9100"
+                              value={assignment.printer_port || 9100}
+                              onChange={(e) => setCashierPrinter(cashier.user_id, 'printer_port', parseInt(e.target.value, 10) || 9100)}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 font-mono"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Test result */}
+                        {testResult && testResult !== 'testing' && (
+                          <div className={`flex items-center gap-1.5 text-xs rounded-lg px-2 py-1 border
+                            ${testResult.connected
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                              : 'bg-red-50 border-red-200 text-red-700'}`}>
+                            <span>{testResult.connected ? '✅' : '❌'}</span>
+                            <span>{testResult.message}</span>
+                            {testResult.address && <span className="font-mono opacity-70">({testResult.address})</span>}
+                          </div>
+                        )}
+
+                        {/* Test button */}
+                        <button
+                          type="button"
+                          onClick={() => handleTestCashierPrinter(cashier.user_id)}
+                          disabled={isTesting || !hasIp}
+                          title={!hasIp ? 'Isi IP printer terlebih dahulu' : ''}
+                          className="flex items-center gap-1 text-xs px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-colors"
+                        >
+                          {isTesting
+                            ? <><svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Menguji…</>
+                            : <>🔌 Test</>}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </section>
 

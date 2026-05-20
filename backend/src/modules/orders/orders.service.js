@@ -10,6 +10,20 @@ const { fireWebhook }            = require('../../utils/webhook');
 
 const PENDING_TIMEOUT_MINUTES = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
 
+async function _getTaxSettings() {
+  try {
+    const result = await query("SELECT value FROM system_settings WHERE key = 'tax_config'");
+    if (result.rows.length > 0) {
+      const cfg = JSON.parse(result.rows[0].value);
+      return {
+        active: cfg.ppn_active !== false,
+        rate:   parseFloat(cfg.ppn_rate) || 12.00,
+      };
+    }
+  } catch { /* ignore — use default */ }
+  return { active: true, rate: 12.00 };
+}
+
 /**
  * Create a new order from a validated cart.
  * Validates stock, locks rows, decrements stock, creates TXN record.
@@ -44,10 +58,14 @@ async function createOrder(customerId, items) {
       }
     }
 
-    // 3. Calculate total
-    const totalAmount = items.reduce((sum, item) => {
+    // 3. Calculate totals — read PPN rate from config (falls back to 12%)
+    const taxCfg      = await _getTaxSettings();
+    const TAX_RATE    = taxCfg.active ? taxCfg.rate : 0;
+    const subtotalAmount = items.reduce((sum, item) => {
       return sum + (productMap[item.product_id].price * item.quantity);
     }, 0);
+    const taxAmount   = Math.round(subtotalAmount * TAX_RATE / 100);
+    const totalAmount = subtotalAmount + taxAmount;
 
     // 4. Generate TXN ID
     const transactionId = await generateTxnId();
@@ -59,9 +77,10 @@ async function createOrder(customerId, items) {
 
     // 6. Insert transaction
     await client.query(
-      `INSERT INTO transactions (transaction_id, customer_id, status, total_amount, qr_payload, expires_at)
-       VALUES ($1, $2, 'PENDING', $3, $4, $5)`,
-      [transactionId, customerId, totalAmount, qrPayload, expiresAt]
+      `INSERT INTO transactions
+         (transaction_id, customer_id, status, subtotal_amount, tax_rate, tax_amount, total_amount, qr_payload, expires_at)
+       VALUES ($1, $2, 'PENDING', $3, $4, $5, $6, $7, $8)`,
+      [transactionId, customerId, subtotalAmount, TAX_RATE, taxAmount, totalAmount, qrPayload, expiresAt]
     );
 
     // 7. Insert items & decrement stock
@@ -87,7 +106,7 @@ async function createOrder(customerId, items) {
 
     console.log('Order created - TXN:', transactionId, 'QR Length:', qrPayload?.length);
 
-    return { transactionId, totalAmount, expiresAt, qrPayload, status: 'PENDING' };
+    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, expiresAt, qrPayload, status: 'PENDING' };
   });
 }
 
@@ -245,15 +264,23 @@ async function updateItemQuantity(transactionId, customerId, productId, newQty) 
       [newQty, item.unit_price * newQty, transactionId, productId]
     );
 
-    // Recalculate transaction total
+    // Recalculate transaction total — keep original tax_rate from the order
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS total FROM transaction_items WHERE transaction_id = $1`,
+      `SELECT SUM(subtotal) AS subtotal, tax_rate
+       FROM transaction_items ti
+       JOIN transactions t ON t.transaction_id = ti.transaction_id
+       WHERE ti.transaction_id = $1
+       GROUP BY t.tax_rate`,
       [transactionId]
     );
-    const newTotal = parseFloat(totalResult.rows[0].total);
+    const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
+    const txnTaxRate   = parseFloat(totalResult.rows[0].tax_rate ?? 12);
+    const newTaxAmount = Math.round(newSubtotal * txnTaxRate / 100);
+    const newTotal     = newSubtotal + newTaxAmount;
     await client.query(
-      `UPDATE transactions SET total_amount = $1 WHERE transaction_id = $2`,
-      [newTotal, transactionId]
+      `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
+       WHERE transaction_id = $4`,
+      [newSubtotal, newTaxAmount, newTotal, transactionId]
     );
 
     await writeAuditLog({

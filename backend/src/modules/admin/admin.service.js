@@ -155,7 +155,7 @@ async function adminListProducts({ tenantId, search, includeInactive = true, pag
   };
 }
 
-async function adminCreateProduct({ product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, categ_id }) {
+async function adminCreateProduct({ product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, categ_id, categ_name }) {
   if (!product_id || !product_name || !category || !price || !tenant_id || !barcode) {
     throw new AppError('product_id, product_name, category, price, tenant_id, barcode wajib diisi.', 422);
   }
@@ -167,10 +167,11 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
   if (bcExists.rows.length > 0) throw new AppError('Barcode sudah digunakan produk lain.', 409);
 
   const result = await query(
-    `INSERT INTO products (product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    `INSERT INTO products (product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id, odoo_categ_name)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [product_id, product_name, category, parseFloat(price), tenant_id, barcode,
-     parseInt(stock_quantity) || 0, image_url || null, description || null, categ_id || null]
+     parseInt(stock_quantity) || 0, image_url || null, description || null,
+     categ_id || null, categ_name || null]
   );
   // Auto-sync new product to Odoo (fire-and-forget — does not block response)
   _autoSyncProduct(result.rows[0].product_id);
@@ -178,8 +179,9 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
 }
 
 async function adminUpdateProduct(productId, data) {
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id'];
+  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name'];
   if (data.categ_id !== undefined) data = { ...data, odoo_categ_id: data.categ_id || null };
+  if (data.categ_name !== undefined) data = { ...data, odoo_categ_name: data.categ_name || null };
   const fields = [];
   const params = [];
 
@@ -211,11 +213,20 @@ async function adminBulkUpdateCategory(category) {
   return { updated: result.rowCount };
 }
 
-async function adminBulkUpdateOdooCategory(odoo_categ_id) {
+async function adminBulkUpdateOdooCategory(odoo_categ_id, odoo_categ_name) {
   if (!odoo_categ_id) throw new AppError('odoo_categ_id wajib diisi.', 422);
   const result = await query(
-    `UPDATE products SET odoo_categ_id = $1, updated_at = NOW()`,
-    [parseInt(odoo_categ_id, 10)]
+    `UPDATE products SET odoo_categ_id = $1, odoo_categ_name = $2, updated_at = NOW()`,
+    [parseInt(odoo_categ_id, 10), odoo_categ_name || null]
+  );
+  return { updated: result.rowCount };
+}
+
+async function adminBulkUpdateDescription(description) {
+  if (!description) throw new AppError('description wajib diisi.', 422);
+  const result = await query(
+    `UPDATE products SET description = $1, updated_at = NOW()`,
+    [description]
   );
   return { updated: result.rowCount };
 }
@@ -346,6 +357,67 @@ async function getAuditLogs({ entityType, actorRole, search, dateFrom, dateTo, p
   return { items: data.rows, total: parseInt(count.rows[0].count, 10), page, limit };
 }
 
+// ── Tax Configuration ─────────────────────────────────────────────────────────
+
+const DEFAULT_TAX_CONFIG = {
+  ppn_active:                true,
+  ppn_rate:                  12.00,
+  odoo_tax_id:               null,
+  odoo_tax_name:             '',
+  tax_grid_i1:               '+I1',
+  tax_grid_i2:               '+I2',
+  tax_grid_ii1:              '+II1',
+  tax_grid_ii2:              '+II2',
+  odoo_account_receivable:   '',
+  odoo_account_revenue:      '',
+  odoo_account_tax_output:   '',
+  odoo_account_tax_input:    '',
+  efaktur_npwp:              '',
+  efaktur_name:              '',
+};
+
+async function getTaxConfig() {
+  const result = await query("SELECT value FROM system_settings WHERE key = 'tax_config'");
+  return result.rows.length > 0
+    ? { ...DEFAULT_TAX_CONFIG, ...JSON.parse(result.rows[0].value) }
+    : { ...DEFAULT_TAX_CONFIG };
+}
+
+async function saveTaxConfig(data) {
+  const current = await getTaxConfig();
+  const allowed = Object.keys(DEFAULT_TAX_CONFIG);
+  const patch   = Object.fromEntries(Object.entries(data).filter(([k]) => allowed.includes(k)));
+  const updated = { ...current, ...patch };
+  if (updated.ppn_rate !== undefined) updated.ppn_rate = parseFloat(updated.ppn_rate) || 12.00;
+  if (updated.odoo_tax_id !== undefined && updated.odoo_tax_id !== null) {
+    updated.odoo_tax_id = parseInt(updated.odoo_tax_id, 10) || null;
+  }
+  await query(
+    `INSERT INTO system_settings (key, value, updated_at) VALUES ('tax_config', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [JSON.stringify(updated)],
+  );
+  return updated;
+}
+
+async function getOdooTaxList() {
+  const { odooRpc } = await _connectOdoo();
+  const taxes = await odooRpc(
+    'account.tax',
+    'search_read',
+    [[['type_tax_use', 'in', ['sale', 'all']], ['active', '=', true]]],
+    { fields: ['id', 'name', 'amount', 'type_tax_use', 'price_include', 'amount_type'], order: 'amount desc', limit: 100 },
+  );
+  return (taxes || []).map((t) => ({
+    id:           t.id,
+    name:         t.name,
+    amount:       t.amount,
+    type:         t.type_tax_use,
+    priceInclude: t.price_include,
+    amountType:   t.amount_type,
+  }));
+}
+
 // ── System Configuration ──────────────────────────────────────────────────────
 
 const DEFAULT_SYSTEM_CONFIG = {
@@ -361,6 +433,10 @@ const DEFAULT_SYSTEM_CONFIG = {
   primary_color: '#2563eb',
   map_embed_url: '',
   map_image_url: '',
+  printer_ip: '',
+  printer_port: 9100,
+  // Per-cashier overrides: [{ user_id, printer_ip, printer_port }]
+  printer_assignments: [],
 };
 
 async function getSystemConfig() {
@@ -810,6 +886,7 @@ function _autoSyncProduct(productId) {
 
 /**
  * Fetch product categories from Odoo (product.category search_read).
+ * Side-effect: backfills odoo_categ_name for any products that are missing it.
  */
 async function getOdooProductCategories() {
   const { odooRpc } = await _connectOdoo();
@@ -819,12 +896,40 @@ async function getOdooProductCategories() {
 
   if (!Array.isArray(categories)) throw new AppError('Odoo RPC error saat mengambil kategori.', 502);
 
-  return categories.map(c => ({
+  const mapped = categories.map(c => ({
     id:           c.id,
     name:         c.name,
     completeName: c.complete_name,
     parentId:     Array.isArray(c.parent_id) ? c.parent_id[0] : null,
   }));
+
+  // Backfill odoo_categ_name for products that have an odoo_categ_id but no name yet.
+  const backfill = async () => {
+    for (const cat of mapped) {
+      try {
+        await query(
+          `UPDATE products SET odoo_categ_name = $1, updated_at = NOW()
+           WHERE odoo_categ_id = $2 AND (odoo_categ_name IS NULL OR odoo_categ_name = '')`,
+          [cat.completeName, cat.id],
+        );
+      } catch { /* non-fatal */ }
+    }
+  };
+  backfill().catch(() => {});
+
+  return mapped;
+}
+
+/**
+ * Resolve Odoo startup references (PPN tax ID etc.) right after the server starts.
+ * Non-fatal: skipped silently if Odoo is not configured or unreachable.
+ */
+async function resolveOdooStartupRefs() {
+  const cfg = await getIntegrationConfigRaw();
+  if (!cfg.odoo_is_active) return;
+  const { resolveStartupRefs } = require('../../utils/startupRefs');
+  const { odooRpc } = await _connectOdoo();
+  await resolveStartupRefs(odooRpc, query);
 }
 
 /**
@@ -884,7 +989,7 @@ module.exports = {
   listUsers, createUser, updateUser, resetPassword, deleteUser,
   // Products
   adminListProducts, adminCreateProduct, adminUpdateProduct, adminDeleteProduct,
-  adminBulkUpdateCategory, adminBulkUpdateOdooCategory, saveProductImage,
+  adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription, saveProductImage,
   // Tenants (booth master data)
   adminListTenants, adminCreateTenant, adminUpdateTenant,
   // Audit log
@@ -898,4 +1003,8 @@ module.exports = {
   // Odoo sync, lookups & connection wizard
   syncOdooProducts, syncSingleProductToOdoo, getOdooProductCategories,
   verifyOdooConnection,
+  // Startup refs
+  resolveOdooStartupRefs,
+  // Tax config
+  getTaxConfig, saveTaxConfig, getOdooTaxList,
 };

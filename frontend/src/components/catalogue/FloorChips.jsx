@@ -1,17 +1,38 @@
 import React from 'react';
-import { FLOORS } from '../../data/mockData';
 
-export default function FloorChips({ selected, onSelect }) {
+const CHIP_BASE = {
+  padding: '7px 16px',
+  borderRadius: 20,
+  border: '1.5px solid rgba(255,255,255,0.70)',
+  background: 'rgba(255,255,255,0.42)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  fontSize: 13,
+  fontWeight: 600,
+  color: 'rgba(70,80,140,0.85)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+  boxShadow: '0 1px 6px rgba(100,130,220,0.07), inset 0 1px 0 rgba(255,255,255,0.7)',
+  transition: 'all 0.2s',
+  fontFamily: 'inherit',
+};
+
+const CHIP_ACTIVE = {
+  background: 'rgba(59,91,219,0.88)',
+  border: '1.5px solid rgba(116,143,252,0.50)',
+  color: '#fff',
+  boxShadow: '0 3px 12px rgba(59,91,219,0.30)',
+};
+
+export default function FloorChips({ selected, onSelect, floors = [] }) {
   return (
     <div className="flex gap-2 overflow-x-auto no-scrollbar px-4 py-2">
-      {FLOORS.map(floor => (
+      {floors.map(floor => (
         <button
           key={floor}
           onClick={() => onSelect(floor)}
-          className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-[120ms]
-            ${selected === floor
-              ? 'bg-[#E1F5EE] text-[#085041] border-[#5DCAA5]'
-              : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+          style={selected === floor ? { ...CHIP_BASE, ...CHIP_ACTIVE } : CHIP_BASE}
         >
           {floor}
         </button>

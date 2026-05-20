@@ -11,7 +11,25 @@
       "Bash(python -c ' *)",
       "Bash(node -e \"require\\('./src/config/env'\\); require\\('./src/utils/circuit.breaker'\\); require\\('./src/queue/retry.queue'\\); console.log\\('All modules load OK'\\)\")",
       "Bash(node -e ' *)",
-      "Bash(node -e \"require\\('./src/utils/webhook'\\); console.log\\('webhook util OK'\\)\")"
+      "Bash(node -e \"require\\('./src/utils/webhook'\\); console.log\\('webhook util OK'\\)\")",
+      "Bash(psql -U postgres -d amazing_toys_sos -p 3452 -f backend/migrations/007_sample_stock_and_categories.sql)",
+      "Bash(set PGPASSWORD=localdev123)",
+      "Bash(psql -U postgres -d amazing_toys_sos -p 5432 -h localhost -c \"SELECT version\\(\\);\")",
+      "Bash(psql -U postgres -d amazing_toys_sos -p 5432 -h localhost -f backend/migrations/007_sample_stock_and_categories.sql)",
+      "Bash(psql -U postgres -d amazing_toys_sos -p 5432 -h localhost -c \"SELECT product_id, product_name, stock_quantity, stock_status FROM products WHERE is_active = TRUE ORDER BY product_id LIMIT 20;\")",
+      "Bash(psql -U postgres -d amazing_toys_sos -p 5432 -h localhost -c \"SELECT * FROM product_categories ORDER BY category_id;\")",
+      "Bash(npx vite *)",
+      "Bash(findstr \":5173 \\\\|:5174 \")",
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "Bash(node --check \"C:/Dev/amazing_toys_odoo_online/backend/src/modules/admin/admin.service.js\")",
+      "Bash(node --check \"C:/Dev/amazing_toys_odoo_online/backend/src/modules/admin/admin.router.js\")",
+      "Bash(findstr \"LISTEN\")",
+      "Bash(findstr \":3000 \\\\|:8000 \\\\|:8080 \\\\|:4000 \\\\|:5000 \")",
+      "Bash(findstr \":3\")",
+      "Bash(curl -s http://localhost:3001/api/)",
+      "Bash(curl -s -X POST \"http://localhost:3001/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin\"}')",
+      "Bash(curl -s -X POST \"http://localhost:3001/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

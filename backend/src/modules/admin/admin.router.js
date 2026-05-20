@@ -129,9 +129,18 @@ router.patch('/products/bulk-category', ...adminOnly, async (req, res, next) => 
 
 router.patch('/products/bulk-odoo-category', ...adminOnly, async (req, res, next) => {
   try {
-    const { odoo_categ_id } = req.body;
+    const { odoo_categ_id, odoo_categ_name } = req.body;
     if (!odoo_categ_id) throw new AppError('odoo_categ_id wajib diisi.', 422);
-    const data = await adminSvc.adminBulkUpdateOdooCategory(odoo_categ_id);
+    const data = await adminSvc.adminBulkUpdateOdooCategory(odoo_categ_id, odoo_categ_name);
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
+router.patch('/products/bulk-description', ...adminOnly, async (req, res, next) => {
+  try {
+    const { description } = req.body;
+    if (!description) throw new AppError('description wajib diisi.', 422);
+    const data = await adminSvc.adminBulkUpdateDescription(description);
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -315,6 +324,41 @@ router.get('/odoo/categories', ...adminOnly, async (_req, res, next) => {
   try {
     const data = await adminSvc.getOdooProductCategories();
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /admin/odoo/taxes
+ * Fetch all active sale taxes from Odoo for the tax mapping dropdown.
+ */
+router.get('/odoo/taxes', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getOdooTaxList();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// ── Tax Configuration ─────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/tax-config
+ * Return current PPN / tax configuration.
+ */
+router.get('/tax-config', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getTaxConfig();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /admin/tax-config
+ * Persist PPN / tax configuration.
+ */
+router.put('/tax-config', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await adminSvc.saveTaxConfig(req.body);
+    res.json({ success: true, message: 'Konfigurasi pajak disimpan.', data });
   } catch (err) { next(err); }
 });
 

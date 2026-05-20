@@ -1,11 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Nunito:wght@700;800;900&display=swap');
+
 @media print {
   body * { visibility: hidden; }
+
   #print-receipt-layout,
   #print-receipt-layout * { visibility: visible; }
+
   #print-receipt-layout {
     position: absolute;
-    top: 0; left: 0;
-    width: 100%;
+    top: 0;
+    left: 0;
+    width: 302px; /* 80mm at 96dpi */
   }
 }
 

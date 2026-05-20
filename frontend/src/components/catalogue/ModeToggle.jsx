@@ -1,31 +1,39 @@
 import React from 'react';
 
+const GLASS_PANEL = {
+  background: 'rgba(255,255,255,0.45)',
+  backdropFilter: 'blur(16px) saturate(1.7)',
+  WebkitBackdropFilter: 'blur(16px) saturate(1.7)',
+  border: '1.5px solid rgba(255,255,255,0.72)',
+  borderRadius: 14,
+  padding: 4,
+  boxShadow: '0 2px 12px rgba(100,130,220,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+};
+
 export default function ModeToggle({ mode, onSetMode }) {
   return (
-    <div className="flex bg-gray-100 rounded-xl p-1 border border-gray-200">
+    <div style={GLASS_PANEL} className="flex gap-1">
       <button
         onClick={() => onSetMode('product')}
-        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150
-          ${mode === 'product'
-            ? 'bg-[#EEEDFE] text-[#3C3489] shadow-sm'
-            : 'text-gray-500 hover:text-gray-700'}`}
+        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[10px] text-[13px] font-semibold transition-all duration-200 border-none cursor-pointer"
+        style={
+          mode === 'product'
+            ? { background: 'rgba(255,255,255,0.75)', color: '#3B5BDB', boxShadow: '0 1px 6px rgba(100,130,220,0.12)' }
+            : { background: 'transparent', color: 'rgba(80,90,140,0.75)' }
+        }
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
-        </svg>
-        By product
+        🏷️ By product
       </button>
       <button
         onClick={() => onSetMode('store')}
-        className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-150
-          ${mode === 'store'
-            ? 'bg-[#E1F5EE] text-[#085041] shadow-sm'
-            : 'text-gray-500 hover:text-gray-700'}`}
+        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[10px] text-[13px] font-semibold transition-all duration-200 border-none cursor-pointer"
+        style={
+          mode === 'store'
+            ? { background: 'rgba(255,255,255,0.75)', color: '#3B5BDB', boxShadow: '0 1px 6px rgba(100,130,220,0.12)' }
+            : { background: 'transparent', color: 'rgba(80,90,140,0.75)' }
+        }
       >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-        </svg>
-        By store
+        🏪 By store
       </button>
     </div>
   );

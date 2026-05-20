@@ -27,6 +27,7 @@ const leaderRouter       = require('./modules/leader/leader.router');
 const notifRouter        = require('./modules/notifications/notifications.router');
 const adminRouter        = require('./modules/admin/admin.router');
 const receiptsRouter     = require('./modules/receipts/receipts.router');
+const printRouter        = require('./modules/print/print.router');
 
 // WebSocket
 const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
@@ -36,6 +37,9 @@ notifSvc.setWsBroadcast(wsBroadcast);
 // Scheduler
 const { initializeScheduledJobs } = require('./modules/scheduler/JobBootstrap');
 const adminSvcScheduler = require('./modules/admin/admin.service');
+
+// Startup refs (Odoo tax ID cache)
+const { resolveStartupRefs } = require('./utils/startupRefs');
 
 // ── App setup ────────────────────────────────────────────────────────────────
 
@@ -99,6 +103,7 @@ app.use(`${API}/leader`,        leaderRouter);
 app.use(`${API}/notifications`, notifRouter);
 app.use(`${API}/admin`,        adminRouter);
 app.use(`${API}/receipts`,     receiptsRouter);
+app.use(`${API}/print`,        printRouter);
 
 // 404 catch-all
 app.use((req, res) => {
@@ -119,6 +124,9 @@ server.listen(PORT, () => {
   logger.info(`[Server] WebSocket available at ws://localhost:${PORT}/ws`);
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
+
+  // Cache Odoo PPN 12% tax ID — fire-and-forget, non-fatal if Odoo is unreachable at boot
+  adminSvcScheduler.resolveOdooStartupRefs().catch(() => {});
 });
 
 // Graceful shutdown

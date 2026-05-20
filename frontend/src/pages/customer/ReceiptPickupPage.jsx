@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
 import { getOrder } from '../../api/orders';
-import { formatRupiah, formatDateOnly, formatDate } from '../../utils/format';
+import { formatRupiah, formatDateOnly } from '../../utils/format';
 import { groupByTenant } from '../../utils/order';
 import { useLang } from '../../context/LangContext';
 import Badge from '../../components/ui/Badge';
@@ -12,10 +12,6 @@ import ToastContainer from '../../components/ui/Toast';
 import PrintReceiptButton from '../../components/cashier/PrintReceiptButton';
 import PrintConfirmationModal from '../../components/cashier/PrintConfirmationModal';
 import { sendEReceipt } from '../../services/sendEReceipt';
-import '../../styles/print.css';
-
-const EVENT_NAME = 'Amazing Toys Fair 2026';
-const EVENT_VENUE = 'JCC Senayan, Jakarta';
 
 function pickupBadgeStatus(pickupStatus) {
   if (pickupStatus === 'DONE')  return 'DONE';
@@ -78,7 +74,6 @@ export default function ReceiptPickupPage() {
 
   async function handleConfirmPrint(sendEmail) {
     setIsModalOpen(false);
-    window.print();
     if (sendEmail && customerForModal.email) {
       const result = await sendEReceipt(txnForModal, successForModal, customerForModal);
       if (result.success) {
@@ -132,10 +127,32 @@ export default function ReceiptPickupPage() {
                 </div>
               ))}
             </div>
-            <div className="flex justify-between items-center px-4 py-3 border-t">
-              <span className="font-bold text-gray-900 text-sm">{t('receipt.total')}</span>
-              <span className="font-bold text-gray-900 text-sm">{formatRupiah(order.total_amount)}</span>
-            </div>
+            {(() => {
+              const subtotal = parseFloat(order.subtotal_amount ?? 0);
+              const taxAmt   = parseFloat(order.tax_amount ?? 0);
+              const taxRate  = parseFloat(order.tax_rate ?? 12);
+              const hasTax   = taxAmt > 0;
+              return (
+                <>
+                  {hasTax && (
+                    <div className="flex justify-between items-center px-4 py-2 text-sm text-gray-500">
+                      <span>Subtotal</span>
+                      <span>{formatRupiah(subtotal)}</span>
+                    </div>
+                  )}
+                  {hasTax && (
+                    <div className="flex justify-between items-center px-4 py-2 text-sm text-gray-500">
+                      <span>PPN {taxRate}%</span>
+                      <span>{formatRupiah(taxAmt)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center px-4 py-3 border-t">
+                    <span className="font-bold text-gray-900 text-sm">{t('receipt.total')}</span>
+                    <span className="font-bold text-gray-900 text-sm">{formatRupiah(order.total_amount)}</span>
+                  </div>
+                </>
+              );
+            })()}
           </div>
 
           {/* ── Pickup instructions ───────────────────────────────── */}
@@ -186,43 +203,10 @@ export default function ReceiptPickupPage() {
           success={successForModal}
           cashierName={cashierName}
           customer={customerForModal}
+          cashReceived={order.cash_received ?? null}
           onClose={() => setIsModalOpen(false)}
           onConfirmPrint={handleConfirmPrint}
         />
-      )}
-
-      {/* Hidden 80mm print layout */}
-      {isStaff && order && (
-        <div
-          id="print-receipt-layout"
-          className="hidden print:block"
-          style={{ fontFamily: 'monospace', fontSize: '11px', lineHeight: '1.5', color: '#000', background: '#fff', padding: '12px' }}
-        >
-          <p style={{ textAlign: 'center', fontWeight: 'bold', marginBottom: '2px' }}>{EVENT_NAME}</p>
-          <p style={{ textAlign: 'center', fontSize: '10px', marginBottom: '8px' }}>{EVENT_VENUE}</p>
-          <p style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
-          <p>ID: {order.transaction_id}</p>
-          <p>Tgl: {formatDate(order.paid_at)}</p>
-          <p>Kasir: {cashierName}</p>
-          <p style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
-          {order.items.map((item, i) => (
-            <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{item.product_name} × {item.quantity}</span>
-              <span>{formatRupiah(item.unit_price * item.quantity)}</span>
-            </div>
-          ))}
-          <p style={{ borderTop: '1px solid #000', margin: '6px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', fontSize: '13px' }}>
-            <span>Total</span>
-            <span>{formatRupiah(order.total_amount)}</span>
-          </div>
-          <p>Metode: {order.payment_method}</p>
-          {order.cash_change != null && (
-            <p>Kembalian: {formatRupiah(order.cash_change)}</p>
-          )}
-          <p style={{ textAlign: 'center', fontSize: '10px', marginTop: '8px' }}>All prices include tax</p>
-          <p style={{ textAlign: 'center', marginTop: '8px' }}>Terima kasih!</p>
-        </div>
       )}
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />

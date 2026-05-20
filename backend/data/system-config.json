@@ -1,0 +1,33 @@
+{
+  "event_name": "Amazing Toys Fair 2026",
+  "venue": "Jakarta Convention Center",
+  "event_date_start": "2026-04-01",
+  "event_date_end": "2026-04-07",
+  "pending_timeout_minutes": 30,
+  "max_items_per_order": 20,
+  "maintenance_mode": false,
+  "contact_email": "admin@amazingtoys.local",
+  "logo_url": "/uploads/1779274282396-uxzm7j.jpg",
+  "primary_color": "#2563eb",
+  "map_embed_url": "",
+  "map_image_url": "",
+  "printer_ip": "",
+  "printer_port": 9100,
+  "printer_assignments": [
+    {
+      "user_id": "c02fc2eb-db4b-4410-a563-da88f62c8251",
+      "printer_ip": "192.168.0.105",
+      "printer_port": 9100
+    },
+    {
+      "user_id": "5e91c4c5-5005-4d9a-a47c-b56f58fea59f",
+      "printer_ip": "192.168.0.106",
+      "printer_port": 9100
+    },
+    {
+      "user_id": "99a6e17d-f743-45a0-8900-f6e388e2a62a",
+      "printer_ip": "192.168.0.107",
+      "printer_port": 9100
+    }
+  ]
+}

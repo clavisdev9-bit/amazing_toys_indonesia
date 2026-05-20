@@ -13,7 +13,9 @@ const { fireWebhook }            = require('../../utils/webhook');
  */
 async function lookupTransaction(transactionId) {
   const result = await query(
-    `SELECT t.transaction_id, t.status, t.total_amount, t.expires_at,
+    `SELECT t.transaction_id, t.status, t.total_amount,
+            t.subtotal_amount, t.tax_rate, t.tax_amount,
+            t.expires_at,
             c.full_name AS customer_name, c.phone_number AS customer_phone,
             c.email AS customer_email,
             t.created_at AS checkout_time
@@ -26,7 +28,7 @@ async function lookupTransaction(transactionId) {
   if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
 
   if (txn.status === 'PAID') throw new AppError('Transaksi sudah diproses.', 409);
-  if (txn.status === 'CANCELLED') throw new AppError('Transaksi sudah dibatalkan.', 409);
+  if (txn.status === 'CANCELLED') throw new AppError('Transaksi sudah dibatalkan.', 422);
   if (txn.status === 'EXPIRED' || new Date(txn.expires_at) < new Date()) {
     throw new AppError('Transaksi sudah kadaluarsa.', 410);
   }
@@ -134,7 +136,10 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
     fireWebhook('/webhook/order-paid', {
       transactionId,
       status: 'PAID',
-      totalAmount: parseFloat(txn.total_amount),
+      subtotalAmount:  parseFloat(txn.subtotal_amount ?? txn.total_amount),
+      taxRate:         parseFloat(txn.tax_rate ?? 12),
+      taxAmount:       parseFloat(txn.tax_amount ?? 0),
+      totalAmount:     parseFloat(txn.total_amount),
       paidAt,
       customerId: txn.customer_id,
     });

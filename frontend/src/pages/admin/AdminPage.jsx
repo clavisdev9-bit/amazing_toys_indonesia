@@ -6,6 +6,7 @@ import BoothTab       from './tabs/BoothTab';
 import AuditLogTab    from './tabs/AuditLogTab';
 import ConfigTab      from './tabs/ConfigTab';
 import IntegrationTab from './tabs/IntegrationTab';
+import TaxTab         from './tabs/TaxTab';
 
 const TABS = [
   { key: 'master-data', label: 'Master Data', icon: '📦', active: 'bg-blue-600 text-white shadow',   desc: 'Kelola produk & foto' },
@@ -14,6 +15,7 @@ const TABS = [
   { key: 'config',      label: 'Konfigurasi',  icon: '⚙️',  active: 'bg-amber-500 text-white shadow',  desc: 'Setup event & logo' },
   { key: 'audit-log',   label: 'Audit Log',    icon: '📋', active: 'bg-slate-600 text-white shadow',  desc: 'Monitor aktivitas' },
   { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
+  { key: 'tax',         label: 'Pajak & SPT',  icon: '🧮', active: 'bg-orange-500 text-white shadow',  desc: 'Konfigurasi PPN, Tax Grid SPT Masa, dan mapping akun Odoo' },
 ];
 
 export default function AdminPage() {
@@ -72,6 +74,7 @@ export default function AdminPage() {
         {tab === 'config'      && <ConfigTab />}
         {tab === 'audit-log'   && <AuditLogTab />}
         {tab === 'integration' && <IntegrationTab />}
+        {tab === 'tax'         && <TaxTab />}
       </ErrorBoundary>
     </div>
   );

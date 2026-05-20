@@ -19,7 +19,7 @@ async function listProducts({ tenantId, category, search, inStockOnly, page = 1,
   const sql = `
     SELECT p.product_id, p.product_name, p.category, p.price,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
-           p.barcode,
+           p.barcode, p.odoo_categ_id, p.odoo_categ_name,
            t.tenant_id, t.tenant_name, t.booth_location, t.floor_label
     FROM products p
     JOIN tenants t ON t.tenant_id = p.tenant_id
@@ -99,7 +99,12 @@ async function updateProduct(productId, data) {
 }
 
 async function listCategories() {
-  const result = await query(`SELECT DISTINCT category FROM products WHERE is_active = TRUE ORDER BY category`);
+  const result = await query(`
+    SELECT name AS category FROM product_categories
+    UNION
+    SELECT DISTINCT category FROM products WHERE is_active = TRUE
+    ORDER BY category
+  `);
   return result.rows.map(r => r.category);
 }
 

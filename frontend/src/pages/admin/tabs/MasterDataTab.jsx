@@ -3,7 +3,7 @@ import ProductBulkUpload from '../ProductBulkUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
   adminDeleteProduct, uploadProductImage, syncOdooProducts, syncStock,
-  adminBulkUpdateCategory, adminBulkUpdateOdooCategory,
+  adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription,
 } from '../../../api/admin';
 import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
@@ -115,8 +115,16 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
         required
         placeholder="Ketik untuk mencari kategori Odoo..."
       />
-      <Input label="Deskripsi" value={form.description}
-        onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700">Deskripsi</label>
+        <textarea
+          rows={4}
+          value={form.description}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          placeholder="Deskripsi produk..."
+          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+        />
+      </div>
       <Input label="Image URL" placeholder="/uploads/... atau https://..."
         value={form.image_url}
         onChange={(e) => setForm((f) => ({ ...f, image_url: e.target.value }))} />
@@ -172,6 +180,11 @@ export default function MasterDataTab() {
   const [bulkOdooCatModal, setBulkOdooCatModal]   = useState(false);
   const [bulkOdooCatOpt,   setBulkOdooCatOpt]     = useState(null); // { value, label }
   const [bulkOdooCatSaving, setBulkOdooCatSaving] = useState(false);
+
+  const LOREM_IPSUM = 'It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout. The point of using Lorem Ipsum is that it has a more-or-less normal distribution of letters, as opposed to using \'Content here, content here\', making it look like readable English. Many desktop publishing packages and web page editors now use Lorem Ipsum as their default model text, and a search for \'lorem ipsum\' will uncover many web sites still in their infancy. Various versions have evolved over the years, sometimes by accident, sometimes on purpose (injected humour and the like).';
+  const [bulkDescModal,  setBulkDescModal]  = useState(false);
+  const [bulkDescValue,  setBulkDescValue]  = useState('');
+  const [bulkDescSaving, setBulkDescSaving] = useState(false);
 
   // ── Pagination state ──────────────────────────────────────────────────────
   const [page, setPage]           = useState(1);
@@ -259,7 +272,7 @@ export default function MasterDataTab() {
     if (!bulkOdooCatOpt) return;
     setBulkOdooCatSaving(true);
     try {
-      const r = await adminBulkUpdateOdooCategory(bulkOdooCatOpt.value);
+      const r = await adminBulkUpdateOdooCategory(bulkOdooCatOpt.value, bulkOdooCatOpt.label);
       addToast(`Kategori Odoo semua produk diubah ke "${bulkOdooCatOpt.label}" (${r.data.updated} produk).`, 'success');
       setBulkOdooCatModal(false);
       fetchProducts();
@@ -276,6 +289,26 @@ export default function MasterDataTab() {
       .find(o => o.label.toLowerCase().includes('others') || o.label.toLowerCase() === 'other');
     setBulkOdooCatOpt(othersOpt ?? null);
     setBulkOdooCatModal(true);
+  }
+
+  function openBulkDesc() {
+    setBulkDescValue(LOREM_IPSUM);
+    setBulkDescModal(true);
+  }
+
+  async function handleBulkDescription() {
+    if (!bulkDescValue.trim()) return;
+    setBulkDescSaving(true);
+    try {
+      const r = await adminBulkUpdateDescription(bulkDescValue.trim());
+      addToast(`Deskripsi berhasil diisi untuk ${r.data.updated} produk.`, 'success');
+      setBulkDescModal(false);
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal update deskripsi.', 'error');
+    } finally {
+      setBulkDescSaving(false);
+    }
   }
 
   function openCreate() {
@@ -318,6 +351,7 @@ export default function MasterDataTab() {
         image_url:      form.image_url || undefined,
         description:    form.description || undefined,
         categ_id:       form.odoo_categ_id,
+        categ_name:     form.odoo_categ_name || undefined,
       });
       addToast('Produk berhasil dibuat.', 'success');
       setCreateModal(false);
@@ -344,6 +378,7 @@ export default function MasterDataTab() {
         description:    form.description || null,
         image_url:      form.image_url   || null,
         categ_id:       form.odoo_categ_id,
+        categ_name:     form.odoo_categ_name || null,
         is_active:      form.is_active,
       });
       addToast('Produk diperbarui.', 'success');
@@ -448,6 +483,12 @@ export default function MasterDataTab() {
             Set Kategori Odoo
           </Button>
         )}
+        {role === 'ADMIN' && (
+          <Button size="sm" onClick={openBulkDesc}
+            className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+            Set Deskripsi
+          </Button>
+        )}
         <Button size="sm" onClick={() => setShowBulkUpload(true)}
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
           ⬆ Upload Massal
@@ -485,7 +526,7 @@ export default function MasterDataTab() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  {['ID / Nama','Kategori','Harga','Tenant','Stok','Status','Foto','Diperbarui','Aksi'].map((h) => (
+                  {['ID / Nama','Deskripsi','Kategori','Harga','Tenant','Stok','Status','Foto','Diperbarui','Aksi'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -497,6 +538,11 @@ export default function MasterDataTab() {
                     <td className="px-3 py-2.5">
                       <p className="font-medium text-gray-900">{p.product_name}</p>
                       <p className="text-xs text-gray-400 font-mono">{p.product_id}</p>
+                    </td>
+                    <td className="px-3 py-2.5 max-w-[200px]">
+                      {p.description
+                        ? <span className="text-xs text-gray-600 line-clamp-2 leading-snug" title={p.description}>{p.description}</span>
+                        : <span className="text-xs text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.category}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-700 whitespace-nowrap">{formatRupiah(p.price)}</td>
@@ -675,6 +721,32 @@ export default function MasterDataTab() {
           <div className="flex gap-2">
             <Button variant="secondary" className="flex-1" onClick={() => setBulkOdooCatModal(false)}>Batal</Button>
             <Button className="flex-1" loading={bulkOdooCatSaving} disabled={!bulkOdooCatOpt} onClick={handleBulkOdooCategory}>
+              Terapkan
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Description Modal */}
+      <Modal open={bulkDescModal} onClose={() => setBulkDescModal(false)} title="Set Deskripsi Semua Produk">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Isi field <span className="font-semibold">Deskripsi</span> untuk{' '}
+            <span className="font-semibold">semua produk</span> dengan teks berikut:
+          </p>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">Deskripsi</label>
+            <textarea
+              rows={6}
+              value={bulkDescValue}
+              onChange={(e) => setBulkDescValue(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+            />
+          </div>
+          <p className="text-xs text-amber-600">Perhatian: tindakan ini akan mengubah deskripsi semua produk sekaligus.</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setBulkDescModal(false)}>Batal</Button>
+            <Button className="flex-1" loading={bulkDescSaving} disabled={!bulkDescValue.trim()} onClick={handleBulkDescription}>
               Terapkan
             </Button>
           </div>

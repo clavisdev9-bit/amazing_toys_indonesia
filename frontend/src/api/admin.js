@@ -18,10 +18,12 @@ export const uploadProductImage  = (data)      => client.post('/admin/products/u
 export const getAuditLog = (params) => client.get('/admin/audit-log', { params });
 
 // ── Config ─────────────────────────────────────────────────────────────────
-export const getPublicConfig = ()  => client.get('/config/public');
-export const getConfig    = ()     => client.get('/admin/config');
-export const saveConfig   = (data) => client.put('/admin/config', data);
-export const uploadLogo   = (data) => client.post('/admin/config/upload-logo', data);
+export const getPublicConfig  = ()     => client.get('/config/public');
+export const getConfig        = ()     => client.get('/admin/config');
+export const saveConfig       = (data) => client.put('/admin/config', data);
+export const uploadLogo       = (data) => client.post('/admin/config/upload-logo', data);
+export const getPrinterStatus = (userId) =>
+  client.get('/print/status', userId ? { params: { userId } } : {});
 
 // ── Tenants (Booth Master Data) ────────────────────────────────────────────
 export const getAdminTenants   = (params)    => client.get('/admin/tenants', { params });
@@ -43,7 +45,8 @@ export const getOdooCategories     = ()                => client.get('/admin/odo
 // ── Bulk Upload ────────────────────────────────────────────────────────────
 export const bulkUploadProducts      = (products)  => client.post('/admin/products/bulk-upload', { products });
 export const adminBulkUpdateCategory    = (category)     => client.patch('/admin/products/bulk-category', { category });
-export const adminBulkUpdateOdooCategory = (odoo_categ_id) => client.patch('/admin/products/bulk-odoo-category', { odoo_categ_id });
+export const adminBulkUpdateOdooCategory    = (odoo_categ_id, odoo_categ_name) => client.patch('/admin/products/bulk-odoo-category', { odoo_categ_id, odoo_categ_name });
+export const adminBulkUpdateDescription    = (description)                    => client.patch('/admin/products/bulk-description', { description });
 
 // ── Stock Sync ──────────────────────────────────────────────────────────────
 export const syncStock             = (productIds = null) =>
@@ -52,3 +55,8 @@ export const getStockSyncHistory   = (params)           => client.get('/admin/st
 
 // ── Transaction Resync ──────────────────────────────────────────────────────
 export const resyncTransactions = () => client.post('/admin/transactions/resync');
+
+// ── Tax Configuration ───────────────────────────────────────────────────────
+export const getTaxConfig    = ()     => client.get('/admin/tax-config');
+export const saveTaxConfig   = (data) => client.put('/admin/tax-config', data);
+export const getOdooTaxes    = ()     => client.get('/admin/odoo/taxes');

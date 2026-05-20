@@ -1,7 +1,7 @@
 // TODO: replace PRODUCTS with API call to GET /api/products
 export const PRODUCTS = [
   { id: 'p1',  name: 'Barbie Dreamhouse',  price: 450000,  category: 'Doll',     colorHex: '#EEEDFE', storeIds: ['s1', 's3'], stock: 12 },
-  { id: 'p2',  name: 'BJD Articulated',    price: 820000,  category: 'Doll',     colorHex: '#FBEAF0', storeIds: ['s5'],       stock: 4  },
+  { id: 'p2',  name: 'BJD Articulated',    price: 820000,  category: 'Doll',     colorHex: '#FBEAF0', storeIds: ['s5'],       stock: 3  },
   { id: 'p3',  name: 'Plush Bunny XL',     price: 210000,  category: 'Doll',     colorHex: '#E1F5EE', storeIds: ['s1', 's6'], stock: 0  },
   { id: 'p4',  name: 'Fashion Doll Set',   price: 320000,  category: 'Doll',     colorHex: '#FAEEDA', storeIds: ['s3'],       stock: 7  },
   { id: 'p5',  name: 'LEGO City 500pcs',   price: 680000,  category: 'Brick',    colorHex: '#E6F1FB', storeIds: ['s3', 's5'], stock: 15 },
@@ -33,6 +33,7 @@ export const CATEGORIES = ['All', 'Doll', 'Brick', 'Art toys', 'Hobbies'];
 export const FLOORS     = ['UG', 'LG', '1F', '2F', '3F'];
 
 export const FLOOR_NAMES = {
+  GF:  'Ground floor (GF)',
   UG:  'Underground (UG)',
   LG:  'Lower ground (LG)',
   '1F':'First floor (1F)',
