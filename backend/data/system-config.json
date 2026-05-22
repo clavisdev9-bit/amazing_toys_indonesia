@@ -3,7 +3,7 @@
   "venue": "Mall Gandaria City",
   "event_date_start": "2026-04-01",
   "event_date_end": "2026-04-07",
-  "pending_timeout_minutes": 30,
+  "pending_timeout_minutes": 8,
   "max_items_per_order": 20,
   "maintenance_mode": false,
   "contact_email": "amazing@admin.com",

@@ -10,10 +10,7 @@ const QRCode = require('qrcode');
  * @returns {Promise<string>}     Base64 string (without data URL prefix) to be used in data:image/png;base64,{result}
  */
 async function generateTransactionQR(transactionId) {
-  const payload = JSON.stringify({
-    txn: transactionId,
-    ts:  Date.now(),
-  });
+  const payload = transactionId;
   const dataUrl = await QRCode.toDataURL(payload, {
     errorCorrectionLevel: 'M',
     width: 300,

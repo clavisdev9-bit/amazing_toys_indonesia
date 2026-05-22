@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLang }                  from '../../context/LangContext';
 import { useCatalogueState }    from '../../hooks/useCatalogueState';
+import { useWishlist }          from '../../hooks/useWishlist';
 import { FLOOR_NAMES }          from '../../data/mockData';
 import { useTourTarget }        from '../../hooks/useTourTarget';
 import ModeToggle               from '../../components/catalogue/ModeToggle';
@@ -19,34 +20,167 @@ export default function BrowsePage() {
   const navigate = useNavigate();
   const { t } = useLang();
   const { state, actions } = useCatalogueState();
+  const { wishedIds, wishlistMode, setWishlistMode } = useWishlist();
   const searchRef      = useTourTarget('step-katalog-search');
   const categoriesRef  = useTourTarget('step-katalog-categories');
   const [showScanner, setShowScanner] = useState(false);
-  const [toast, setToast] = useState('');
 
   const {
     mode, curCat, curFloor,
     selectedStoreIds, selectedStores,
     storeCat, showFilteredProducts,
     search, selectedProduct,
+    products,
     productModeProducts, storeModeProducts, storesByFloor,
     categories, floors, loading,
   } = state;
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(''), 2500);
-    return () => clearTimeout(t);
-  }, [toast]);
-
   function handleQrResult(text) {
     setShowScanner(false);
-    // Try as product ID — let the detail page handle 404
     navigate(`/product/${text}`);
   }
 
+  // All products in wishlist (search-aware, ignores category filter)
+  const wishlistProducts = useMemo(() => {
+    let result = products.filter(p => wishedIds.includes(p.id));
+    if (search.trim()) result = result.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    return result;
+  }, [products, wishedIds, search]);
+
   const floorLabel = FLOOR_NAMES[curFloor] ?? curFloor;
 
+  // ── Wishlist mode view ────────────────────────────────────────────────────
+  if (wishlistMode) {
+    return (
+      <div className="max-w-[390px] mx-auto">
+
+        {/* Sticky controls */}
+        <div
+          className="sticky top-14 z-20 px-4 pt-3 pb-2.5 flex flex-col gap-2"
+          style={{
+            background: 'rgba(255,235,235,0.35)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            borderBottom: '1px solid rgba(255,255,255,0.40)',
+          }}
+        >
+          {/* Search bar */}
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex-1 flex items-center gap-2.5 h-11 px-3.5 rounded-[14px]"
+              style={{
+                background: 'rgba(255,255,255,0.52)',
+                backdropFilter: 'blur(16px) saturate(1.7)',
+                WebkitBackdropFilter: 'blur(16px) saturate(1.7)',
+                border: '1.5px solid rgba(255,255,255,0.75)',
+                boxShadow: '0 2px 10px rgba(100,130,220,0.08), inset 0 1px 0 rgba(255,255,255,0.8)',
+              }}
+            >
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="#ADB5BD">
+                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={e => actions.setSearch(e.target.value)}
+                placeholder="Cari di wishlist..."
+                className="flex-1 bg-transparent border-none outline-none text-sm font-medium"
+                style={{ color: '#1A1A2E', fontFamily: 'inherit' }}
+              />
+              {search && (
+                <button onClick={() => actions.setSearch('')} className="text-[#ADB5BD]">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Close wishlist mode */}
+            <button
+              onClick={() => setWishlistMode(false)}
+              className="shrink-0 h-11 px-4 flex items-center gap-1.5 rounded-[14px] text-xs font-bold transition-all duration-150 border-none cursor-pointer"
+              style={{
+                background: 'rgba(255,255,255,0.72)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                border: '1.5px solid rgba(255,255,255,0.75)',
+                color: '#3B5BDB',
+              }}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Tutup
+            </button>
+          </div>
+        </div>
+
+        {/* Wishlist header */}
+        <div className="flex items-center justify-between px-4 pb-2 pt-3">
+          <h2
+            className="text-[15px] font-extrabold flex items-center gap-1.5"
+            style={{ color: 'rgba(30,40,100,0.90)', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#F03E3E">
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+            </svg>
+            Wishlist Saya
+          </h2>
+          <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
+            {wishlistProducts.length} produk tersimpan
+          </span>
+        </div>
+
+        {loading ? (
+          <div className="py-12"><Spinner /></div>
+        ) : wishlistProducts.length === 0 ? (
+          /* Empty state */
+          <div className="flex flex-col items-center justify-center px-8 py-16 gap-4 text-center">
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center"
+              style={{ background: 'rgba(255,220,220,0.50)' }}
+            >
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#F06595" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-[15px] font-extrabold mb-1" style={{ color: 'rgba(30,40,100,0.85)' }}>
+                Wishlist masih kosong
+              </p>
+              <p className="text-[13px]" style={{ color: 'rgba(80,90,150,0.65)' }}>
+                {search ? 'Produk tidak ditemukan di wishlist.' : 'Klik ❤️ pada produk favoritmu!'}
+              </p>
+            </div>
+            <button
+              onClick={() => setWishlistMode(false)}
+              className="px-6 py-2.5 rounded-[14px] text-sm font-bold border-none cursor-pointer"
+              style={{
+                background: 'rgba(59,91,219,0.88)',
+                color: '#fff',
+                boxShadow: '0 2px 8px rgba(59,91,219,0.25)',
+              }}
+            >
+              Jelajahi Produk
+            </button>
+          </div>
+        ) : (
+          <ProductGrid products={wishlistProducts} />
+        )}
+
+        {/* Product bottom sheet */}
+        {selectedProduct && (
+          <ProductBottomSheet
+            product={selectedProduct}
+            onClose={() => actions.setSelectedProduct(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── Normal catalogue view ─────────────────────────────────────────────────
   return (
     <div className="max-w-[390px] mx-auto">
 
@@ -268,13 +402,6 @@ export default function BrowsePage() {
           onResult={handleQrResult}
           onClose={() => setShowScanner(false)}
         />
-      )}
-
-      {/* ── Toast ────────────────────────────────────────────────────── */}
-      {toast && (
-        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[60] bg-gray-900 text-white text-xs font-medium px-4 py-2 rounded-full shadow-lg pointer-events-none">
-          {toast}
-        </div>
       )}
     </div>
   );

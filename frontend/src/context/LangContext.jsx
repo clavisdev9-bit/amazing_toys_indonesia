@@ -709,7 +709,7 @@ const LangContext = createContext(null);
 
 export function LangProvider({ children }) {
   const [lang, setLangState] = useState(
-    () => localStorage.getItem(STORAGE_KEY) || 'ID'
+    () => localStorage.getItem(STORAGE_KEY) || 'EN'
   );
 
   function setLang(code) {

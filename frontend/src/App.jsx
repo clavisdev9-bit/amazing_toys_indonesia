@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { LangProvider } from './context/LangContext';
+import { WishlistProvider } from './context/WishlistContext';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket } from './hooks/useWebSocket';
 import {
@@ -194,9 +195,11 @@ export default function App() {
       <AuthProvider>
         <LangProvider>
           <CartProvider>
-            <TourProvider>
-              <AppRoutes />
-            </TourProvider>
+            <WishlistProvider>
+              <TourProvider>
+                <AppRoutes />
+              </TourProvider>
+            </WishlistProvider>
           </CartProvider>
         </LangProvider>
       </AuthProvider>

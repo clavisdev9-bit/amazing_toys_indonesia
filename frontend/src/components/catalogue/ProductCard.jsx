@@ -25,15 +25,30 @@ function StockBadge({ level, label }) {
   );
 }
 
+// SVG heart icons for crisper rendering and better animation control
+function HeartIcon({ filled }) {
+  return filled ? (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="#F03E3E">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  ) : (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ADB5BD" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}
+
 export default function ProductCard({ product, tourAttr }) {
   const navigate    = useNavigate();
   const { addItem } = useCart();
   const { t } = useLang();
   const { isWished, toggleWish } = useWishlist();
-  const [added, setAdded] = useState(false);
+  const [added, setAdded]       = useState(false);
+  const [bouncing, setBouncing] = useState(false);
 
   const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
+  const wished  = isWished(product.id);
 
   function goToDetail() {
     navigate(`/product/${product.id}`);
@@ -55,6 +70,8 @@ export default function ProductCard({ product, tourAttr }) {
 
   function handleWish(e) {
     e.stopPropagation();
+    setBouncing(true);
+    setTimeout(() => setBouncing(false), 350);
     toggleWish(product.id);
   }
 
@@ -77,22 +94,29 @@ export default function ProductCard({ product, tourAttr }) {
           ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" />
           : <span className="text-5xl">🧸</span>
         }
+
         {/* Wishlist button */}
         <button
           onClick={handleWish}
-          className="absolute top-2 right-2 flex items-center justify-center rounded-full border transition-transform duration-150 active:scale-125"
+          className="absolute top-2 right-2 flex items-center justify-center rounded-full"
           style={{
             width: 28, height: 28,
-            background: 'rgba(255,255,255,0.72)',
+            background: wished ? 'rgba(255,235,235,0.92)' : 'rgba(255,255,255,0.72)',
             backdropFilter: 'blur(8px)',
             WebkitBackdropFilter: 'blur(8px)',
-            border: '1px solid rgba(255,255,255,0.85)',
-            boxShadow: '0 1px 6px rgba(0,0,0,0.08)',
-            fontSize: 14,
+            border: wished ? '1px solid rgba(240,62,62,0.25)' : '1px solid rgba(255,255,255,0.85)',
+            boxShadow: wished
+              ? '0 1px 6px rgba(240,62,62,0.20)'
+              : '0 1px 6px rgba(0,0,0,0.08)',
+            transform: bouncing ? 'scale(1.28)' : 'scale(1)',
+            // spring curve: overshoot and settle
+            transition: bouncing
+              ? 'transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1)'
+              : 'transform 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
           }}
-          aria-label="Wishlist"
+          aria-label={wished ? 'Hapus dari wishlist' : 'Tambah ke wishlist'}
         >
-          {isWished(product.id) ? '❤️' : '🤍'}
+          <HeartIcon filled={wished} />
         </button>
       </button>
 

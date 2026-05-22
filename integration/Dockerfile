@@ -6,9 +6,6 @@ RUN npm ci --omit=dev
 
 COPY src ./src
 COPY migrations ./migrations
-COPY add-admin.js ./add-admin.js
 
-RUN mkdir -p public/uploads
-
-EXPOSE 3001
+EXPOSE 4000
 CMD ["node", "src/app.js"]

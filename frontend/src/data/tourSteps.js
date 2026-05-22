@@ -119,7 +119,7 @@ export const tourSteps = [
     page: 'pesanan',
     targetSelector: null,
     title: 'Riwayat Pesanan',
-    description: 'Setelah checkout, pesananmu muncul di halaman ini. Kamu bisa memantau status pembayaran dan pengambilan makanan di sini.',
+    description: 'Setelah checkout, pesananmu muncul di halaman ini. Kamu bisa memantau status pembayaran dan pengambilan barang di sini.',
     position: 'center',
     navigateTo: '/pesanan',
   },
@@ -162,7 +162,7 @@ export const tourSteps = [
     page: 'pesanan',
     targetSelector: null,
     title: 'Struk & Status Ambil',
-    description: 'Setelah pembayaran dikonfirmasi, struk digital tersedia di detail pesanan. Pantau juga status persiapan makanan di setiap stan secara langsung.',
+    description: 'Setelah pembayaran dikonfirmasi, struk digital tersedia di detail pesanan. Pantau juga ststus barang mu setiap stan secara langsung.',
     position: 'center',
   },
 
@@ -172,7 +172,7 @@ export const tourSteps = [
     page: 'any',
     targetSelector: null,
     title: 'Siap Memesan! 🎉',
-    description: 'Kamu sudah menguasai cara memesan di SOS! Jelajahi katalog, tambah ke keranjang, dan nikmati makananmu. Selamat makan!',
+    description: 'Kamu sudah menguasai cara memesan di SOS! Jelajahi katalog, tambah ke keranjang.',
     position: 'center',
   },
 ];

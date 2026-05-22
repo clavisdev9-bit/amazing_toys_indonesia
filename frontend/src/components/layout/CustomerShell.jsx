@@ -5,6 +5,7 @@ import { useCart } from '../../hooks/useCart';
 import { usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
 import { useTour } from '../../hooks/useTour';
+import { useWishlist } from '../../hooks/useWishlist';
 import MapModal from '../ui/MapModal';
 import QrScannerModal from '../ui/QrScannerModal';
 
@@ -72,6 +73,7 @@ export default function CustomerShell() {
   const venue     = publicConfig?.venue ?? 'Marketplace';
   const { lang, setLang, t } = useLang();
   const { restartTour, isActive: isTourActive } = useTour();
+  const { count: wishCount, wishlistMode, setWishlistMode, toastMsg } = useWishlist();
   const [mapOpen, setMapOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
 
@@ -83,6 +85,16 @@ export default function CustomerShell() {
   function handleQrResult(text) {
     setScanOpen(false);
     navigate(`/product/${text}`);
+  }
+
+  function handleWishlistToggle() {
+    if (window.location.pathname !== '/katalog') {
+      navigate('/katalog');
+      // Small delay so BrowsePage mounts before enabling wishlist mode
+      setTimeout(() => setWishlistMode(true), 50);
+    } else {
+      setWishlistMode(prev => !prev);
+    }
   }
 
   return (
@@ -142,8 +154,54 @@ export default function CustomerShell() {
           ))}
         </div>
 
-        {/* Right — tour + logout */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Right — wishlist + tour + logout */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {/* Wishlist button with badge */}
+          <button
+            onClick={handleWishlistToggle}
+            className="relative flex items-center justify-center transition-transform duration-150 active:scale-90"
+            style={{
+              width: 32, height: 32,
+              borderRadius: 10,
+              background: wishlistMode
+                ? 'rgba(255,235,235,0.90)'
+                : 'rgba(248,249,254,0.80)',
+              border: wishlistMode
+                ? '1.5px solid rgba(240,62,62,0.30)'
+                : '1.5px solid rgba(200,210,240,0.50)',
+              boxShadow: wishlistMode ? '0 2px 8px rgba(240,62,62,0.15)' : 'none',
+            }}
+            aria-label="Wishlist"
+          >
+            <svg
+              width="16" height="16"
+              viewBox="0 0 24 24"
+              fill={wishlistMode ? '#F03E3E' : 'none'}
+              stroke={wishlistMode ? '#F03E3E' : '#868E96'}
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+            </svg>
+            {wishCount > 0 && (
+              <span
+                className="absolute flex items-center justify-center font-extrabold text-white"
+                style={{
+                  top: -5, right: -5,
+                  minWidth: 16, height: 16,
+                  borderRadius: 9999,
+                  fontSize: 9,
+                  background: '#F03E3E',
+                  border: '1.5px solid #fff',
+                  padding: '0 3px',
+                }}
+              >
+                {wishCount > 9 ? '9+' : wishCount}
+              </span>
+            )}
+          </button>
+
           {!isTourActive && (
             <button
               onClick={restartTour}
@@ -285,6 +343,31 @@ export default function CustomerShell() {
           )}
         />
       </nav>
+
+      {/* Global wishlist toast */}
+      {toastMsg && (
+        <div
+          className="fixed z-[70] left-1/2 -translate-x-1/2 text-white text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg pointer-events-none"
+          style={{
+            bottom: 100,
+            background: 'rgba(30,35,60,0.92)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            whiteSpace: 'nowrap',
+            animation: 'fadeInUp 220ms ease',
+          }}
+        >
+          {toastMsg}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translate(-50%, 8px); }
+          to   { opacity: 1; transform: translate(-50%, 0); }
+        }
+      `}</style>
     </div>
   );
 }

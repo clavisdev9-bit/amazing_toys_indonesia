@@ -161,6 +161,7 @@ export function useCatalogueState() {
     selectedStoreIds, selectedStores,
     storeCat, showFilteredProducts,
     search, selectedProduct,
+    products,
     productModeProducts, storeModeProducts, storesByFloor,
     categories, floors, loading,
   };
