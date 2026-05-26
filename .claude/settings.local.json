@@ -29,7 +29,10 @@
       "Bash(curl -s http://localhost:3001/api/)",
       "Bash(curl -s -X POST \"http://localhost:3001/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin\"}')",
       "Bash(curl -s -X POST \"http://localhost:3001/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"username\":\"admin\",\"password\":\"admin123\"}')",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(git add *)",
+      "Bash(git rm *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
