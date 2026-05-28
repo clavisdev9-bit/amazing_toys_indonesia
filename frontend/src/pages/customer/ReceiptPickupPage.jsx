@@ -120,39 +120,21 @@ export default function ReceiptPickupPage() {
               </span>
             </div>
             <div className="divide-y">
-              {order.items.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-center px-4 py-2.5 text-sm">
-                  <span className="text-gray-700">{item.product_name} ×{item.quantity}</span>
-                  <span className="text-gray-700">{formatRupiah(item.unit_price * item.quantity)}</span>
-                </div>
-              ))}
-            </div>
-            {(() => {
-              const subtotal = parseFloat(order.subtotal_amount ?? 0);
-              const taxAmt   = parseFloat(order.tax_amount ?? 0);
-              const taxRate  = parseFloat(order.tax_rate ?? 12);
-              const hasTax   = taxAmt > 0;
-              return (
-                <>
-                  {hasTax && (
-                    <div className="flex justify-between items-center px-4 py-2 text-sm text-gray-500">
-                      <span>Subtotal</span>
-                      <span>{formatRupiah(subtotal)}</span>
-                    </div>
-                  )}
-                  {hasTax && (
-                    <div className="flex justify-between items-center px-4 py-2 text-sm text-gray-500">
-                      <span>PPN {taxRate}%</span>
-                      <span>{formatRupiah(taxAmt)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between items-center px-4 py-3 border-t">
-                    <span className="font-bold text-gray-900 text-sm">{t('receipt.total')}</span>
-                    <span className="font-bold text-gray-900 text-sm">{formatRupiah(order.total_amount)}</span>
+              {order.items.map((item, idx) => {
+                const taxRate = parseFloat(order.tax_rate ?? 0);
+                const priceIncTax = Math.round(item.unit_price * item.quantity * (1 + taxRate / 100));
+                return (
+                  <div key={idx} className="flex justify-between items-center px-4 py-2.5 text-sm">
+                    <span className="text-gray-700">{item.product_name} ×{item.quantity}</span>
+                    <span className="text-gray-700">{formatRupiah(priceIncTax)}</span>
                   </div>
-                </>
-              );
-            })()}
+                );
+              })}
+            </div>
+            <div className="flex justify-between items-center px-4 py-3 border-t">
+              <span className="font-bold text-gray-900 text-sm">{t('receipt.total')}</span>
+              <span className="font-bold text-gray-900 text-sm">{formatRupiah(order.total_amount)}</span>
+            </div>
           </div>
 
           {/* ── Pickup instructions ───────────────────────────────── */}

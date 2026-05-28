@@ -165,4 +165,95 @@ Added a second `useEffect` in `ComboboxField.jsx` that watches `[options]`. When
 
 ---
 
+## BUG-007 — "Website Not Found" Error When Accessing the App
+
+**Symptom:**  
+Browser shows a "Website not found — Sorry, Please confirm that this domain name has been bound to your website." page with a crown logo instead of the app UI.
+
+**Root Cause:**  
+The error page is served by a **domain registrar or hosting provider** (e.g., Alibaba Cloud, Tencent Cloud), not by this application. It appears when a custom domain name is entered in the browser but the domain is either:
+1. Not pointed to this server's IP address (DNS not configured), or
+2. The app is running locally and the user typed a domain URL instead of `localhost`.
+
+The app's Nginx container was running correctly on `0.0.0.0:80` — the issue was purely at the URL/DNS level.
+
+**Resolution:**  
+Access the app via `http://localhost` when running locally with Docker Compose.
+
+If deploying to a live server and using a custom domain:
+1. Point the domain's A record to the server's public IP.
+2. Wait for DNS propagation (up to 48h).
+3. Then access via the domain name.
+
+**Files Changed:**  
+None — configuration/access issue only.
+
+---
+
+## BUG-008 — Receipt at `/pesanan/:id/receipt` Still Shows Pre-Tax Item Prices & Subtotal Row
+
+**Symptom:**  
+The digital receipt page (e.g., `/pesanan/TXN-20260528-00008/receipt`) shows:
+- Item prices at **pre-tax** unit cost
+- A **"Subtotal (N items)"** row
+- A **"PPN X%"** row
+…instead of tax-inclusive item prices with only a TOTAL row, as specified in CR-014.
+
+**Root Cause:**  
+CR-014 patched `ThermalReceipt.jsx` (used inside the cashier's print modal) and `print.service.js` (ESC/POS thermal print path), but **`ReceiptPickupPage.jsx`** contains its **own independent inline receipt renderer** (lines 122–155) that was never touched. This component is the page rendered at `/pesanan/:transactionId/receipt` for both customers and staff.
+
+The duplicate renderer had:
+- `formatRupiah(item.unit_price * item.quantity)` — pre-tax price
+- `{hasTax && <span>Subtotal …</span>}` and `{hasTax && <span>PPN X%…</span>}` rows still present
+
+**Resolution:**  
+Updated `ReceiptPickupPage.jsx` to match the CR-014 spec:
+1. Item price changed to `Math.round(item.unit_price * item.quantity * (1 + taxRate / 100))` — tax-inclusive, display-only.
+2. Subtotal and PPN rows removed entirely.
+3. Only the TOTAL row (sourced from `order.total_amount`) remains.
+
+**Files Changed:**  
+- `frontend/src/pages/customer/ReceiptPickupPage.jsx`
+
+**Prevention:**  
+Receipt layout changes must be applied to **all three** rendering paths:
+1. `ThermalReceipt.jsx` — cashier print modal on-screen preview
+2. `print.service.js` — ESC/POS thermal printer output
+3. `ReceiptPickupPage.jsx` — customer/staff digital receipt page (`/pesanan/:id/receipt`)
+
+---
+
+## BUG-009 — Frontend Source Changes Not Reflected in Running App (Docker Build Cache)
+
+**Symptom:**  
+After correctly patching `ThermalReceipt.jsx` and `ReceiptPickupPage.jsx` for CR-014, the Print receipt modal and `/pesanan/:id/receipt` page still rendered pre-tax item prices and the old Subtotal/PPN rows. Running `npm run build` locally had no effect.
+
+**Root Cause:**  
+The frontend is served from a Docker container (`sos_frontend`) built via a **multi-stage Dockerfile**:
+```
+FROM node:20-alpine AS build  →  npm ci + npm run build
+FROM nginx:1.27-alpine        →  COPY dist → /usr/share/nginx/html
+```
+The image bakes the JS bundle at **image-build time**. Editing source files or running `npm run build` locally only updates `frontend/dist/` on the host — the running container keeps serving its own stale image. There is no volume mount for the frontend dist.
+
+**Resolution:**  
+Rebuilt the Docker image and restarted the container:
+```bash
+docker compose build frontend
+docker compose up -d frontend
+```
+Container recreated (`sos_frontend Recreated`), HTTP 200 confirmed on `http://localhost/`.
+
+**Files Changed:**  
+None — operational fix only (image rebuild + container restart).
+
+**Prevention:**  
+Any change to frontend source files requires:
+```bash
+docker compose build frontend && docker compose up -d frontend
+```
+This applies to **all** frontend changes — React components, CSS, assets, env-baked config. Do not assume `npm run build` on the host is sufficient while Docker is running.
+
+---
+
 

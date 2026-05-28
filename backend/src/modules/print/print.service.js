@@ -82,17 +82,15 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
     options: { timeout: 3000 },
   });
 
+  const cfg          = await adminSvc.getSystemConfig();
+  const contactEmail = cfg.contact_email || '';
   const items        = txn?.items ?? [];
   const txnId        = txn?.transaction_id ?? 'TXN-UNKNOWN';
   const paidAt       = success?.paidAt ?? txn?.checkout_time;
   const payMethod    = success?.paymentMethod ?? '-';
   const cashChange   = success?.cashChange ?? null;
-  const subtotal     = parseFloat(txn?.subtotal_amount ?? 0);
-  const taxAmt       = parseFloat(txn?.tax_amount ?? 0);
-  const taxRate      = parseFloat(txn?.tax_rate ?? 12);
+  const taxRate      = parseFloat(txn?.tax_rate ?? 0);
   const grandTotal   = parseFloat(txn?.total_amount ?? 0);
-  const hasTax       = taxAmt > 0;
-  const itemCount    = items.reduce((s, i) => s + (i.quantity || 1), 0);
 
   // ── Header ────────────────────────────────────────────────────────────────
   printer.alignCenter();
@@ -121,7 +119,7 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
 
   for (const item of items) {
     const qty   = item.quantity || 1;
-    const total = formatRupiah((item.unit_price ?? 0) * qty);
+    const total = formatRupiah(Math.round((item.unit_price ?? 0) * qty * (1 + taxRate / 100)));
     const name  = item.product_name ?? '-';
 
     // Product name line (wraps if needed)
@@ -135,14 +133,6 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
 
   // ── Totals ────────────────────────────────────────────────────────────────
   const COL = 32; // total line width on 80mm / 42 char mode
-  printer.println(
-    pad(`Subtotal (${itemCount} item)`, COL - 14) +
-    rpad(formatRupiah(hasTax ? subtotal : grandTotal), 14),
-  );
-  printer.println(
-    pad(`PPN ${taxRate}%`, COL - 14) + rpad(formatRupiah(taxAmt), 14),
-  );
-
   printer.bold(true);
   printer.setTextSize(1, 0);
   printer.println(pad('TOTAL', COL - 14) + rpad(formatRupiah(grandTotal), 14));
@@ -201,7 +191,7 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
   printer.println('Terima kasih telah berbelanja!');
   printer.bold(false);
   printer.println('Simpan struk ini sebagai bukti pembelian.');
-  printer.println('amazingtoyfair.id');
+  if (contactEmail) printer.println(contactEmail);
   printer.newLine();
   printer.newLine();
   printer.cut();

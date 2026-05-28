@@ -208,6 +208,93 @@ Added a second `useEffect` that watches `[options]`. When the options array chan
 
 ---
 
+### CR-013 — Dynamic Event Info & Receipt Layout Update
+**Files:**
+- `frontend/src/components/cashier/ThermalReceipt.jsx`
+- `backend/src/app.js`
+
+**Type:** Feature / UI Change
+
+**Changes:**
+
+1. **Dynamic event header from admin config** — replaced hardcoded `EVENT_NAME`, `EVENT_VENUE`, `EVENT_DATE` constants with live data fetched via `usePublicConfig()` hook (calls `GET /config/public`). Falls back to the previous constants if config not yet loaded.
+
+   Fields read:
+   | Config field | Displayed as |
+   |---|---|
+   | `event_name` | Event name (SANS, Bold 700) |
+   | `venue` | Venue line (SANS, 10px) |
+   | `event_date_start` + `event_date_end` | Formatted date range, e.g. "19-21 Mei 2026" (SANS, 10px) |
+
+   Date range formatting rules:
+   - Same month: `19-21 Mei 2026`
+   - Different months: `19 Mei - 3 Jun 2026`
+
+2. **`event_date_start` / `event_date_end` added to `/config/public`** — previously these two fields were absent from the public config response; added them so the receipt can consume them without requiring authentication.
+
+3. **Item price bold** — changed `itemPrice.fontWeight` from `'400'` → `'600'` so product name and price are both Bold 600, matching spec.
+
+4. **Removed PPN tax row** — the separate `PPN X%` line in the totals section is removed. `Subtotal` shows the pre-tax amount; `TOTAL` shows the tax-inclusive `total_amount`. Tax is no longer broken out as a line item on the printed receipt.
+
+**Before (totals section):**
+```
+Subtotal (3 items)    Rp 200.000
+PPN 12%               Rp 24.000
+─────────────────────────────────
+TOTAL                 Rp 224.000
+```
+
+**After:**
+```
+Subtotal (3 items)    Rp 200.000
+─────────────────────────────────
+TOTAL                 Rp 224.000
+```
+
+---
+
+### CR-014 — Tax-Inclusive Item Prices & Contact Email in Receipt Footer
+**Files:**
+- `frontend/src/components/cashier/ThermalReceipt.jsx`
+- `frontend/src/pages/customer/ReceiptPickupPage.jsx`
+- `backend/src/modules/print/print.service.js`
+- `backend/src/app.js`
+
+**Type:** UI Change
+
+**Changes:**
+
+1. **Item prices now show tax-inclusive amounts** — each item's displayed price is calculated as `Math.round(unit_price × quantity × (1 + tax_rate / 100))` using `txn.tax_rate` from the transaction. Display-only change; backend tax calculation logic is untouched.
+
+2. **Subtotal row removed** — since item prices already include tax, the `Subtotal (N items)` row in the totals section is redundant and has been removed. Only the `TOTAL` line remains, sourced from `txn.total_amount`.
+
+   **Before (totals section):**
+   ```
+   items 1              Rp 200.000
+   items 2              Rp 200.000
+   PPN 12%               Rp 24.000
+   ─────────────────────────────────
+   TOTAL                 Rp 424.000
+   ```
+
+   **After:**
+   ```
+   items 1              Rp 212.000  ← includes tax
+   items 2              Rp 212.000  ← includes tax
+   ─────────────────────────────────
+   TOTAL                 Rp 424.000
+   ```
+
+3. **Footer uses `contact_email` from admin config** — replaced hardcoded `amazingtoyfair.id` string with the value from admin config in both the React receipt (`publicCfg.contact_email` via `usePublicConfig()`) and the thermal print service (`adminSvc.getSystemConfig()`). The line is hidden/skipped if the value is empty. Configured under Admin → Konfigurasi → Email Kontak.
+
+4. **`contact_email` added to `/config/public`** — added `contact_email` field to the public config response in `backend/src/app.js` so the React receipt component can read it without authentication.
+
+**Note:** All three changes above are applied to both code paths:
+- React on-screen receipt: `ThermalReceipt.jsx`
+- Thermal printer (ESC/POS): `print.service.js`
+
+---
+
 ## Database Changes
 
 | Type | Description | Applied |

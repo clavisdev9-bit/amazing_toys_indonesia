@@ -87,9 +87,12 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
       logo_url:         config.logo_url,
       event_name:       config.event_name,
       venue:            config.venue || '',
+      event_date_start: config.event_date_start || '',
+      event_date_end:   config.event_date_end   || '',
       map_embed_url:    config.map_embed_url || '',
       map_image_url:    config.map_image_url || '',
       maintenance_mode: config.maintenance_mode || false,
+      contact_email:    config.contact_email || '',
     } });
   } catch (err) { next(err); }
 });
