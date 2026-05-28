@@ -28,6 +28,7 @@ const notifRouter        = require('./modules/notifications/notifications.router
 const adminRouter        = require('./modules/admin/admin.router');
 const receiptsRouter     = require('./modules/receipts/receipts.router');
 const printRouter        = require('./modules/print/print.router');
+const { paymentsRouter: bcaQrisPaymentsRouter, webhookRouter: bcaQrisWebhookRouter } = require('./modules/bca-qris/bca-qris.router');
 
 // WebSocket
 const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
@@ -106,6 +107,8 @@ app.use(`${API}/wishlist`,     require('./modules/wishlist/wishlist.router'));
 app.use(`${API}/admin`,        adminRouter);
 app.use(`${API}/receipts`,     receiptsRouter);
 app.use(`${API}/print`,        printRouter);
+app.use(`${API}/payments/bca`, bcaQrisPaymentsRouter);
+app.use(`${API}/webhook`,      bcaQrisWebhookRouter);
 
 // 404 catch-all
 app.use((req, res) => {

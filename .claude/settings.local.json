@@ -32,7 +32,21 @@
       "Bash(python3 -c ' *)",
       "Bash(git add *)",
       "Bash(git rm *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(pandoc --track-changes=all \"C:\\\\Users\\\\arist\\\\Downloads\\\\Project integrasi BCA amazing\\\\BCA_QRIS_MPM_Spesifikasi.docx\" -o -)",
+      "Read(//c/Users/arist/Downloads/Project integrasi BCA amazing/**)",
+      "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\eb3ee850-03b2-4ba4-8927-550d155bdd7e\\\\c6e83be6-1728-4db2-a803-f70c291ac679\\\\skills\\\\docx\\\\scripts\\\\office\\\\unpack.py\" BCA_QRIS_MPM_Spesifikasi.docx unpacked_spec/)",
+      "Bash(node --check src/modules/bca-qris/bca-qris.service.js)",
+      "Bash(node --check src/modules/bca-qris/bca-qris.router.js)",
+      "Bash(node --check src/app.js)",
+      "Bash(node --check src/modules/admin/admin.router.js)",
+      "Bash(grep -E \"\\\\.\\(jsx|tsx|vue\\)$\")",
+      "Bash(xargs grep -l \"getIntegration\\\\|admin\\\\.\")",
+      "Bash(node --input-type=module --eval ' *)",
+      "Bash(npx --yes vite build --mode development)",
+      "PowerShell(Stop-Process -Id 29076 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Id 26284 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell($env:PGPASSWORD='localdev123'; & \"C:\\\\Program Files\\\\PostgreSQL\\\\16\\\\bin\\\\psql.exe\" -U postgres -d amazing_toys_sos -c \"SELECT t.transaction_id, t.status, t.total_amount, t.payment_method, t.paid_at, t.expires_at, t.created_at, t.customer_id, c.phone_number, c.full_name, c.gender FROM transactions t JOIN customers c ON c.customer_id = t.customer_id WHERE t.transaction_id = 'TXN-20260526-00040';\" 2>&1)"
     ]
   }
 }

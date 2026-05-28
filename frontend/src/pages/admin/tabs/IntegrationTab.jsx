@@ -1,5 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { getIntegration, saveIntegration, resyncTransactions, verifyOdooConnection, saveOdooConfig } from '../../../api/admin';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  getIntegration, saveIntegration, resyncTransactions, verifyOdooConnection, saveOdooConfig,
+  getBcaQrisConfig, saveBcaQrisConfig, testBcaQrisToken,
+} from '../../../api/admin';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
 import Spinner from '../../../components/ui/Spinner';
@@ -9,9 +12,22 @@ import { useToast } from '../../../hooks/useToast';
 const GATEWAYS = ['midtrans', 'xendit', 'doku', 'custom'];
 const MASKED   = '••••••••';
 
+const BCA_REQUIRED = [
+  'bca_client_id', 'bca_client_secret', 'bca_api_key', 'bca_api_secret',
+  'bca_merchant_id', 'bca_terminal_id', 'bca_channel_id', 'bca_callback_url',
+];
+
+const BCA_DEFAULT = {
+  bca_env: 'sandbox', bca_base_url: 'https://sandbox.bca.co.id',
+  bca_client_id: '', bca_client_secret: '', bca_api_key: '', bca_api_secret: '',
+  bca_merchant_id: '', bca_terminal_id: '', bca_channel_id: '', bca_callback_url: '',
+  bca_token_ttl: 840,
+};
+
 const SUB_TABS = [
   { key: 'payment', label: '💳 Payment & POS' },
   { key: 'odoo',    label: '🔶 Integration with Odoo' },
+  { key: 'bca',     label: '🏦 BCA QRIS MPM' },
 ];
 
 const ODOO_REQUIRED = ['odoo_walkin_partner_id'];
@@ -42,12 +58,19 @@ export default function IntegrationTab() {
   const [companies,     setCompanies]     = useState([]);
   const [odooSaving,    setOdooSaving]    = useState(false);
 
+  // BCA QRIS state
+  const [bca, setBca]               = useState({ ...BCA_DEFAULT });
+  const [bcaLoading, setBcaLoading] = useState(false);
+  const [bcaSaving,  setBcaSaving]  = useState(false);
+  const [bcaTesting, setBcaTesting] = useState(false);
+  const [bcaShowKey, setBcaShowKey] = useState(false);
+  const [bcaErrors,  setBcaErrors]  = useState({});
+
   useEffect(() => {
     getIntegration()
       .then((r) => {
         const cfg = r.data.data;
         setConfig(cfg);
-        // If a company is already saved, pre-populate wizard as verified
         if (cfg?.odoo_company_id) {
           setCompanies([{ id: cfg.odoo_company_id, name: cfg.odoo_company_name || `Company ${cfg.odoo_company_id}`, isDefault: false }]);
           setWizardState(WIZARD_VERIFIED);
@@ -56,6 +79,18 @@ export default function IntegrationTab() {
       .catch(() => addToast('Gagal memuat konfigurasi integrasi.', 'error'))
       .finally(() => setLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadBcaConfig = useCallback(() => {
+    setBcaLoading(true);
+    getBcaQrisConfig()
+      .then((r) => setBca({ ...BCA_DEFAULT, ...r.data.data }))
+      .catch(() => addToast('Gagal memuat konfigurasi BCA QRIS.', 'error'))
+      .finally(() => setBcaLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (subTab === 'bca') loadBcaConfig();
+  }, [subTab, loadBcaConfig]);
 
   function set(key, value) {
     setConfig((c) => ({ ...c, [key]: value }));
@@ -157,6 +192,69 @@ export default function IntegrationTab() {
       addToast(err.response?.data?.message ?? 'Gagal menyimpan.', 'error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ── BCA helpers ────────────────────────────────────────────────────────────
+
+  function setBcaField(key, value) {
+    setBca((c) => ({ ...c, [key]: value }));
+    if (bcaErrors[key]) setBcaErrors((e) => { const n = { ...e }; delete n[key]; return n; });
+  }
+
+  function setBcaEnv(env) {
+    setBca((c) => ({
+      ...c,
+      bca_env:      env,
+      bca_base_url: env === 'production' ? 'https://api.bca.co.id' : 'https://sandbox.bca.co.id',
+    }));
+  }
+
+  function bcaFilledCount() {
+    return BCA_REQUIRED.filter((k) => {
+      const v = bca[k];
+      return v && v !== MASKED && String(v).trim();
+    }).length;
+  }
+
+  function validateBca() {
+    const errs = {};
+    for (const k of BCA_REQUIRED) {
+      if (!bca[k] || bca[k] === MASKED || !String(bca[k]).trim()) errs[k] = 'Wajib diisi';
+    }
+    return errs;
+  }
+
+  async function handleBcaSave(e) {
+    e.preventDefault();
+    const errs = validateBca();
+    if (Object.keys(errs).length) {
+      setBcaErrors(errs);
+      addToast('Lengkapi semua field yang wajib diisi.', 'error');
+      return;
+    }
+    setBcaSaving(true);
+    try {
+      const r = await saveBcaQrisConfig(bca);
+      setBca({ ...BCA_DEFAULT, ...r.data.data });
+      setBcaErrors({});
+      addToast('Konfigurasi BCA QRIS disimpan.', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menyimpan konfigurasi BCA QRIS.', 'error');
+    } finally {
+      setBcaSaving(false);
+    }
+  }
+
+  async function handleBcaTokenTest() {
+    setBcaTesting(true);
+    try {
+      const r = await testBcaQrisToken();
+      addToast(r.data.message || 'Token berhasil didapatkan!', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Test token gagal. Periksa credential.', 'error');
+    } finally {
+      setBcaTesting(false);
     }
   }
 
@@ -523,20 +621,183 @@ export default function IntegrationTab() {
           </>
         )}
 
-        {/* Save button */}
-        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
-          <Button type="submit" loading={saving}
-            className="bg-teal-600 hover:bg-teal-700 text-white px-8">
-            💾 Simpan
-          </Button>
-          {subTab === 'payment' && config.is_active && config.api_key && (
-            <span className="text-xs text-green-600 font-medium">✓ Koneksi terkonfigurasi</span>
-          )}
-          {subTab === 'odoo' && config.odoo_is_active && config.odoo_base_url && (
-            <span className="text-xs text-orange-600 font-medium">✓ Odoo terkonfigurasi</span>
+        {/* Save button — only for payment/odoo sub-tabs */}
+        {subTab !== 'bca' && (
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+            <Button type="submit" loading={saving}
+              className="bg-teal-600 hover:bg-teal-700 text-white px-8">
+              💾 Simpan
+            </Button>
+            {subTab === 'payment' && config.is_active && config.api_key && (
+              <span className="text-xs text-green-600 font-medium">✓ Koneksi terkonfigurasi</span>
+            )}
+            {subTab === 'odoo' && config.odoo_is_active && config.odoo_base_url && (
+              <span className="text-xs text-orange-600 font-medium">✓ Odoo terkonfigurasi</span>
+            )}
+          </div>
+        )}
+      </form>
+
+      {/* ── BCA QRIS MPM Tab (outside main form to avoid nesting issues) ─── */}
+      {subTab === 'bca' && (
+        <div className="max-w-xl">
+          {bcaLoading ? <Spinner /> : (
+            <form onSubmit={handleBcaSave} className="space-y-6">
+
+              {/* Header */}
+              <div className="flex items-center gap-3 p-4 rounded-xl bg-gradient-to-r from-blue-900 to-blue-700 text-white">
+                <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center font-bold text-sm tracking-tight shrink-0">BCA</div>
+                <div>
+                  <p className="font-semibold text-sm">BCA QRIS MPM</p>
+                  <p className="text-blue-200 text-xs mt-0.5">Merchant Presented Mode — SNAP OAuth 2.0</p>
+                </div>
+              </div>
+
+              {/* Environment selector */}
+              <section>
+                <SectionTitle color="blue">🌐 Environment</SectionTitle>
+                <div className="flex gap-2">
+                  {['sandbox', 'production'].map((env) => (
+                    <button key={env} type="button"
+                      onClick={() => setBcaEnv(env)}
+                      className={`px-5 py-2 rounded-lg text-sm font-medium border transition-all
+                        ${bca.bca_env === env
+                          ? 'bg-blue-900 text-white border-blue-900'
+                          : 'bg-white text-gray-600 border-gray-300 hover:border-gray-400'}`}>
+                      {env === 'sandbox' ? 'Sandbox' : 'Production'}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 mt-2 font-mono">Base URL: {bca.bca_base_url}</p>
+              </section>
+
+              {/* Progress */}
+              <BcaProgress filled={bcaFilledCount()} total={BCA_REQUIRED.length} />
+
+              {/* OAuth Credentials */}
+              <section>
+                <SectionTitle color="blue">🔐 OAuth 2.0 — Identitas Aplikasi</SectionTitle>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <BcaField label="Client ID" required hint="Header X-CLIENT-KEY"
+                    id="bca_client_id" type={bcaShowKey ? 'text' : 'password'}
+                    placeholder="xxxx-xxxx-xxxx"
+                    value={bca.bca_client_id} onChange={(v) => setBcaField('bca_client_id', v)}
+                    error={bcaErrors.bca_client_id} />
+                  <BcaField label="Client Secret" required hint="Basic Auth untuk generate token"
+                    id="bca_client_secret" type={bcaShowKey ? 'text' : 'password'}
+                    placeholder="••••••••••••"
+                    value={bca.bca_client_secret} onChange={(v) => setBcaField('bca_client_secret', v)}
+                    error={bcaErrors.bca_client_secret} />
+                </div>
+              </section>
+
+              {/* API Credentials */}
+              <section>
+                <SectionTitle color="blue">🗝️ API Credential — Signing & Partner</SectionTitle>
+                <div className="space-y-3">
+                  <BcaField label="API Key" required hint="Nilai header X-PARTNER-ID tiap request QRIS"
+                    id="bca_api_key" type={bcaShowKey ? 'text' : 'password'}
+                    placeholder="••••••••••••"
+                    value={bca.bca_api_key} onChange={(v) => setBcaField('bca_api_key', v)}
+                    error={bcaErrors.bca_api_key} />
+                  <div className="flex flex-col gap-1">
+                    <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                      API Secret <span className="text-xs text-gray-500">(RSA Private Key)</span>
+                      <span className="text-red-500 text-xs ml-1">*</span>
+                    </label>
+                    <p className="text-xs text-gray-400">Private key RSA untuk X-SIGNATURE asymmetric</p>
+                    <textarea
+                      rows={bcaShowKey ? 6 : 2}
+                      placeholder={bcaShowKey ? '-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----' : '••••••••••••••••'}
+                      value={bca.bca_api_secret}
+                      onChange={(e) => setBcaField('bca_api_secret', e.target.value)}
+                      className={`w-full border rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2
+                        resize-none transition-colors
+                        ${bcaErrors.bca_api_secret
+                          ? 'border-red-400 focus:ring-red-300'
+                          : bca.bca_api_secret && bca.bca_api_secret !== MASKED
+                            ? 'border-green-400 focus:ring-green-300'
+                            : 'border-gray-300 focus:ring-blue-400'}`} />
+                    {bcaErrors.bca_api_secret && (
+                      <p className="text-xs text-red-500">{bcaErrors.bca_api_secret}</p>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              {/* Show/hide toggle */}
+              <ShowKeysToggle checked={bcaShowKey} onChange={setBcaShowKey} />
+
+              <div className="border-t border-gray-100" />
+
+              {/* Merchant Info */}
+              <section>
+                <SectionTitle color="blue">🏪 Merchant Info</SectionTitle>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <BcaField label="Merchant ID" required hint="Dari BCA, di body generate QR"
+                    id="bca_merchant_id" placeholder="000123456"
+                    value={bca.bca_merchant_id} onChange={(v) => setBcaField('bca_merchant_id', v)}
+                    error={bcaErrors.bca_merchant_id} />
+                  <BcaField label="Terminal ID" required hint="ID terminal / kasir"
+                    id="bca_terminal_id" placeholder="A01B02C3"
+                    value={bca.bca_terminal_id} onChange={(v) => setBcaField('bca_terminal_id', v)}
+                    error={bcaErrors.bca_terminal_id} />
+                  <BcaField label="Channel ID" required hint="Nilai header CHANNEL-ID"
+                    id="bca_channel_id" placeholder="95221"
+                    value={bca.bca_channel_id} onChange={(v) => setBcaField('bca_channel_id', v)}
+                    error={bcaErrors.bca_channel_id} />
+                  <BcaField label="Callback / Webhook URL" required hint="URL publik HTTPS yang menerima notif BCA"
+                    id="bca_callback_url" placeholder="https://yourdomain.com/api/v1/webhook/bca-qris"
+                    value={bca.bca_callback_url} onChange={(v) => setBcaField('bca_callback_url', v)}
+                    error={bcaErrors.bca_callback_url} />
+                </div>
+              </section>
+
+              {/* Optional */}
+              <section>
+                <SectionTitle color="blue">
+                  ⚙️ Opsional
+                  <span className="ml-2 text-xs font-normal text-gray-400">(ada nilai default)</span>
+                </SectionTitle>
+                <div className="max-w-[200px]">
+                  <BcaField label="Token TTL (detik)" hint="Default 840 = 900s expire − 60s buffer"
+                    id="bca_token_ttl" type="number"
+                    placeholder="840"
+                    value={bca.bca_token_ttl}
+                    onChange={(v) => setBcaField('bca_token_ttl', parseInt(v, 10) || 840)} />
+                </div>
+              </section>
+
+              {/* Status indicator */}
+              <BcaStatusBar filled={bcaFilledCount()} total={BCA_REQUIRED.length} />
+
+              {/* Actions */}
+              <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-100">
+                <Button type="submit" loading={bcaSaving}
+                  className="bg-blue-900 hover:bg-blue-800 text-white px-8">
+                  💾 Simpan Credential
+                </Button>
+                <Button type="button" loading={bcaTesting} disabled={bcaTesting}
+                  onClick={handleBcaTokenTest}
+                  className="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 px-5">
+                  {bcaTesting ? '⟳ Testing…' : '🔍 Test Koneksi'}
+                </Button>
+              </div>
+
+              {/* Info box */}
+              <div className="flex gap-2 items-start bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-xs text-blue-800">
+                <span className="mt-0.5 text-base">ℹ️</span>
+                <div className="space-y-1">
+                  <p><strong>Webhook URL</strong> harus bisa diakses publik melalui HTTPS.</p>
+                  <p>Gunakan <code className="bg-blue-100 px-1 rounded font-mono">ngrok</code> untuk testing sandbox.</p>
+                  <p>BCA akan POST ke: <code className="bg-blue-100 px-1 rounded font-mono">{bca.bca_callback_url || 'https://…/api/v1/webhook/bca-qris'}</code></p>
+                </div>
+              </div>
+
+            </form>
           )}
         </div>
-      </form>
+      )}
 
       {/* Odoo Actions — shown when on Odoo sub-tab */}
       {subTab === 'odoo' && (
@@ -596,11 +857,64 @@ function SectionTitle({ children, color = 'teal' }) {
   const colors = {
     teal:   'text-teal-700 border-teal-200',
     orange: 'text-orange-700 border-orange-200',
+    blue:   'text-blue-900 border-blue-200',
   };
   return (
     <h3 className={`text-sm font-semibold mb-3 pb-1 border-b flex items-center gap-1 ${colors[color] || colors.teal}`}>
       {children}
     </h3>
+  );
+}
+
+function BcaField({ label, required, hint, id, type = 'text', placeholder, value, onChange, error }) {
+  const filled = value && value !== MASKED && String(value).trim();
+  return (
+    <div className="flex flex-col gap-1">
+      <label htmlFor={id} className="text-xs font-medium text-gray-700 flex items-center gap-1">
+        {label}
+        {required && <span className="text-red-500">*</span>}
+      </label>
+      {hint && <p className="text-xs text-gray-400 -mt-0.5">{hint}</p>}
+      <input id={id} type={type} placeholder={placeholder}
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete="off"
+        className={`border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 transition-colors
+          ${error
+            ? 'border-red-400 focus:ring-red-300'
+            : filled
+              ? 'border-green-400 focus:ring-green-300'
+              : 'border-gray-300 focus:ring-blue-400'}`} />
+      {error && <p className="text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+function BcaProgress({ filled, total }) {
+  const pct = Math.round((filled / total) * 100);
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex-1 h-1.5 rounded-full bg-gray-200 overflow-hidden">
+        <div className="h-full rounded-full bg-blue-700 transition-all duration-300"
+          style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-gray-500 shrink-0">{filled} / {total} terisi</span>
+    </div>
+  );
+}
+
+function BcaStatusBar({ filled, total }) {
+  const complete = filled === total;
+  return (
+    <div className={`flex items-center gap-3 px-4 py-3 rounded-lg border text-sm
+      ${complete
+        ? 'bg-green-50 border-green-200 text-green-700'
+        : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${complete ? 'bg-green-500' : 'bg-amber-400'}`} />
+      {complete
+        ? 'Semua field wajib terisi — siap generate .env'
+        : `Belum lengkap: ${total - filled} field belum terisi`}
+    </div>
   );
 }
 

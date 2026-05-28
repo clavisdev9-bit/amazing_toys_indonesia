@@ -66,6 +66,24 @@ async function authenticate() {
   _sessionId = res.headers['set-cookie']?.find(c => c.startsWith('session_id='))?.split(';')[0];
   if (!_sessionId) throw new Error('Odoo: session_id cookie not found');
   _uid = result.uid;
+
+  // Validate the configured company is accessible to this user.
+  // Odoo auth returns user_companies.allowed_companies as { "id": {...}, ... }.
+  // If the stored odoo_company_id is not in that set, throw immediately — silently
+  // falling back to a different company would cause every order, product, and stock
+  // record to land in the wrong company.
+  const allowedCompanies = result.user_companies?.allowed_companies || {};
+  const allowedIds = Object.keys(allowedCompanies).map(Number);
+  if (_creds.companyId && allowedIds.length > 0 && !allowedIds.includes(_creds.companyId)) {
+    const msg =
+      `Odoo: configured company_id=${_creds.companyId} is NOT accessible to uid=${result.uid} ` +
+      `(allowed: [${allowedIds.join(', ')}]). ` +
+      'In Odoo, go to Settings → Users → Amazing Toys → Companies and enable the target company. ' +
+      'Then fix odoo_company_id in Admin → Integrasi → Integration with Odoo.';
+    logger.error(msg);
+    throw new Error(msg);
+  }
+
   logger.info('Odoo: authenticated uid=' + result.uid);
   return _sessionId;
 }
@@ -215,9 +233,10 @@ async function resolveStartupRefs() {
     ? [['type', 'in', ['cash', 'bank']], ['company_id', '=', companyId]]
     : [['type', 'in', ['cash', 'bank']]];
 
-  const custLocDomain = companyId
-    ? [['usage', '=', 'customer'], ['active', '=', true], ['company_id', '=', companyId]]
-    : [['usage', '=', 'customer'], ['active', '=', true]];
+  // Partners/Customers is a global location (company_id=False) shared across companies.
+  // Filtering by company_id would exclude it and leave customerLocationId=null, causing
+  // property_stock_customer to never be set and action_confirm to fail with "in False".
+  const custLocDomain = [['usage', '=', 'customer'], ['active', '=', true], ['company_id', '=', false]];
 
   // Sequential calls with small gaps to avoid bursting Odoo Online's rate limit.
   // (5 parallel requests at startup are enough to trigger HTTP 429 on trial instances.)

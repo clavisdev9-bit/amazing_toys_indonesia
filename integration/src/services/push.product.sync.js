@@ -16,9 +16,8 @@ function buildProductVals(p) {
     list_price:     Number(p.price),
     sale_ok:        true,
     active:         true,
-    type:           'consu',
+    type:           'service',   // service = no stock tracking, no delivery order, action_confirm always works
     invoice_policy: 'order',
-    route_ids:      [[5, 0, 0]],
     ...(p.odoo_categ_id ? { categ_id: p.odoo_categ_id } : {}),
   };
 }
@@ -53,7 +52,7 @@ async function upsertXref(sosId, odooId, barcode) {
     `INSERT INTO integration_xref (entity_type, sos_id, odoo_id, status, sync_metadata)
      VALUES ('product', $1, $2, 'ACTIVE', $3)
      ON CONFLICT (entity_type, sos_id)
-     DO UPDATE SET odoo_id=EXCLUDED.odoo_id, sync_metadata=EXCLUDED.sync_metadata, updated_at=NOW()`,
+     DO UPDATE SET odoo_id=EXCLUDED.odoo_id, status='ACTIVE', sync_metadata=EXCLUDED.sync_metadata, updated_at=NOW()`,
     [sosId, odooId, JSON.stringify({ barcode })]
   );
 }

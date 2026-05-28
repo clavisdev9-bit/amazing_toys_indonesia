@@ -29,6 +29,15 @@ export default function ComboboxField({
     setInputText(opt?.label ?? '');
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // When options load asynchronously after a value is already set, update the display label.
+  // Only runs when options change and there is a selected value — does not interfere with
+  // free-text typing (where value is null after the user clears the selection).
+  useEffect(() => {
+    if (value == null) return;
+    const opt = options.find(o => o.value === value) ?? null;
+    if (opt) setInputText(opt.label);
+  }, [options]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Close on outside click; restore display text if no selection
   useEffect(() => {
     function handler(e) {
@@ -87,7 +96,7 @@ export default function ComboboxField({
           ${validationError ? 'border-red-400' : 'border-gray-300'}`}
         value={inputText}
         onChange={handleInputChange}
-        onFocus={() => setOpen(true)}
+        onFocus={() => { if (value != null) setInputText(''); setOpen(true); }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         autoComplete="off"

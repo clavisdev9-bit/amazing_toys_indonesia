@@ -31,9 +31,12 @@ app.use((err, req, res, next) => {
 });
 
 function authErrDetail(err) {
-  return err?.response?.data
-    ? JSON.stringify(err.response.data)
-    : (err?.message || String(err));
+  if (err?.response?.data) return JSON.stringify(err.response.data);
+  // AggregateError (Node 18+) wraps multiple connection errors — unwrap to expose actual cause
+  if (err?.errors?.length) {
+    return err.errors.map(e => e.message || String(e)).join(' | ');
+  }
+  return err?.message || String(err);
 }
 
 // Load Odoo config from shared DB (written by admin UI) and merge into env.
@@ -104,7 +107,7 @@ async function boot() {
       await sos.authenticate();
       break;
     } catch (err) {
-      logger.error(`SOS auth failed (attempt ${attempt}/${MAX_AUTH_ATTEMPTS})`, { detail: authErrDetail(err) });
+      logger.error(`SOS auth failed (attempt ${attempt}/${MAX_AUTH_ATTEMPTS}) — ${env.SOS_BASE_URL}`, { detail: authErrDetail(err) });
       if (attempt === MAX_AUTH_ATTEMPTS) {
         logger.error('Aborting: could not authenticate with SOS after 3 attempts');
         process.exit(1);

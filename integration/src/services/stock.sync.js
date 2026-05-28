@@ -41,7 +41,7 @@ async function syncStock() {
   try {
     odooProducts = await odoo.searchRead(
       'product.product',
-      [['id', 'in', odooProductIds], ['type', '=', 'consu']],
+      [['id', 'in', odooProductIds], ['type', '=', 'product']],
       ['id', 'qty_available']
     );
     cb.recordSuccess('odoo');

@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { getProducts, getCategories } from '../api/products';
 import { getTenants } from '../api/tenants';
+import { useWebSocket } from './useWebSocket';
 
 const FLOOR_ORDER = ['GF', 'UG', 'LG', '1F', '2F', '3F'];
 
@@ -69,9 +70,16 @@ export function useCatalogueState() {
   const [categories, setCategories] = useState(['All']);
   const [loading,    setLoading]    = useState(true);
 
-  useEffect(() => {
+  const { subscribe } = useWebSocket();
+  // Prevent concurrent fetches triggered by rapid visibility/WS events
+  const fetchingRef = useRef(false);
+
+  const loadData = useCallback(() => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    setLoading(true);
     Promise.all([
-      getProducts({ limit: 200 }),
+      getProducts({ limit: 500 }),
       getTenants({ active_only: true }),
       getCategories(),
     ])
@@ -84,8 +92,21 @@ export function useCatalogueState() {
         setCategories(['All', ...rawCats.filter(c => c !== 'All')]);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); fetchingRef.current = false; });
   }, []);
+
+  // Initial load
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // Refetch when the browser tab becomes visible again (user returns from another tab)
+  useEffect(() => {
+    const onVisibility = () => { if (document.visibilityState === 'visible') loadData(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [loadData]);
+
+  // Refetch in real-time when admin creates / updates / deletes any product
+  useEffect(() => subscribe('PRODUCT_UPDATED', loadData), [subscribe, loadData]);
 
   const floors = useMemo(() => {
     const unique = [...new Set(stores.map(s => s.floor))];

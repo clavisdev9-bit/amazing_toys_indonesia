@@ -32,12 +32,17 @@ INSERT INTO products (product_id, product_name, category, price, tenant_id, barc
 ('P014-T007', 'Edu Science Chemistry Set',          'Edukatif',       320000.00, 'T007', '8999999007001', 11, NULL),
 ('P015-T007', 'Outdoor Bubble Kit XL',              'Outdoor',        125000.00, 'T007', '8999999007002', 30, NULL);
 
--- Users (cashiers + leaders; passwords are bcrypt of 'password123')
+-- Users
+-- Passwords: 'password123'           → $2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.
+--            'integration_admin_2026' → $2b$10$.aY.hRUngFX0aJVNDtJMvuYEx8ZA2lmFCOi2WcmpNB9TtvSvssF4q
+-- Note: 'admin' user is created in schema.sql (password: 'admin')
 INSERT INTO users (user_id, username, password_hash, role, display_name) VALUES
-(gen_random_uuid(), 'kasir01',  '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'CASHIER', 'Kasir Satu'),
-(gen_random_uuid(), 'kasir02',  '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'CASHIER', 'Kasir Dua'),
-(gen_random_uuid(), 'leader01', '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'LEADER',  'Aristya Rahadiyan'),
-(gen_random_uuid(), 'tenant_t001', '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'TENANT', 'ToysWorld Portal');
+(gen_random_uuid(), 'kasir01',     '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'CASHIER', 'Kasir Satu'),
+(gen_random_uuid(), 'kasir02',     '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'CASHIER', 'Kasir Dua'),
+(gen_random_uuid(), 'leader01',    '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'LEADER',  'Aristya Rahadiyan'),
+(gen_random_uuid(), 'tenant_t001', '$2b$10$QJ1eTOg5fFAVfywbJD14ru0ZwpXcj.Isi3n9Xk2KG0ZOEMk6GBRF.', 'TENANT',  'ToysWorld Portal'),
+-- Integration service account — MUST match SOS_ADMIN_PASSWORD in integration/.env and docker-compose.yml
+(gen_random_uuid(), 'integration_admin', '$2b$10$.aY.hRUngFX0aJVNDtJMvuYEx8ZA2lmFCOi2WcmpNB9TtvSvssF4q', 'ADMIN', 'Integration Service');
 
 -- Update tenant_id for tenant user
 UPDATE users SET tenant_id = 'T001' WHERE username = 'tenant_t001';

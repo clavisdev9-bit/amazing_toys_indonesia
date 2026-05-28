@@ -114,6 +114,7 @@ router.get('/products', ...adminOnly, async (req, res, next) => {
 router.post('/products', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminCreateProduct(req.body);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.status(201).json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -123,6 +124,7 @@ router.patch('/products/bulk-category', ...adminOnly, async (req, res, next) => 
     const { category } = req.body;
     if (!category) throw new AppError('category wajib diisi.', 422);
     const data = await adminSvc.adminBulkUpdateCategory(category);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -132,6 +134,7 @@ router.patch('/products/bulk-odoo-category', ...adminOnly, async (req, res, next
     const { odoo_categ_id, odoo_categ_name } = req.body;
     if (!odoo_categ_id) throw new AppError('odoo_categ_id wajib diisi.', 422);
     const data = await adminSvc.adminBulkUpdateOdooCategory(odoo_categ_id, odoo_categ_name);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -141,6 +144,7 @@ router.patch('/products/bulk-description', ...adminOnly, async (req, res, next) 
     const { description } = req.body;
     if (!description) throw new AppError('description wajib diisi.', 422);
     const data = await adminSvc.adminBulkUpdateDescription(description);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -148,6 +152,7 @@ router.patch('/products/bulk-description', ...adminOnly, async (req, res, next) 
 router.patch('/products/:productId', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminUpdateProduct(req.params.productId, req.body);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -155,6 +160,7 @@ router.patch('/products/:productId', ...adminOnly, async (req, res, next) => {
 router.delete('/products/:productId', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminDeleteProduct(req.params.productId);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
     res.json({ success: true, ...data });
   } catch (err) { next(err); }
 });
@@ -375,6 +381,58 @@ router.put('/integration', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.saveIntegrationConfig(req.body);
     res.json({ success: true, message: 'Konfigurasi integrasi disimpan.', data });
+  } catch (err) { next(err); }
+});
+
+// ── BCA QRIS Credential Configuration ────────────────────────────────────────
+
+const bcaQrisSvc = require('../bca-qris/bca-qris.service');
+
+/**
+ * GET /admin/bca-qris/config
+ * Return current BCA QRIS credential config (secrets masked).
+ */
+router.get('/bca-qris/config', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await bcaQrisSvc.getBcaConfig();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /admin/bca-qris/config
+ * Save BCA QRIS credential config. Masked values are preserved.
+ */
+router.put('/bca-qris/config', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await bcaQrisSvc.saveBcaConfig(req.body);
+    res.json({ success: true, message: 'Konfigurasi BCA QRIS disimpan.', data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /admin/bca-qris/transactions
+ * List QRIS transactions with optional status filter.
+ */
+router.get('/bca-qris/transactions', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await bcaQrisSvc.listQrisTransactions({
+      status: req.query.status,
+      limit:  parseInt(req.query.limit  || '100', 10),
+      offset: parseInt(req.query.offset || '0',   10),
+    });
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /admin/bca-qris/token-test
+ * Fetch a fresh BCA access token to verify credentials are correct.
+ */
+router.post('/bca-qris/token-test', ...adminOnly, async (_req, res, next) => {
+  try {
+    const token = await bcaQrisSvc.getAccessToken();
+    res.json({ success: true, message: 'Token berhasil didapatkan.', data: { token_preview: token.slice(0, 12) + '…' } });
   } catch (err) { next(err); }
 });
 

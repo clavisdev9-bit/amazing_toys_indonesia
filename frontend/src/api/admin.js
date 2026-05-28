@@ -60,3 +60,9 @@ export const resyncTransactions = () => client.post('/admin/transactions/resync'
 export const getTaxConfig    = ()     => client.get('/admin/tax-config');
 export const saveTaxConfig   = (data) => client.put('/admin/tax-config', data);
 export const getOdooTaxes    = ()     => client.get('/admin/odoo/taxes');
+
+// ── BCA QRIS Credential Configuration ──────────────────────────────────────
+export const getBcaQrisConfig       = ()     => client.get('/admin/bca-qris/config');
+export const saveBcaQrisConfig      = (data) => client.put('/admin/bca-qris/config', data);
+export const testBcaQrisToken       = ()     => client.post('/admin/bca-qris/token-test');
+export const getBcaQrisTransactions = (params) => client.get('/admin/bca-qris/transactions', { params });

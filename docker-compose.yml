@@ -16,6 +16,14 @@ services:
       - ./database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
       - ./backend/migrations/001_job_run_log.sql:/docker-entrypoint-initdb.d/03_job_run_log.sql:ro
       - ./integration/migrations/001_integration_tables.sql:/docker-entrypoint-initdb.d/04_integration_tables.sql:ro
+      - ./backend/migrations/002_odoo_company.sql:/docker-entrypoint-initdb.d/05_odoo_company.sql:ro
+      - ./backend/migrations/003_customers_birth_date.sql:/docker-entrypoint-initdb.d/06_customers_birth_date.sql:ro
+      - ./backend/migrations/004_mock_catalogue_products.sql:/docker-entrypoint-initdb.d/07_mock_catalogue_products.sql:ro
+      - ./backend/migrations/005_add_tax_columns.sql:/docker-entrypoint-initdb.d/08_add_tax_columns.sql:ro
+      - ./backend/migrations/005_bca_qris_transactions.sql:/docker-entrypoint-initdb.d/09_bca_qris_transactions.sql:ro
+      - ./backend/migrations/006_add_odoo_categ_name.sql:/docker-entrypoint-initdb.d/10_add_odoo_categ_name.sql:ro
+      - ./backend/migrations/007_sample_stock_and_categories.sql:/docker-entrypoint-initdb.d/11_sample_stock_and_categories.sql:ro
+      - ./backend/migrations/008_wishlists.sql:/docker-entrypoint-initdb.d/12_wishlists.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_sos"]
       interval: 10s
@@ -60,6 +68,12 @@ services:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
     volumes:
       - uploads_data:/app/public/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,7 +115,7 @@ services:
       postgres:
         condition: service_healthy
       backend:
-        condition: service_started
+        condition: service_healthy
     networks:
       - sos-net
 

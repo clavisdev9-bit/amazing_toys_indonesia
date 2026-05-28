@@ -6,6 +6,27 @@ const EVENT_NAME  = 'AMAZING TOYS FAIR';
 const EVENT_VENUE = 'JCC Senayan, Jakarta';
 const EVENT_DATE  = '19-21 Mei 2026';
 
+/**
+ * VISUAL LAYOUT NOTE:
+ * ------------------------------------------
+ * [LOGO / EVENT INFO]
+ * ------------------------------------------
+ * Transaction ID | Date | Cashier | Customer
+ * - - - - - - - - - - - - - - - - - - - - -
+ * ITEMS PURCHASED (List: Name, Price, Tenant)
+ * __________________________________________
+ * Subtotal | Tax | TOTAL (Bold)
+ * Cash Received | Change
+ * [ PAID - METHOD ]
+ * ==========================================
+ * PICKUP LOCATIONS (Tenant List)
+ * - - - - - - - - - - - - - - - - - - - - -
+ * [QR CODE] Scan for digital receipt
+ * - - - - - - - - - - - - - - - - - - - - -
+ * FOOTER MESSAGE
+ * ------------------------------------------
+ */
+
 /*
  * Font strategy for thermal printers:
  *   - Primary: Courier New  (system font, no internet required, designed for fixed-pitch print)
@@ -93,7 +114,7 @@ const S = {
   grandTotal: {
     display: 'flex',
     justifyContent: 'space-between',
-    fontSize: '14px',
+    fontSize: '12px',
     fontWeight: '600',      // was 700 — reduced
     color: '#000',
     marginTop: '5px',

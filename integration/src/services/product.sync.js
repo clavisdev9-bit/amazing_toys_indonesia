@@ -121,10 +121,11 @@ async function syncProducts() {
         // ── Update in SOS if price or stock changed ──
         const p = sosProduct.data || sosProduct;
         const sosId = p.product_id;
-        const changed = Number(p.price) !== price || p.stock_quantity !== stockQty;
+        const changed = Number(p.price) !== price;
 
         if (changed) {
-          await sos.patch(`/products/${sosId}`, { price, stock_quantity: stockQty, stock_status: stockStatus });
+          // Only update price — SOS owns stock_quantity independently for event inventory.
+          await sos.patch(`/products/${sosId}`, { price });
           stats.updated++;
           audit.log({
             operation_type: 'PRODUCT_SYNC',

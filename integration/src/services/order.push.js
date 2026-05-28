@@ -428,22 +428,41 @@ async function _reConfirmOrder(transactionId, odooOrderId, meta) {
     logger.info('Order push: re-confirmation succeeded', { transactionId, odooOrderId });
   } catch (err) {
     const isRouteError = err.message.includes('No rule has been found to replenish');
-    if (isRouteError) {
-      // Route misconfiguration in Odoo — order created but can't be auto-confirmed.
-      // Accept the draft and stop retrying; Odoo admin must confirm manually.
-      logger.warn('Order push: route error on confirmation — leaving as draft for manual confirmation in Odoo', {
-        transactionId, odooOrderId,
+    if (isRouteError && cache.fallbackRouteId) {
+      // Mirror the same fallback-route logic used in _doPushOrder: set the route
+      // on all order lines, then retry action_confirm once.
+      try {
+        const orderLines = await odoo.searchRead(
+          'sale.order.line', [['order_id', '=', odooOrderId]], ['id']
+        );
+        const lineIds = orderLines.map(l => l.id);
+        if (lineIds.length > 0) {
+          await odoo.write('sale.order.line', lineIds, { route_id: cache.fallbackRouteId });
+        }
+        await odoo.execute('sale.order', 'action_confirm', [odooOrderId]);
+        logger.info('Order push: re-confirmation succeeded after applying fallback route', {
+          transactionId, odooOrderId, fallbackRouteId: cache.fallbackRouteId,
+        });
+        // Confirmed — fall through to lock step.
+      } catch (retryErr) {
+        logger.error('Order push: re-confirmation failed even after fallback route fix', {
+          transactionId, odooOrderId, error: retryErr.message,
+        });
+        await xref.upsertXref('order', transactionId, odooOrderId, { ...meta, confirmFailed: true });
+        return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed (route+fallback): ${retryErr.message}` };
+      }
+    } else if (isRouteError) {
+      logger.warn('Order push: route error on re-confirmation, no fallback route configured', {
+        transactionId, odooOrderId, error: err.message,
       });
-      const newMeta = { ...meta };
-      delete newMeta.confirmFailed;
-      newMeta.manualConfirmRequired = true;
-      await xref.upsertXref('order', transactionId, odooOrderId, newMeta);
-      return { success: true, odoo_order_id: odooOrderId, error: null };
+      await xref.upsertXref('order', transactionId, odooOrderId, { ...meta, confirmFailed: true });
+      return { success: false, odoo_order_id: odooOrderId, error: `action_confirm route error: ${err.message}` };
+    } else {
+      logger.error('Order push: re-confirmation failed — manual resolution required', {
+        transactionId, odooOrderId, error: err.message,
+      });
+      return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed: ${err.message}` };
     }
-    logger.error('Order push: re-confirmation failed — manual resolution required', {
-      transactionId, odooOrderId, error: err.message,
-    });
-    return { success: false, odoo_order_id: odooOrderId, error: `action_confirm failed: ${err.message}` };
   }
 
   try {

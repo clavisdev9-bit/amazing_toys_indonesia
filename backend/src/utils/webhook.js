@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const http = require('http');
 const https = require('https');
 const url = require('url');
+const logger = require('../config/logger');
 
 const INTEGRATION_WEBHOOK_BASE = process.env.INTEGRATION_WEBHOOK_URL || '';
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
@@ -15,14 +16,19 @@ function sign(body) {
 
 /**
  * Fire-and-forget HTTP POST to the integration service webhook endpoint.
- * Never throws — all errors are silently swallowed to avoid blocking SOS flows.
+ * Never throws — errors are logged but never block SOS flows.
  */
 function fireWebhook(path, payload) {
-  if (!INTEGRATION_WEBHOOK_BASE) return; // integration not configured
+  if (!INTEGRATION_WEBHOOK_BASE) {
+    logger.warn('Webhook skipped: INTEGRATION_WEBHOOK_URL not configured', { path });
+    return;
+  }
 
   const body = JSON.stringify(payload);
   const signature = sign(body);
   const fullUrl = `${INTEGRATION_WEBHOOK_BASE}${path}`;
+
+  logger.info('Webhook firing', { path, transactionId: payload.transactionId });
 
   try {
     const parsed = url.parse(fullUrl);
@@ -33,14 +39,26 @@ function fireWebhook(path, payload) {
 
     const req = lib.request(
       { hostname: parsed.hostname, port: parsed.port, path: parsed.path, method: 'POST', headers, timeout: 5000 },
-      (res) => { res.resume(); } // drain response
+      (res) => {
+        res.resume();
+        if (res.statusCode >= 400) {
+          logger.error('Webhook rejected by integration service', { path, status: res.statusCode, transactionId: payload.transactionId });
+        } else {
+          logger.info('Webhook delivered', { path, status: res.statusCode, transactionId: payload.transactionId });
+        }
+      }
     );
-    req.on('error', () => {}); // swallow
-    req.on('timeout', () => { req.destroy(); });
+    req.on('error', (err) => {
+      logger.error('Webhook delivery failed (network error)', { path, error: err.message, url: fullUrl, transactionId: payload.transactionId });
+    });
+    req.on('timeout', () => {
+      logger.error('Webhook delivery timeout', { path, url: fullUrl, transactionId: payload.transactionId });
+      req.destroy();
+    });
     req.write(body);
     req.end();
-  } catch (_) {
-    // Never propagate webhook errors to the caller
+  } catch (err) {
+    logger.error('Webhook setup error', { path, error: err.message, transactionId: payload.transactionId });
   }
 }
 

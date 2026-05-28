@@ -5,7 +5,7 @@
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js",
+    "dev": "node -e \"const{execSync}=require('child_process');try{const r=execSync('docker inspect -f {{.State.Running}} sos_backend 2>&1').toString().trim();if(r==='true'){console.error('\\n⛔  ERROR: sos_backend Docker container is already running on port 3001.\\n    Running local dev alongside Docker will cause transactions to go to the WRONG database.\\n    Stop Docker first:  docker compose down\\n    OR use Docker instead: http://localhost:80\\n');process.exit(1);}}catch(e){}\" && nodemon src/app.js",
     "test": "jest --runInBand --forceExit",
     "test:coverage": "jest --coverage --runInBand --forceExit",
     "migrate": "node migrations/run.js",

@@ -174,7 +174,7 @@ export default function MasterDataTab() {
 
   const [syncingToOdoo, setSyncingToOdoo] = useState(false);
   const [bulkCatModal, setBulkCatModal]   = useState(false);
-  const [bulkCatValue, setBulkCatValue]   = useState('Others');
+  const [bulkCatValue, setBulkCatValue]   = useState('');
   const [bulkCatSaving, setBulkCatSaving] = useState(false);
 
   const [bulkOdooCatModal, setBulkOdooCatModal]   = useState(false);
@@ -472,7 +472,7 @@ export default function MasterDataTab() {
           </Button>
         )}
         {role === 'ADMIN' && (
-          <Button size="sm" onClick={() => { setBulkCatValue('Others'); setBulkCatModal(true); }}
+          <Button size="sm" onClick={() => { setBulkCatValue(''); setBulkCatModal(true); }}
             className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
             Set Kategori
           </Button>
@@ -683,10 +683,11 @@ export default function MasterDataTab() {
           <p className="text-sm text-gray-600">
             Ubah field <span className="font-semibold">Kategori</span> untuk <span className="font-semibold">semua produk</span> menjadi:
           </p>
-          <Input
-            label="Kategori"
+          <CategoryCombobox
+            label="Kategori *"
             value={bulkCatValue}
-            onChange={(e) => setBulkCatValue(e.target.value)}
+            onChange={(val) => setBulkCatValue(val)}
+            categories={categories}
             required
           />
           <p className="text-xs text-amber-600">Perhatian: tindakan ini akan mengubah kategori semua produk sekaligus.</p>
