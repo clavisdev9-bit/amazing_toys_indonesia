@@ -2,9 +2,10 @@
 
 const { Router } = require('express');
 const { verifyWebhookSignature } = require('../middleware/webhook.auth');
-const orderPush = require('../services/order.push');
-const cancelSync = require('../services/cancel.sync');
-const customerSvc = require('../services/customer.sync');
+const orderPush     = require('../services/order.push');
+const voucherSvc    = require('../services/payment-voucher.service');
+const cancelSync    = require('../services/cancel.sync');
+const customerSvc   = require('../services/customer.sync');
 const logger = require('../config/logger');
 
 const router = Router();
@@ -24,9 +25,19 @@ router.post('/order-paid', async (req, res) => {
   res.json({ received: true });
 
   logger.info('Webhook: ORDER_PAID received', { transactionId });
-  orderPush.pushOrder(transactionId).catch(err =>
-    logger.error('Webhook ORDER_PAID handler error', { transactionId, error: err.message })
-  );
+
+  // Push SO first; only trigger voucher chain if SO push succeeded.
+  // If push fails (CB open, Odoo down, etc.) both jobs are picked up
+  // by the retry queue / polling on their next cycle.
+  orderPush.pushOrder(transactionId)
+    .then(result => {
+      if (result?.success) {
+        return voucherSvc.pushPaymentVoucher(transactionId);
+      }
+    })
+    .catch(err =>
+      logger.error('Webhook ORDER_PAID handler error', { transactionId, error: err.message })
+    );
 });
 
 /**

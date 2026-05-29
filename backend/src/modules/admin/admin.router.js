@@ -324,6 +324,39 @@ router.post('/odoo/config', ...adminOnly, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Odoo Payment Journals ─────────────────────────────────────────────────────
+
+/**
+ * GET /admin/odoo/payment-journals
+ * Return current payment method → Odoo journal_id mapping.
+ */
+router.get('/odoo/payment-journals', ...adminOnly, async (_req, res, next) => {
+  try {
+    const cfg = await adminSvc.getIntegrationConfig();
+    res.json({ success: true, data: cfg.odoo_payment_journals || {} });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /admin/odoo/payment-journals
+ * Save payment method → Odoo journal_id mapping.
+ * Body: { "CASH": 14, "QRIS": 15, "EDC": 16, "TRANSFER": 17 }
+ */
+router.put('/odoo/payment-journals', ...adminOnly, async (req, res, next) => {
+  try {
+    const allowed = ['CASH', 'QRIS', 'EDC', 'TRANSFER'];
+    const journals = {};
+    for (const method of allowed) {
+      if (req.body[method] !== undefined) {
+        const id = parseInt(req.body[method], 10);
+        if (!isNaN(id) && id > 0) journals[method] = id;
+      }
+    }
+    const data = await adminSvc.saveIntegrationConfig({ odoo_payment_journals: journals });
+    res.json({ success: true, message: 'Payment journal mapping disimpan.', data: data.odoo_payment_journals || {} });
+  } catch (err) { next(err); }
+});
+
 // ── Odoo lookups ──────────────────────────────────────────────────────────────
 
 router.get('/odoo/categories', ...adminOnly, async (_req, res, next) => {

@@ -1,11 +1,12 @@
 'use strict';
 
-const cron = require('node-cron');
+const cron        = require('node-cron');
 const productSync = require('../services/product.sync');
-const stockSync = require('../services/stock.sync');
-const cancelSync = require('../services/cancel.sync');
-const orderPush = require('../services/order.push');
-const retryQueue = require('../queue/retry.queue');
+const stockSync   = require('../services/stock.sync');
+const cancelSync  = require('../services/cancel.sync');
+const orderPush   = require('../services/order.push');
+const voucherSvc  = require('../services/payment-voucher.service');
+const retryQueue  = require('../queue/retry.queue');
 const { updateSyncTime } = require('../routes/health.router');
 const logger = require('../config/logger');
 const env = require('../config/env');
@@ -16,7 +17,8 @@ const xref = require('../utils/xref');
 const _pollingState = { lastProcessedAt: null };
 
 const retryHandlers = {
-  ORDER_PUSH: ({ transactionId }) => orderPush.pushOrder(transactionId),
+  ORDER_PUSH:      ({ transactionId }) => orderPush.pushOrder(transactionId),
+  PAYMENT_VOUCHER: ({ transactionId }) => voucherSvc.pushPaymentVoucher(transactionId),
 };
 
 function minuteToCron(min) {
@@ -57,46 +59,96 @@ function start() {
     }
   });
 
-  // ── ORDER_PAID polling fallback (every POLLING_INTERVAL_SEC seconds) ──────
-  // Queries the shared DB directly so ALL historical PAID transactions are
-  // covered — not just today's (which a date-filtered cashier API would miss).
+  // ── Unified Odoo polling loop ─────────────────────────────────────────────
+  // ORDER_PUSH and VoucherPoll run SEQUENTIALLY inside a single setInterval so
+  // they can never make concurrent Odoo API calls and accidentally trip the
+  // circuit breaker. The _polling guard also prevents a slow cycle from
+  // overlapping with the next tick.
   const { query } = require('../config/database');
+  let _polling = false;
+
   setInterval(async () => {
+    if (_polling) {
+      logger.warn('Polling: previous cycle still running — skipping tick');
+      return;
+    }
+    _polling = true;
     try {
-      const result = await query(`
+      // ── Phase 1: ORDER_PUSH ────────────────────────────────────────────────
+      const orderResult = await query(`
         SELECT t.transaction_id FROM transactions t
         LEFT JOIN integration_xref x
                ON x.entity_type = 'order'
               AND x.sos_id      = t.transaction_id
               AND x.status      = 'ACTIVE'
         WHERE t.status = 'PAID'
-          AND (x.odoo_id IS NULL OR (x.sync_metadata->>'confirmFailed')::boolean = true)
+          AND (x.odoo_id IS NULL
+               OR (x.sync_metadata->>'confirmFailed')::boolean = true
+               OR (x.sync_metadata->>'manualConfirmRequired')::boolean = true)
         ORDER BY t.paid_at DESC
-        LIMIT 100
+        LIMIT 5
       `);
 
-      for (const row of result.rows) {
-        logger.info('Polling: unpushed PAID transaction detected', {
-          transactionId: row.transaction_id,
-        });
-        orderPush.pushOrder(row.transaction_id).catch((err) =>
-          logger.error('Polling: order push error', {
-            transactionId: row.transaction_id,
-            error: err.message,
-          })
+      for (const row of orderResult.rows) {
+        logger.info('Polling: unpushed PAID transaction detected', { transactionId: row.transaction_id });
+        await orderPush.pushOrder(row.transaction_id).catch((err) =>
+          logger.error('Polling: order push error', { transactionId: row.transaction_id, error: err.message })
+        );
+      }
+
+      // ── Phase 2: VoucherPoll ───────────────────────────────────────────────
+      const voucherResult = await query(`
+        SELECT x.sos_id AS transaction_id
+        FROM integration_xref x
+        JOIN transactions t ON t.transaction_id = x.sos_id
+        WHERE x.entity_type   = 'order'
+          AND x.status        = 'ACTIVE'
+          AND x.odoo_id       IS NOT NULL
+          AND t.status        = 'PAID'
+          AND (x.voucher_status IS NULL OR x.voucher_status NOT IN ('PAID', 'FAILED'))
+          AND (x.sync_metadata->>'confirmFailed')::boolean IS NOT TRUE
+          AND (x.sync_metadata->>'manualConfirmRequired')::boolean IS NOT TRUE
+        ORDER BY t.paid_at DESC
+        LIMIT 5
+      `);
+
+      for (const row of voucherResult.rows) {
+        logger.info('VoucherPoll: unpaid voucher detected', { transactionId: row.transaction_id });
+        await voucherSvc.pushPaymentVoucher(row.transaction_id).catch((err) =>
+          logger.error('VoucherPoll: error', { transactionId: row.transaction_id, error: err.message })
         );
       }
     } catch (err) {
-      logger.error('Polling: DB query failed', { error: err.message });
+      logger.error('Polling: cycle error', { error: err.message });
+    } finally {
+      _polling = false;
     }
   }, env.POLLING_INTERVAL_SEC * 1000);
 
   // ── Retry queue processor (every 30 seconds) ──────────────────────────────
+  // Guard prevents overlap if a retry cycle takes longer than 30s.
+  const deadLetterHandlers = {
+    // When a voucher permanently fails, mark it FAILED so VoucherPoll stops retrying.
+    PAYMENT_VOUCHER: async ({ transactionId }) => {
+      await query(
+        `UPDATE integration_xref SET voucher_status = 'FAILED', voucher_synced_at = NOW()
+         WHERE entity_type = 'order' AND sos_id = $1`,
+        [transactionId],
+      );
+      logger.warn('PaymentVoucher: dead-lettered — voucher_status set to FAILED', { transactionId });
+    },
+  };
+
+  let _retrying = false;
   setInterval(async () => {
+    if (_retrying) return;
+    _retrying = true;
     try {
-      await retryQueue.processDue(retryHandlers);
+      await retryQueue.processDue(retryHandlers, deadLetterHandlers);
     } catch (err) {
       logger.error('Scheduler: retry queue error', { error: err.message });
+    } finally {
+      _retrying = false;
     }
   }, 30_000);
 

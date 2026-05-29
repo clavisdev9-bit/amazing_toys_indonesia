@@ -256,4 +256,171 @@ This applies to **all** frontend changes — React components, CSS, assets, env-
 
 ---
 
+## BUG-010 — TXN-20260528-00014 Delayed Integration + Duplicate SO Created in Odoo
+
+**Symptom:**  
+Transaction `TXN-20260528-00014` appeared "not integrated" to Odoo. The transaction was PAID at 12:01 WIB but the integration was delayed by ~8 minutes. Additionally, **2 duplicate sale orders** were found in Odoo for the same transaction: `S00045` and `S00046`.
+
+**Root Cause (chain of 4 failures):**
+
+| # | Defect | Impact |
+|---|---|---|
+| 1 | **Voucher polling limit = 50 + concurrent** — the `VoucherPoll` job processed all 13 backlogged transactions sequentially, making ~90 Odoo API calls in rapid succession → hit Odoo Online rate limit → `cb.recordFailure('odoo')` × 5 → **circuit breaker opened** | New real-time webhook events blocked for 2 minutes (CB reset time) |
+| 2 | **Webhook fires voucher even if pushOrder failed** — `pushOrder().then(() => pushVoucher())` always fires voucher regardless of pushOrder result; when CB is open, both jobs are queued as retries | Double retry entries per transaction, increasing Odoo call volume on CB reset |
+| 3 | **No in-flight guard on SO creation** — when CB reset, both the retry queue AND the polling fallback picked up the same transaction simultaneously; both called `_doPushOrder`, both found xref=null, both created an SO in Odoo | Duplicate SO: `S00045` + `S00046` for same transaction |
+| 4 | **`x_studio_sos_transaction_id` field not in Odoo** — idempotency check via custom Odoo field disabled, removing the last line of defence against SO duplication | Odoo-side deduplication not possible; relies entirely on local xref |
+
+**Fixes Applied — 2026-05-28:**
+
+1. **`scheduler.js`** — reduced polling `LIMIT 100→5` for ORDER_PUSH and `LIMIT 50→5` for VoucherPoll; both loops made `await` (sequential with natural back-pressure). Prevents CB from opening under bulk processing.
+
+2. **`webhook.router.js`** — `pushOrder().then(() => pushVoucher())` changed to only call `pushPaymentVoucher` when `result.success === true`. If pushOrder is blocked by CB, voucher is picked up by VoucherPoll on next cycle.
+
+3. **`order.push.js`** — added `inFlight` guard: writes `{inFlight: true}` to `integration_xref` (with `odoo_id=null`) **before** calling Odoo to create the SO. Any concurrent run that finds an `inFlight` entry within the last 60s backs off immediately. Cleared when SO is upserted with real `odoo_id`.
+
+4. **Odoo data fix** — duplicate `S00045` (no invoice, state=sale) cancelled via `sale.order.cancel` wizard. `S00046` retained as the authoritative record.
+
+**Files Changed:**
+- `integration/src/routes/webhook.router.js`
+- `integration/src/scheduler/scheduler.js`
+- `integration/src/services/order.push.js`
+
+**Correlation with CR.md:**
+- **CR-015** (Payment Voucher Integration) introduced VoucherPoll which — without polling rate limits — caused CB to open under backlog conditions, triggering this bug.
+- The fix is additive to CR-015; no voucher logic changed.
+
+**Prevention:**
+- Polling batch size must remain ≤ 5 to avoid triggering Odoo Online rate limits (typically 100 req/min on trial instances).
+- Any new polling loop must be `await` (sequential) with a hard `LIMIT ≤ 5`.
+- The `inFlight` guard in `order.push.js` must be preserved for all future SO push paths.
+
+---
+
+## BUG-011 — VoucherPoll CB-Flood Blocks New Transactions (TXN-20260528-00041 et al.)
+
+**Symptom:**  
+New PAID transactions (e.g., `TXN-20260528-00041`) appeared "not synced" to Odoo despite the webhook firing correctly. The integration service's Odoo circuit breaker (CB) was opening repeatedly, blocking all real-time pushes.
+
+**Root Cause (chain of 5 failures):**
+
+| # | Defect | Impact |
+|---|---|---|
+| 1 | 4 transactions (`TXN-20260519-00010`, `-00013`, `TXN-20260520-00022`, `TXN-20260506-00007`) still had `manualConfirmRequired: true` in `sync_metadata` — a pre-CR-006 flag that was never migrated | ORDER_PUSH polling query only checked `confirmFailed=true`, so these SO drafts were never re-confirmed |
+| 2 | VoucherPoll query did not filter out transactions with `confirmFailed` / `manualConfirmRequired` | Voucher service called every 60s, saw SO `state=draft`, re-queued to retry queue |
+| 3 | Retry queue accumulated multiple entries per transaction; all fired simultaneously after backoff expired | 10+ concurrent Odoo API calls → CB tripped (threshold 5) → new orders blocked |
+| 4 | 3 older transactions (`TXN-20260504-00004`, `TXN-20260506-00005`, `-00006`) had SO ids (62, 83, 84) that no longer exist in Odoo; step `[A]` of voucher service threw silently with no log and re-queued forever | CB trips on every polling cycle restart |
+| 5 | Dead-letter path in retry queue did not set `voucher_status = FAILED` in DB | VoucherPoll re-added dead-lettered items as new attempt=1 entries, creating an infinite loop |
+
+**Fixes:**
+
+1. **`scheduler.js` — VoucherPoll query**: Added two filter conditions to exclude unconfirmed SOs:
+   ```sql
+   AND (x.sync_metadata->>'confirmFailed')::boolean IS NOT TRUE
+   AND (x.sync_metadata->>'manualConfirmRequired')::boolean IS NOT TRUE
+   ```
+   Also changed `NOT IN ('PAID')` → `NOT IN ('PAID', 'FAILED')` so FAILED vouchers requiring manual intervention are excluded from auto-polling.
+
+2. **`scheduler.js` — ORDER_PUSH polling query**: Extended the retry condition to also pick up `manualConfirmRequired` entries (old flag):
+   ```sql
+   AND (x.odoo_id IS NULL
+        OR (x.sync_metadata->>'confirmFailed')::boolean = true
+        OR (x.sync_metadata->>'manualConfirmRequired')::boolean = true)
+   ```
+
+3. **`scheduler.js` — dead-letter handler**: Registered a `PAYMENT_VOUCHER` dead-letter callback in `processDue`:
+   ```js
+   PAYMENT_VOUCHER: async ({ transactionId }) => {
+     await query(`UPDATE integration_xref SET voucher_status = 'FAILED'...`);
+   }
+   ```
+   When a voucher exhausts all retries, `voucher_status = FAILED` is written to DB immediately, stopping VoucherPoll from re-adding it.
+
+4. **`payment-voucher.service.js` — step [A] SO not found**: Changed from silent re-queue to terminal failure:
+   - Added `logger.error(...)` to make the failure visible in logs.
+   - Set `voucher_status = FAILED` immediately instead of re-queuing — no SO means voucher is permanently impossible.
+   - Also added `logger.error` to the generic catch path for other step [A] Odoo errors.
+
+5. **`retry.queue.js`**: Added optional `onDeadLetter` callback map parameter to `processDue(handlers, onDeadLetter = {})`. Called after `audit.pushDeadLetter` when an item exceeds `RETRY_MAX_ATTEMPTS`.
+
+6. **DB data fix**: Migrated 4 stuck `integration_xref` entries from `manualConfirmRequired: true` → `confirmFailed: true` so the fixed ORDER_PUSH polling immediately picked them up for SO re-confirmation.
+
+**Final State (2026-05-29):**
+
+| Transaction | Result |
+|---|---|
+| TXN-20260520-00022 | SO id=106 confirmed via `_reConfirmOrder`; invoice INV-250 created, posted, paid (payment id=47) ✓ |
+| TXN-20260519-00013 | SO id=120 confirmed; invoice INV-251, payment id=48 ✓ |
+| TXN-20260519-00010 | SO id=121 confirmed; invoice INV-252, payment id=49 ✓ |
+| TXN-20260506-00007 | SO id=122 confirmed; invoice INV-253, payment id=50 ✓ |
+| TXN-20260504-00004 | SO id=62 not found in Odoo → `voucher_status=FAILED` (manual resolution needed) |
+| TXN-20260506-00005 | SO id=83 not found in Odoo → `voucher_status=FAILED` (manual resolution needed) |
+| TXN-20260506-00006 | SO id=84 not found in Odoo → `voucher_status=FAILED` (manual resolution needed) |
+| TXN-20260528-00041 | Successfully synced to Odoo SO id=119, `voucher_status=PAID` ✓ |
+
+VoucherPoll queue = 0 after fix. CB no longer trips on each polling cycle.
+
+**Files Changed:**
+- `integration/src/scheduler/scheduler.js`
+- `integration/src/queue/retry.queue.js`
+- `integration/src/services/payment-voucher.service.js`
+
+**Recurrence Prevention:**
+- VoucherPoll will never pick up unconfirmed SOs (`confirmFailed`/`manualConfirmRequired` filtered)
+- VoucherPoll will never pick up permanently-failed vouchers (`FAILED` status excluded)
+- Dead-letter now writes `FAILED` status to DB, creating a clean stop condition
+- "SO not found" is now a terminal, logged failure — no silent infinite retry
+- Future use of `manualConfirmRequired` flag is forbidden; use `confirmFailed` only (ORDER_PUSH polling handles both for backward compatibility)
+
+---
+
+## BUG-012 — Concurrent Polling Loops Cause Intermittent CB Trip & Delayed Sync
+
+**Symptom:**  
+Transactions (e.g., `TXN-20260528-00042`) occasionally appear "not synced" when checked immediately after payment. They sync after 60–120 seconds via polling fallback rather than instantly via webhook. The pattern recurs on every deployment; CB trips were observed at `16:42`, `16:48`, `16:53`, `16:56` in a single session.
+
+**Root Cause:**  
+`ORDER_PUSH polling` and `VoucherPoll` were implemented as two **separate `setInterval` callbacks** with the **same interval and the same start time** (`T=0` from scheduler boot). This guarantees they fire simultaneously on every tick:
+
+```
+T=0s   : ORDER_PUSH fires → await orderPush (4+ Odoo calls)
+T=0s   : VoucherPoll fires → await pushPaymentVoucher (4+ Odoo calls) ← concurrent!
+T=30s  : retry queue fires → concurrent with ongoing ORDER_PUSH/VoucherPoll awaits
+T=60s  : all three fire simultaneously again
+```
+
+Because Node.js `setInterval` callbacks are dispatched from the event loop between `await` suspensions, both loops run concurrently even though each is internally sequential. Under any backlog (stuck transactions, CB just reset), this produces 8–15 simultaneous Odoo API calls → hits Odoo Online rate limit → 5 failures → CB opens → real-time webhook-triggered pushes are blocked for 2+ minutes → user sees delayed/missing sync.
+
+Additionally, neither the polling loop nor the retry queue had a **cycle-overlap guard**: if one cycle took longer than the interval, the next tick would start a second concurrent instance of the same loop.
+
+**Fix (CR-020):**
+
+Merged ORDER_PUSH polling and VoucherPoll into a **single sequential `setInterval`** with a `_polling` overlap guard. ORDER_PUSH runs first (phase 1), then VoucherPoll (phase 2) — they can never make concurrent Odoo calls:
+
+```js
+let _polling = false;
+setInterval(async () => {
+  if (_polling) { logger.warn('Polling: previous cycle still running — skipping tick'); return; }
+  _polling = true;
+  try {
+    // Phase 1: ORDER_PUSH (sequential)
+    for (const row of orderRows) await orderPush.pushOrder(row.transaction_id);
+    // Phase 2: VoucherPoll (sequential, runs AFTER ORDER_PUSH completes)
+    for (const row of voucherRows) await voucherSvc.pushPaymentVoucher(row.transaction_id);
+  } finally { _polling = false; }
+}, POLLING_INTERVAL_SEC * 1000);
+```
+
+Also added `_retrying` guard to the retry queue processor to prevent two retry cycles from overlapping.
+
+**Files Changed:**
+- `integration/src/scheduler/scheduler.js`
+
+**Recurrence Prevention:**
+- A single polling loop guarantees ORDER_PUSH and VoucherPoll never make concurrent Odoo calls, regardless of queue depth.
+- `_polling` guard ensures a slow cycle (e.g., reconfirming 5 draft SOs) does not launch a second instance before finishing.
+- `_retrying` guard prevents retry queue overlap under slow Odoo responses.
+- Maximum Odoo API calls per minute is now bounded: `(LIMIT_5 × ~5_calls_per_txn) × 2 = 50 calls/60s` — well within Odoo Online's ~100 req/min limit.
+
+---
+
 

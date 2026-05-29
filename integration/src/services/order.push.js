@@ -99,7 +99,16 @@ async function _doPushOrder(transactionId) {
   // ── Idempotency: local xref ──────────────────────────────────────────────────
   const existing = await xref.getXref('order', transactionId);
   if (existing) {
-    // If a previous attempt created the order but action_confirm failed, re-attempt confirmation.
+    // If another process is currently creating the SO (inFlight flag set within
+    // the last 60s), back off to prevent duplicate SO creation from parallel
+    // polling + retry-queue runs firing after a CB reset.
+    if (existing.sync_metadata?.inFlight) {
+      const age = Date.now() - new Date(existing.updated_at).getTime();
+      if (age < 60_000) {
+        logger.info('Order push: another process is creating SO — skipping', { transactionId });
+        return { success: false, odoo_order_id: null, error: 'in-flight by another process' };
+      }
+    }
     if (existing.sync_metadata?.confirmFailed && existing.odoo_id) {
       logger.warn('Order push: previous attempt left order unconfirmed — re-attempting confirmation', {
         transactionId,
@@ -110,6 +119,10 @@ async function _doPushOrder(transactionId) {
     logger.info('Order push: duplicate event discarded', { transactionId, odooOrderId: existing.odoo_id });
     return { success: true, odoo_order_id: existing.odoo_id, error: null };
   }
+
+  // Mark this transaction as in-flight BEFORE creating SO in Odoo,
+  // so concurrent polling/retry runs see the flag and back off.
+  await xref.upsertXref('order', transactionId, null, { inFlight: true });
 
   // ── Idempotency: check Odoo directly via x_studio field ─────────────────────
   try {

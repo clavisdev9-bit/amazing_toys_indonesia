@@ -480,6 +480,9 @@ const DEFAULT_INTEGRATION_CONFIG = {
   odoo_circuit_breaker_reset_min: 2,
   odoo_tenant_product_mapping: '{}',
   odoo_default_tenant_id: 'T001',
+  // Payment Voucher: Odoo journal_id per SOS payment method
+  // Format: { "CASH": <journal_id>, "QRIS": <journal_id>, "EDC": <journal_id>, "TRANSFER": <journal_id> }
+  odoo_payment_journals: {},
 };
 
 const MASKED = '••••••••';

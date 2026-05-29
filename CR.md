@@ -295,6 +295,299 @@ TOTAL                 Rp 224.000
 
 ---
 
+### CR-015 — Payment Voucher Integration: SOS → Odoo 18 Accounting Chain
+**Files:**
+- `integration/src/services/payment-voucher.service.js` *(new)*
+- `integration/src/routes/webhook.router.js`
+- `integration/src/scheduler/scheduler.js`
+- `backend/src/modules/admin/admin.service.js`
+- `backend/src/modules/admin/admin.router.js`
+- `backend/migrations/009_payment_voucher_xref.sql` *(new)*
+
+**Type:** Feature — Odoo Integration Extension
+
+**Background:**  
+Previously, a paid SOS transaction only pushed a `sale.order` to Odoo (draft → confirmed). The full accounting chain (invoice creation, posting, payment registration, and reconciliation) was not automated, requiring manual steps in Odoo.
+
+**Changes:**
+
+1. **New service `payment-voucher.service.js`** — implements the 4-step JSON-RPC chain after SO confirmation:
+
+   | Step | Odoo Call | Result |
+   |---|---|---|
+   | [A] Verify SO | `sale.order.search_read` | Confirm `state = sale`; read `partner_id` |
+   | [B] Create invoice | `sale.order.action_create_invoices` | `account.move` type `out_invoice` terbentuk |
+   | [C] Post invoice | `account.move.action_post` | `state: draft → posted` |
+   | [D] Register payment | `account.payment.create` + `action_post` + `js_assign_outstanding_line` | `payment_state: paid`, `amount_residual: 0` |
+
+   Idempotency dijaga oleh `voucher_status` di `integration_xref` — setiap langkah di-resume dari checkpoint terakhir jika terjadi kegagalan:
+   ```
+   PENDING → CONFIRMED → INVOICED → PAID
+   ```
+
+2. **`webhook.router.js`** — setelah `pushOrder()` selesai, langsung trigger `pushPaymentVoucher()` secara berantai:
+   ```js
+   orderPush.pushOrder(txnId)
+     .then(() => voucherSvc.pushPaymentVoucher(txnId))
+   ```
+
+3. **`scheduler.js`** — dua tambahan:
+   - Handler `PAYMENT_VOUCHER` didaftarkan ke retry queue
+   - Polling fallback setiap `POLLING_INTERVAL_SEC` detik: mendeteksi order dengan `odoo_id` set tapi `voucher_status ≠ PAID`, lalu re-trigger voucher chain
+
+4. **`admin.service.js`** — tambah `odoo_payment_journals: {}` ke `DEFAULT_INTEGRATION_CONFIG` untuk menyimpan mapping metode bayar → Odoo `journal_id`:
+   ```json
+   { "CASH": 14, "QRIS": 15, "EDC": 16, "TRANSFER": 17 }
+   ```
+
+5. **`admin.router.js`** — dua endpoint baru:
+   - `GET  /api/v1/admin/odoo/payment-journals` — baca mapping journal
+   - `PUT  /api/v1/admin/odoo/payment-journals` — simpan mapping journal
+
+6. **Migration `009_payment_voucher_xref.sql`** — empat kolom baru di `integration_xref`:
+   ```sql
+   odoo_invoice_id   INTEGER         -- Odoo account.move ID
+   odoo_payment_id   INTEGER         -- Odoo account.payment ID
+   voucher_status    VARCHAR(20)     -- PENDING|CONFIRMED|INVOICED|PAID|FAILED
+   voucher_synced_at TIMESTAMPTZ     -- Timestamp sync terakhir
+   ```
+   + partial index `idx_xref_voucher_status` untuk polling query.
+
+**Error Handling:**  
+Kegagalan di langkah mana pun **tidak memblokir transaksi SOS**. Sistem menggunakan fire-and-forget dengan:
+- Retry queue (exponential backoff: 1s → 5s → 30s → 2m → 10m → 30m, max 3 attempts)
+- Circuit breaker Odoo (5 gagal → open, reset 2 menit)
+- `voucher_status = FAILED` jika semua retry habis — visible di Admin → Integrasi → Sync Log
+
+**Hasil akhir di Odoo untuk setiap TXN PAID:**
+```
+sale.order (origin: TXN-YYYYMMDD-NNNNN)
+  └── state: sale (confirmed + locked)
+      └── account.move (INV/YYYY/NNNNN)
+            └── state: posted
+                payment_state: paid
+                amount_residual: 0.00
+                └── account.payment
+                      journal: [sesuai payment_method]
+                      ref: TXN-YYYYMMDD-NNNNN
+```
+
+**Setup wajib sebelum live:**
+1. Di Odoo: catat `journal_id` untuk Kas, QRIS, EDC, Transfer (Accounting → Configuration → Journals)
+2. Di `/admin` → Integrasi → Odoo Payment Journals: isi mapping
+3. Jalankan migration `009_payment_voucher_xref.sql` (sudah applied ke DB aktif)
+
+---
+
+### CR-016 — Fix Duplicate SO & CB-Induced Delay in Odoo Integration
+**Files:**
+- `integration/src/routes/webhook.router.js`
+- `integration/src/scheduler/scheduler.js`
+- `integration/src/services/order.push.js`
+
+**Type:** Bug Fix — Integration Resilience
+
+**Triggered by:** BUG-010 (`TXN-20260528-00014` — delayed integration + duplicate SO in Odoo)
+
+**Changes:**
+
+1. **`webhook.router.js`** — voucher chain now only fires when `pushOrder` returns `success: true`:
+   ```js
+   // Before
+   pushOrder(txn).then(() => pushVoucher(txn))
+
+   // After
+   pushOrder(txn).then(result => { if (result?.success) pushVoucher(txn); })
+   ```
+   Prevents spurious voucher retries being queued when the SO push itself was blocked by the circuit breaker.
+
+2. **`scheduler.js`** — both polling loops made safe:
+   - `ORDER_PUSH` polling: `LIMIT 100 → 5`, loop changed to `await` (sequential)
+   - `VoucherPoll`: `LIMIT 50 → 5`, already `await`
+   
+   Prevents 90+ concurrent Odoo calls from a backlog flush, which was tripping the CB and delaying live transactions by 2–8 minutes.
+
+3. **`order.push.js`** — added `inFlight` guard before SO creation:
+   ```js
+   // Before creating SO in Odoo, mark xref as in-flight
+   await xref.upsertXref('order', transactionId, null, { inFlight: true });
+   // ... create SO ...
+   await xref.upsertXref('order', transactionId, odooOrderId, { ... }); // clears flag
+   ```
+   Any concurrent run (polling + retry queue firing simultaneously after CB reset) that sees `inFlight: true` within the last 60s backs off immediately. Eliminates the race condition that produced duplicate SOs.
+
+**Root cause correlation:**  
+CR-015 (Payment Voucher) introduced `VoucherPoll` with `LIMIT 50` + concurrent fire — this caused CB to open under backlog conditions (not triggered during initial testing because there was no backlog). CR-016 is the hardening layer on top of CR-015.
+
+---
+
+### CR-017 — Fix VoucherPoll & ORDER_PUSH Polling Queries (CB-Flood Prevention)
+**Files:**
+- `integration/src/scheduler/scheduler.js`
+
+**Type:** Bug Fix — Integration Resilience
+
+**Triggered by:** BUG-011 (CB-flood blocking new transactions incl. TXN-20260528-00041)
+
+**Changes:**
+
+1. **VoucherPoll query** — added two filter conditions so unconfirmed SOs are never picked up by the voucher chain:
+   ```sql
+   -- Before
+   AND (x.voucher_status IS NULL OR x.voucher_status NOT IN ('PAID'))
+
+   -- After
+   AND (x.voucher_status IS NULL OR x.voucher_status NOT IN ('PAID', 'FAILED'))
+   AND (x.sync_metadata->>'confirmFailed')::boolean IS NOT TRUE
+   AND (x.sync_metadata->>'manualConfirmRequired')::boolean IS NOT TRUE
+   ```
+   `FAILED` status is also excluded — permanently-failed vouchers require manual intervention and must not be auto-retried.
+
+2. **ORDER_PUSH polling query** — extended to pick up transactions with the legacy `manualConfirmRequired` flag (pre-CR-006 entries in DB):
+   ```sql
+   -- Before
+   AND (x.odoo_id IS NULL OR (x.sync_metadata->>'confirmFailed')::boolean = true)
+
+   -- After
+   AND (x.odoo_id IS NULL
+        OR (x.sync_metadata->>'confirmFailed')::boolean = true
+        OR (x.sync_metadata->>'manualConfirmRequired')::boolean = true)
+   ```
+
+3. **Dead-letter handler** — registered a `PAYMENT_VOUCHER` callback in the retry queue processor. When a voucher exhausts `RETRY_MAX_ATTEMPTS`, `voucher_status = 'FAILED'` is written to `integration_xref` immediately, so VoucherPoll stops picking it up on the next cycle:
+   ```js
+   const deadLetterHandlers = {
+     PAYMENT_VOUCHER: async ({ transactionId }) => {
+       await query(`UPDATE integration_xref SET voucher_status = 'FAILED', voucher_synced_at = NOW()
+                    WHERE entity_type = 'order' AND sos_id = $1`, [transactionId]);
+     },
+   };
+   await retryQueue.processDue(retryHandlers, deadLetterHandlers);
+   ```
+
+---
+
+### CR-018 — Fix payment-voucher.service.js: "SO Not Found" as Terminal Failure
+**File:** `integration/src/services/payment-voucher.service.js`  
+**Type:** Bug Fix
+
+Step `[A]` of the voucher chain previously threw `new Error('SO id=X not found in Odoo')` into a generic catch block that silently re-queued the item. This caused 3 transactions (TXN-20260504-00004, TXN-20260506-00005, TXN-20260506-00006) whose Odoo SOs were deleted to retry forever, tripping the CB on every polling cycle.
+
+**Before:**
+```js
+if (!order) throw new Error(`SO id=${soId} not found in Odoo`);
+// ...
+} catch (err) {
+  cb.recordFailure('odoo');
+  retryQ.enqueue({ type: 'PAYMENT_VOUCHER', ... });
+  return { success: false, error: `[A] verify SO: ${err.message}` };
+}
+```
+
+**After:**
+```js
+if (!order) {
+  logger.error('PaymentVoucher: [A] SO not found in Odoo — marking FAILED', { transactionId, soId });
+  await _patch(transactionId, { voucher_status: VS.FAILED });
+  return { success: false, error: `SO id=${soId} not found in Odoo` };
+}
+// generic catch now also logs:
+} catch (err) {
+  cb.recordFailure('odoo');
+  logger.error('PaymentVoucher: [A] verify SO failed — re-queuing', { transactionId, soId, error: err.message });
+  retryQ.enqueue(...);
+```
+
+"SO not found" is now a terminal failure: `voucher_status = FAILED` is written immediately and the item never re-queued. Any other Odoo error is still retriable but now logged.
+
+---
+
+### CR-019 — Add onDeadLetter Callback to retry.queue.js
+**File:** `integration/src/queue/retry.queue.js`  
+**Type:** Infrastructure Fix
+
+Added an optional second parameter `onDeadLetter = {}` to `processDue`. When an item exceeds `RETRY_MAX_ATTEMPTS`, the matching handler (keyed by `item.type`) is called after `audit.pushDeadLetter`:
+
+```js
+// Before
+async function processDue(handlers) { ... }
+if (nextAttempt > env.RETRY_MAX_ATTEMPTS) {
+  await audit.pushDeadLetter(item.type, item.id, item.payload, err.message);
+}
+
+// After
+async function processDue(handlers, onDeadLetter = {}) { ... }
+if (nextAttempt > env.RETRY_MAX_ATTEMPTS) {
+  await audit.pushDeadLetter(item.type, item.id, item.payload, err.message);
+  if (onDeadLetter[item.type]) {
+    await onDeadLetter[item.type](item.payload, err.message).catch(() => {});
+  }
+}
+```
+
+This allows callers to hook post-dead-letter cleanup (e.g., writing `voucher_status = FAILED`) without coupling the queue to application domain logic.
+
+---
+
+### CR-020 — Merge Polling Loops into Single Sequential setInterval (CB-Flood Prevention)
+**File:** `integration/src/scheduler/scheduler.js`  
+**Type:** Bug Fix — Integration Resilience  
+**Triggered by:** BUG-012 (concurrent polling causing intermittent CB trips and delayed sync)
+
+**Problem:**  
+`ORDER_PUSH polling` dan `VoucherPoll` berjalan sebagai dua `setInterval` terpisah dengan interval dan start time yang sama. Keduanya selalu fire bersamaan (T=0, T=60, T=120...) dan Node.js event loop memungkinkan mereka berjalan *concurrent* melalui `await` suspension points. Di T=60, retry queue (30s) juga ikut fire, menghasilkan 3 polling loops Odoo concurrent setiap menit.
+
+**Before:**
+```js
+// Fires at T=0, 60, 120... — concurrent with VoucherPoll
+setInterval(async () => {
+  for (const row of orderRows) await orderPush.pushOrder(row.transaction_id);
+}, POLLING_INTERVAL_SEC * 1000);
+
+// Fires at T=0, 60, 120... — concurrent with ORDER_PUSH
+setInterval(async () => {
+  for (const row of voucherRows) await voucherSvc.pushPaymentVoucher(row.transaction_id);
+}, POLLING_INTERVAL_SEC * 1000);
+```
+
+**After:**
+```js
+let _polling = false;
+setInterval(async () => {
+  if (_polling) { logger.warn('Polling: previous cycle still running — skipping tick'); return; }
+  _polling = true;
+  try {
+    // Phase 1: ORDER_PUSH (runs to completion before Phase 2 starts)
+    for (const row of orderResult.rows)
+      await orderPush.pushOrder(row.transaction_id).catch(...);
+
+    // Phase 2: VoucherPoll (runs only after Phase 1 completes)
+    for (const row of voucherResult.rows)
+      await voucherSvc.pushPaymentVoucher(row.transaction_id).catch(...);
+  } finally {
+    _polling = false;
+  }
+}, POLLING_INTERVAL_SEC * 1000);
+```
+
+Also added `_retrying` guard to the retry queue processor:
+```js
+let _retrying = false;
+setInterval(async () => {
+  if (_retrying) return;
+  _retrying = true;
+  try { await retryQueue.processDue(retryHandlers, deadLetterHandlers); }
+  finally { _retrying = false; }
+}, 30_000);
+```
+
+**Effect:**  
+- ORDER_PUSH and VoucherPoll can never make concurrent Odoo API calls — maximum Odoo calls per polling cycle is `10 × ~5 calls = 50`, well within the 100 req/min Odoo Online limit.
+- Slow cycles (reconfirming multiple draft SOs) skip the next tick instead of launching a second concurrent instance.
+- CB will no longer trip from polling-induced burst, so real-time webhook pushes are never blocked by polling backlog.
+
+---
+
 ## Database Changes
 
 | Type | Description | Applied |
@@ -310,7 +603,13 @@ TOTAL                 Rp 224.000
 | Data result | TXN-20260527-00003 → Odoo S00032 (AMAZING TOYS, confirmed, locked) | ✓ |
 | Data result | TXN-20260526-00001 → Odoo S00033 (AMAZING TOYS, confirmed, locked) | ✓ |
 
-No schema migrations required.
+| Schema migration | `009_payment_voucher_xref.sql` — tambah kolom `odoo_invoice_id`, `odoo_payment_id`, `voucher_status`, `voucher_synced_at` + index ke tabel `integration_xref` | Yes — applied 2026-05-28 |
+| Data correction | 4 `integration_xref` entries migrated: `sync_metadata.manualConfirmRequired = true` → `confirmFailed = true` for TXN-20260519-00010, TXN-20260519-00013, TXN-20260520-00022, TXN-20260506-00007 | Yes — direct SQL 2026-05-29 |
+| Data result | TXN-20260520-00022 → SO confirmed, invoice INV-250 created & paid (payment id=47) | ✓ 2026-05-29 |
+| Data result | TXN-20260519-00013 → SO confirmed, invoice INV-251 created & paid (payment id=48) | ✓ 2026-05-29 |
+| Data result | TXN-20260519-00010 → SO confirmed, invoice INV-252 created & paid (payment id=49) | ✓ 2026-05-29 |
+| Data result | TXN-20260506-00007 → SO confirmed, invoice INV-253 created & paid (payment id=50) | ✓ 2026-05-29 |
+| Data result | TXN-20260504-00004, TXN-20260506-00005, TXN-20260506-00006 → `voucher_status = FAILED` (Odoo SO ids 62/83/84 not found — require manual re-sync) | ✓ 2026-05-29 |
 
 ---
 

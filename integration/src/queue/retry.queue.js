@@ -37,7 +37,7 @@ function enqueue(item) {
 
 function size() { return _queue.length; }
 
-async function processDue(handlers) {
+async function processDue(handlers, onDeadLetter = {}) {
   const now = Date.now();
   const due = _queue.filter(i => i.nextRunAt <= now);
   // Remove all due items at once — O(n) single pass.
@@ -77,6 +77,9 @@ async function processDue(handlers) {
 
       if (nextAttempt > env.RETRY_MAX_ATTEMPTS) {
         await audit.pushDeadLetter(item.type, item.id, item.payload, err.message);
+        if (onDeadLetter[item.type]) {
+          await onDeadLetter[item.type](item.payload, err.message).catch(() => {});
+        }
       } else {
         const delay = BACKOFF_MS[item.attempt] || 300_000;
         const next  = { ...item, attempt: nextAttempt, nextRunAt: now + delay };
