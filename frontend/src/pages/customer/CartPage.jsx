@@ -4,6 +4,7 @@ import { useCart } from '../../hooks/useCart';
 import { createOrder } from '../../api/orders';
 import { formatRupiah } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -13,6 +14,8 @@ export default function CartPage() {
   const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const config  = usePublicConfig();
+  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   async function handleCheckout() {
     setError('');
@@ -103,7 +106,7 @@ export default function CartPage() {
                   )}
                 </div>
                 <span className="text-sm font-semibold text-blue-700">
-                  {formatRupiah(item.price * item.quantity)}
+                  {formatRupiah(Math.round(item.price * item.quantity * (1 + ppnRate / 100)))}
                 </span>
               </div>
             </div>
@@ -120,7 +123,7 @@ export default function CartPage() {
         )}
         <div className="flex items-center justify-between mb-3">
           <span className="text-gray-600">{t('cart.total')}</span>
-          <span className="text-xl font-bold text-blue-700">{formatRupiah(totalAmount)}</span>
+          <span className="text-xl font-bold text-blue-700">{formatRupiah(Math.round(totalAmount * (1 + ppnRate / 100)))}</span>
         </div>
         <p className="text-xs text-gray-400 mb-3">
           {t('cart.pendingNote')}

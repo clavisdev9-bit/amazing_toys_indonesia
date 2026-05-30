@@ -296,6 +296,37 @@ Transaction `TXN-20260528-00014` appeared "not integrated" to Odoo. The transact
 
 ---
 
+## BUG-011a — `/pesanan/:transactionId` Masih Tampilkan Harga Pre-Tax
+
+**Symptom:**  
+Halaman order tracking (`/pesanan/TXN-xxx`) menampilkan harga item dan subtotal edit modal masih **pre-tax** (base price × quantity), tidak konsisten dengan `/katalog`, `/keranjang`, dan receipt yang sudah tax-inclusive sejak CR-022 dan BUG-008.
+
+**Root Cause:**  
+CR-022 mencakup `ProductCard.jsx`, `ProductBottomSheet.jsx`, `CartPage.jsx` — tetapi `OrderTrackingPage.jsx` terlewat. BUG-008 memperbaiki `ReceiptPickupPage.jsx` (path `/pesanan/:id/receipt`), tetapi halaman parent `/pesanan/:id` sendiri belum disentuh.
+
+**Resolution:**  
+Display-only fix pada `OrderTrackingPage.jsx`:
+1. Tambah import `usePublicConfig` dari `../../hooks/useAppLogo`
+2. Tambah `const ppnRate = parseFloat(config?.ppn_rate) || 0;`
+3. Harga item: `formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))`
+4. Subtotal edit modal: `formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))`
+
+`order.total_amount` di header tidak diubah — sudah include tax sejak tersimpan di DB.
+
+**Files Changed:**  
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+**Prevention:**  
+Perubahan harga tampilan harus diterapkan ke **semua** jalur rendering customer:
+1. `ProductCard.jsx` — kartu produk katalog ✓ (CR-022)
+2. `ProductBottomSheet.jsx` — detail produk popup ✓ (CR-022)
+3. `CartPage.jsx` — keranjang belanja ✓ (CR-022)
+4. `OrderTrackingPage.jsx` — halaman tracking order ✓ (CR-023a / BUG-011a)
+5. `ReceiptPickupPage.jsx` — receipt digital ✓ (BUG-008)
+6. `ThermalReceipt.jsx` — print modal kasir ✓ (CR-014)
+
+---
+
 ## BUG-011 — VoucherPoll CB-Flood Blocks New Transactions (TXN-20260528-00041 et al.)
 
 **Symptom:**  
@@ -420,6 +451,56 @@ Also added `_retrying` guard to the retry queue processor to prevent two retry c
 - `_polling` guard ensures a slow cycle (e.g., reconfirming 5 draft SOs) does not launch a second instance before finishing.
 - `_retrying` guard prevents retry queue overlap under slow Odoo responses.
 - Maximum Odoo API calls per minute is now bounded: `(LIMIT_5 × ~5_calls_per_txn) × 2 = 50 calls/60s` — well within Odoo Online's ~100 req/min limit.
+
+---
+
+## BUG-013 — "Access denied. Required role: CUSTOMER" saat Kasir klik Bayar di POS Langsung
+
+**Date:** 2026-05-30  
+**Related CR:** CR-023
+
+**Symptom:**  
+Setelah memilih produk di halaman `/cashier/pos` dan menekan tombol `💳 Bayar`, muncul error:
+```
+Access denied. Required role: CUSTOMER.
+```
+Pesanan tidak berhasil dibuat.
+
+**Root Cause:**  
+`CashierPOSPage.jsx` menggunakan `createOrder()` dari `frontend/src/api/orders.js`, yang memanggil `POST /api/v1/orders`. Endpoint ini dikunci dengan `authorize('CUSTOMER')` di backend dan menggunakan `req.user.customerId` — field yang tidak ada pada JWT token kasir (kasir hanya punya `userId`, bukan `customerId`).
+
+```js
+// orders.router.js — endpoint yang salah dipanggil
+router.post('/',
+  authenticate, authorize('CUSTOMER'),   // ← kasir ditolak di sini
+  ...
+  async (req, res, next) => {
+    const data = await ordersSvc.createOrder(req.user.customerId, ...);  // ← undefined untuk kasir
+  }
+);
+```
+
+**Fix:**
+
+| Layer | Perubahan |
+|---|---|
+| `backend/orders.service.js` | Tambah `createOrderByCashier(cashierId, items)` — menggunakan Walk-in Customer (`phone: 0000000000`, lazy-create) agar FK `customer_id` terpenuhi tanpa schema change |
+| `backend/cashier.router.js` | Tambah `POST /cashier/orders` dengan `authorize('CASHIER', 'LEADER')` yang memanggil `createOrderByCashier` |
+| `frontend/api/cashier.js` | Tambah `createCashierOrder(items)` → hit `/cashier/orders` (bukan `/orders`) |
+| `frontend/CashierPOSPage.jsx` | Ganti import `createOrder` dari `api/orders` → `createCashierOrder` dari `api/cashier` |
+
+**Walk-in Customer:**  
+Karena tabel `transactions` memiliki FK `customer_id NOT NULL` yang merujuk ke tabel `customers`, cashier-created order tetap membutuhkan `customer_id` yang valid. Solusi: reservasi satu record customer khusus dengan `phone_number = '0000000000'` dan `full_name = 'Walk-in Customer'`. Record ini dibuat otomatis pertama kali dibutuhkan (lazy-create) — tidak perlu migrasi DB manual.
+
+**Files Changed:**
+- `backend/src/modules/orders/orders.service.js`
+- `backend/src/modules/cashier/cashier.router.js`
+- `frontend/src/api/cashier.js`
+- `frontend/src/pages/cashier/CashierPOSPage.jsx`
+
+**Recurrence Prevention:**
+- Endpoint kasir selalu berada di `/cashier/*` dengan guard `authorize('CASHIER', 'LEADER')` — tidak pernah berbagi endpoint dengan customer
+- `createOrderByCashier` dan `createOrder` (customer) adalah fungsi terpisah; perubahan pada satu tidak mempengaruhi yang lain
 
 ---
 

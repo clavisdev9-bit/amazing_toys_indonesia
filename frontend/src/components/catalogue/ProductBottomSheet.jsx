@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
 import { useLang } from '../../context/LangContext';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 
 function formatPrice(price) {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price ?? 0);
@@ -9,6 +10,8 @@ function formatPrice(price) {
 export default function ProductBottomSheet({ product, onClose }) {
   const { t } = useLang();
   const [visible, setVisible] = useState(false);
+  const config  = usePublicConfig();
+  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true));
@@ -65,7 +68,7 @@ export default function ProductBottomSheet({ product, onClose }) {
             </span>
           </div>
 
-          <p className="text-sm text-gray-400 mb-4">{formatPrice(product.price)}</p>
+          <p className="text-sm text-gray-400 mb-4">{formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}</p>
 
           <p className="text-xs font-medium text-gray-500 mb-2">
             Kategori {product.category} · Available at

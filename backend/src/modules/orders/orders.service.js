@@ -294,4 +294,172 @@ async function updateItemQuantity(transactionId, customerId, productId, newQty) 
   });
 }
 
-module.exports = { createOrder, getTransaction, cancelOrder, getCustomerOrders, updateItemQuantity };
+/**
+ * Create a walk-in order on behalf of a cashier.
+ * Uses a reserved walk-in customer so the transactions FK is satisfied.
+ */
+async function createOrderByCashier(cashierId, items) {
+  if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
+
+  return withTransaction(async (client) => {
+    // Resolve or lazily-create the shared walk-in customer record
+    const WALKIN_PHONE = '0000000000';
+    let walkinRes = await client.query(
+      `SELECT customer_id FROM customers WHERE phone_number = $1`,
+      [WALKIN_PHONE]
+    );
+    if (walkinRes.rows.length === 0) {
+      walkinRes = await client.query(
+        `INSERT INTO customers (full_name, phone_number, email, gender)
+         VALUES ('Walk-in Customer', $1, NULL, NULL)
+         RETURNING customer_id`,
+        [WALKIN_PHONE]
+      );
+    }
+    const customerId = walkinRes.rows[0].customer_id;
+
+    // 1. Load & lock products
+    const productIds = items.map(i => i.product_id);
+    const productRows = await client.query(
+      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status
+       FROM products WHERE product_id = ANY($1) AND is_active = TRUE FOR UPDATE`,
+      [productIds]
+    );
+    if (productRows.rows.length !== productIds.length) {
+      throw new AppError('Satu atau lebih produk tidak ditemukan.');
+    }
+    const productMap = Object.fromEntries(productRows.rows.map(p => [p.product_id, p]));
+
+    // 2. Validate stock
+    for (const item of items) {
+      const p = productMap[item.product_id];
+      if (p.stock_status === 'OUT_OF_STOCK' || p.stock_quantity < item.quantity) {
+        throw new AppError(`Produk "${p.product_name}" tidak tersedia dalam jumlah yang diminta.`);
+      }
+    }
+
+    // 3. Calculate totals
+    const taxCfg         = await _getTaxSettings();
+    const TAX_RATE       = taxCfg.active ? taxCfg.rate : 0;
+    const subtotalAmount = items.reduce((sum, item) => sum + productMap[item.product_id].price * item.quantity, 0);
+    const taxAmount      = Math.round(subtotalAmount * TAX_RATE / 100);
+    const totalAmount    = subtotalAmount + taxAmount;
+
+    // 4. Generate IDs
+    const transactionId = await generateTxnId();
+    const expiresAt = new Date(Date.now() + PENDING_TIMEOUT_MINUTES * 60 * 1000);
+    const qrPayload = await generateTransactionQR(transactionId);
+
+    // 5. Insert transaction with cashier_id pre-filled
+    await client.query(
+      `INSERT INTO transactions
+         (transaction_id, customer_id, cashier_id, status, subtotal_amount, tax_rate, tax_amount, total_amount, qr_payload, expires_at)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9)`,
+      [transactionId, customerId, cashierId, subtotalAmount, TAX_RATE, taxAmount, totalAmount, qrPayload, expiresAt]
+    );
+
+    // 6. Insert items & decrement stock
+    for (const item of items) {
+      const p = productMap[item.product_id];
+      await client.query(
+        `INSERT INTO transaction_items (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [transactionId, item.product_id, p.tenant_id, item.quantity, p.price, p.price * item.quantity]
+      );
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+        [item.quantity, item.product_id]
+      );
+    }
+
+    await writeAuditLog({
+      action: 'TXN_CREATED', actorId: cashierId, actorRole: 'CASHIER',
+      entityType: 'TRANSACTION', entityId: transactionId,
+      newValue: { cashierId, customerId, totalAmount, items: items.length },
+    });
+
+    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, expiresAt, qrPayload, status: 'PENDING' };
+  });
+}
+
+/**
+ * Cashier adds (or increments) an item on an existing PENDING transaction.
+ */
+async function addItemToTransaction(transactionId, cashierId, productId, quantity) {
+  return withTransaction(async (client) => {
+    // Lock transaction
+    const txResult = await client.query(
+      `SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId]
+    );
+    const txn = txResult.rows[0];
+    if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
+    if (txn.status !== 'PENDING') throw new AppError('Hanya transaksi PENDING yang dapat diubah.');
+
+    // Lock product
+    const productResult = await client.query(
+      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status
+       FROM products WHERE product_id = $1 AND is_active = TRUE FOR UPDATE`,
+      [productId]
+    );
+    const product = productResult.rows[0];
+    if (!product) throw new AppError('Produk tidak ditemukan.', 404);
+    if (product.stock_status === 'OUT_OF_STOCK' || product.stock_quantity < quantity) {
+      throw new AppError(`Stok "${product.product_name}" tidak mencukupi.`);
+    }
+
+    // Upsert item
+    const existing = await client.query(
+      `SELECT quantity FROM transaction_items WHERE transaction_id = $1 AND product_id = $2`,
+      [transactionId, productId]
+    );
+    if (existing.rows.length > 0) {
+      const newQty = existing.rows[0].quantity + quantity;
+      await client.query(
+        `UPDATE transaction_items SET quantity = $1, subtotal = $2 WHERE transaction_id = $3 AND product_id = $4`,
+        [newQty, product.price * newQty, transactionId, productId]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO transaction_items (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [transactionId, productId, product.tenant_id, quantity, product.price, product.price * quantity]
+      );
+    }
+
+    // Decrement stock
+    await client.query(
+      `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+      [quantity, productId]
+    );
+
+    // Recalculate totals
+    const totalResult = await client.query(
+      `SELECT SUM(subtotal) AS subtotal, t.tax_rate
+       FROM transaction_items ti
+       JOIN transactions t ON t.transaction_id = ti.transaction_id
+       WHERE ti.transaction_id = $1
+       GROUP BY t.tax_rate`,
+      [transactionId]
+    );
+    const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
+    const taxRate      = parseFloat(totalResult.rows[0].tax_rate ?? 12);
+    const newTaxAmount = Math.round(newSubtotal * taxRate / 100);
+    const newTotal     = newSubtotal + newTaxAmount;
+
+    await client.query(
+      `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3 WHERE transaction_id = $4`,
+      [newSubtotal, newTaxAmount, newTotal, transactionId]
+    );
+
+    await writeAuditLog({
+      action: 'TXN_ITEM_ADDED', actorId: cashierId, actorRole: 'CASHIER',
+      entityType: 'TRANSACTION', entityId: transactionId,
+      newValue: { productId, quantity, total_amount: newTotal },
+    });
+
+    return { transactionId, total_amount: newTotal };
+  });
+}
+
+module.exports = { createOrder, createOrderByCashier, addItemToTransaction, getTransaction, cancelOrder, getCustomerOrders, updateItemQuantity };

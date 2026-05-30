@@ -464,7 +464,639 @@ Diakses via `/admin` → sub-menu **Konfigurasi:**
 
 ---
 
-## 12. Deployment Checklist
+## 12. Workflow per Aktor
+
+Bagian ini mendokumentasikan alur kerja lengkap untuk setiap aktor dalam sistem, dari login hingga selesai. Semua alur mengasumsikan sistem berjalan normal (no maintenance mode).
+
+---
+
+### 12.1 CUSTOMER — Pengunjung Event
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: CUSTOMER                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  [ Buka App / Scan QR Event ]
+              │
+              ▼
+    ┌──────────────────┐    Sudah punya akun?
+    │  /masuk          │◀────────────── YA ──────────────┐
+    │  Login by Phone  │                                  │
+    └────────┬─────────┘                                  │
+             │                                            │
+    ┌────────▼─────────┐                                  │
+    │  /daftar         │                                  │
+    │  Register        │  ── Nama + No. HP ──────────────▶│
+    │  (baru pertama)  │      (webhook → Odoo partner)    │
+    └────────┬─────────┘                                  │
+             │                                            │
+             ▼                                            │
+    ┌──────────────────────────────────────────────────────┘
+    │
+    ▼
+  [ /katalog — Browse Produk ]
+       │
+       │  Filter: Kategori / Tenant / Stok / Search
+       │
+       ├──▶ GET /api/v1/products?category=&tenant_id=&in_stock_only=true
+       │
+       ▼
+  ┌────────────────────┐
+  │ Lihat Produk Detail │
+  │ /katalog/:id        │
+  └────────┬───────────┘
+           │
+           ├── Tambah ke Wishlist ──▶ POST /api/v1/wishlist/:productId
+           │
+           └── Tambah ke Keranjang (CartContext — local state)
+                      │
+                      ▼
+           ┌─────────────────────┐
+           │ /keranjang — Review  │
+           │ Qty / Hapus item     │
+           └────────┬────────────┘
+                    │
+                    ▼
+           ┌─────────────────────────────────────────┐
+           │  POST /api/v1/orders                     │
+           │  • Validasi stok real-time               │
+           │  • Deduct stock per item                 │
+           │  • Buat TXN status = PENDING             │
+           │  • Generate QR Code (TXN ID)             │
+           └────────────────┬────────────────────────┘
+                            │
+                            ▼
+           ┌─────────────────────────────────────────┐
+           │  /checkout/sukses                        │
+           │  Tampilkan QR Code TXN                   │
+           │  ← Instruksi: tunjukkan ke kasir →       │
+           └────────────────┬────────────────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │     Menunggu Kasir         │  (PENDING state)
+              │     Scan & Bayar           │
+              └─────────────┬─────────────┘
+                            │
+                            │  WebSocket event: ORDER_PAID
+                            ▼
+           ┌─────────────────────────────────────────┐
+           │  /pesanan/:txnId — Order Tracking        │
+           │  Status per item: READY → DONE           │
+           │                                          │
+           │  ┌──────────┐  ┌──────────┐  ┌────────┐ │
+           │  │ Item A   │  │ Item B   │  │Item C  │ │
+           │  │ READY ✓  │  │ DONE  ✓✓ │  │READY ✓ │ │
+           │  └──────────┘  └──────────┘  └────────┘ │
+           └────────────────┬────────────────────────┘
+                            │
+                            ▼
+           ┌─────────────────────────────────────────┐
+           │  /pesanan/:txnId/receipt                 │
+           │  Digital Receipt (inklusif pajak)        │
+           │  • Item prices tax-inclusive             │
+           │  • Total amount                          │
+           │  • QR tracking                           │
+           └─────────────────────────────────────────┘
+```
+
+**Titik keputusan penting:**
+- Jika stok habis saat checkout → error `produk tidak tersedia`, item diremove dari cart
+- Jika TXN PENDING > timeout → auto-EXPIRED, stok dikembalikan
+- Customer bisa cancel TXN PENDING sendiri via `DELETE /orders/:txnId`
+
+---
+
+### 12.2 CASHIER — Kasir
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: CASHIER                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  [ /staff/masuk — Staff Login ]
+              │
+              ▼
+  [ /cashier — Dashboard Kasir ]
+              │
+              │  Customer datang dengan QR Code
+              ▼
+  ┌────────────────────────────────────────────────────┐
+  │  Scan / Input TXN ID                              │
+  │  GET /api/v1/payments/lookup/:transactionId        │
+  │                                                    │
+  │  Response:                                         │
+  │  • Nama customer                                   │
+  │  • Daftar item + harga                             │
+  │  • Total (inklusif PPN)                            │
+  └───────────────────┬────────────────────────────────┘
+                      │
+              ┌───────▼────────┐
+              │ Status = PAID? │
+              └───────┬────────┘
+                   YA │               TIDAK
+                      │                 │
+              ┌───────▼───────┐   ┌─────▼──────────────────────┐
+              │ Tampilkan     │   │ Pilih Metode Pembayaran     │
+              │ "Sudah Dibayar│   │                             │
+              │  sebelumnya"  │   │  ┌─────┐ ┌─────┐ ┌──────┐  │
+              └───────────────┘   │  │CASH │ │QRIS │ │ EDC  │  │
+                                  │  └──┬──┘ └──┬──┘ └──┬───┘  │
+                                  └─────┼────────┼────────┼──────┘
+                                        │        │        │
+                  ┌─────────────────────┘        │        └────────────────────┐
+                  │                              │                              │
+                  ▼                              ▼                              ▼
+         ┌──────────────┐            ┌───────────────────┐          ┌──────────────────┐
+         │ Input nominal │            │ Generate QR BCA   │          │ Input nominal EDC│
+         │ cash diterima │            │ POST /bca/        │          │ / EDC no. ref    │
+         │               │            │ generate-qr       │          │                  │
+         │ Hitung kembal.│            │                   │          └────────┬─────────┘
+         └──────┬────────┘            │  [Customer scan]  │                   │
+                │                    │                   │                   │
+                │                    │  BCA webhook ──▶  │                   │
+                │                    │  broadcastWS ──▶  │                   │
+                │                    │  Customer notif   │                   │
+                │                    └─────────┬─────────┘                   │
+                │                              │                              │
+                └──────────────────────────────┼──────────────────────────────┘
+                                               │
+                                               ▼
+                              ┌────────────────────────────────────┐
+                              │  POST /api/v1/payments/process     │
+                              │  • TXN status → PAID               │
+                              │  • Simpan payment_method, ref       │
+                              │  • Simpan cash_received, change     │
+                              │  • Broadcast WebSocket: ORDER_PAID  │
+                              │  • Fire webhook → integration svc   │
+                              └────────────────┬───────────────────┘
+                                               │
+                              ┌────────────────▼───────────────────┐
+                              │  /cashier/bayar/:txnId — Sukses    │
+                              │                                     │
+                              │  Pilihan output:                    │
+                              │  ┌─────────────────────────────┐   │
+                              │  │ Print Thermal (ESC/POS)      │   │
+                              │  │ POST /api/v1/print/receipt   │   │
+                              │  └─────────────────────────────┘   │
+                              │  ┌─────────────────────────────┐   │
+                              │  │ Kirim Email                  │   │
+                              │  │ POST /api/v1/receipts/       │   │
+                              │  │        send-email            │   │
+                              │  └─────────────────────────────┘   │
+                              └────────────────────────────────────┘
+
+  ── RECAP HARIAN ─────────────────────────────────────────────────────────
+
+  [ /cashier/rekap ]
+       │
+       ├──▶ GET /api/v1/cashier/recap
+       │    • Total transaksi hari ini
+       │    • Breakdown per payment method (CASH / QRIS / EDC / TRANSFER)
+       │    • Grand total
+       │
+       └──▶ GET /api/v1/cashier/transactions
+            • Daftar semua TXN yang ditangani hari ini
+```
+
+---
+
+### 12.3 TENANT — Vendor Booth
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: TENANT                                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  [ /staff/masuk — Staff Login (role: TENANT) ]
+              │
+              ▼
+  [ /tenant — Dashboard Pesanan Masuk ]
+              │
+              │  Real-time via WebSocket (channel: tenant:{tenantId})
+              │
+  ┌───────────▼──────────────────────────────────────────────────────┐
+  │  GET /api/v1/tenant-orders                                        │
+  │                                                                   │
+  │  Pesanan PAID yang mengandung produk milik tenant ini:            │
+  │                                                                   │
+  │  ┌──────────────────────────────────────────────────────────┐    │
+  │  │ TXN-20260529-00042  │ Yasmin S.  │ 09:31  │ Rp 212.000  │    │
+  │  │  ├ [READY] Bubble Kit XL  × 1                           │    │
+  │  │  └ [READY] Sand Art Set   × 2                           │    │
+  │  ├──────────────────────────────────────────────────────────┤    │
+  │  │ TXN-20260529-00041  │ Budi R.    │ 09:15  │ Rp 106.000  │    │
+  │  │  └ [DONE ✓] Action Figure × 1                           │    │
+  │  └──────────────────────────────────────────────────────────┘    │
+  └───────────────────────────┬──────────────────────────────────────┘
+                              │
+                              │  Customer datang ambil pesanan
+                              ▼
+               ┌──────────────────────────────────┐
+               │  Tenant siapkan & serahkan item   │
+               └─────────────┬────────────────────┘
+                             │
+                             ▼
+               ┌──────────────────────────────────────────┐
+               │  POST /api/v1/tenant-orders/handover      │
+               │  { transactionId, productId }             │
+               │  → pickup_status item: READY → DONE       │
+               │  → Broadcast WS ke customer: PICKUP_DONE  │
+               └──────────────────────────────────────────┘
+
+  ── LAPORAN & STOK ───────────────────────────────────────────────────────
+
+  [ /tenant/laporan-harian ]
+       ├──▶ GET /api/v1/tenant-reports/harian?start=&end=
+       │    • Total penjualan per hari dalam range
+       │    • Revenue tenant (setelah revenue share %)
+       │
+  [ /tenant/stok ]
+       └──▶ GET /api/v1/tenant-reports/stok
+            • Live stock status semua produk milik tenant
+            • AVAILABLE / LOW_STOCK / OUT_OF_STOCK
+```
+
+---
+
+### 12.4 LEADER — Pemimpin / Supervisor
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: LEADER                                                           │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  [ /staff/masuk — Staff Login (role: LEADER) ]
+              │
+              ▼
+  [ /leader — Dashboard KPI ]
+       │
+       ├──▶ GET /api/v1/leader/dashboard
+       │    ┌───────────────────────────────────────────────────────┐
+       │    │  KPI Cards:                                            │
+       │    │  • Total Revenue Hari Ini     Rp 12.450.000           │
+       │    │  • Jumlah Transaksi PAID      47                      │
+       │    │  • Total Pengunjung            312                     │
+       │    │  • Produk Top Seller           Bubble Kit XL           │
+       │    └───────────────────────────────────────────────────────┘
+       │
+       ├── [ /leader/penjualan — Sales Report ]
+       │    ├──▶ GET /api/v1/leader/sales?start_date=&end_date=&tenant_id=
+       │    │    • Revenue breakdown per tenant
+       │    │    • Revenue breakdown per produk
+       │    │    • Revenue breakdown per payment method
+       │    │    • Export data (date range filter)
+       │    │
+       │    └──▶ GET /api/v1/leader/visitors
+       │         • Tren pengunjung per jam/hari
+       │         • New vs returning customer
+       │
+       ├── [ /leader/retur — Return Management ]
+       │    │
+       │    │  Request return masuk dari Kasir:
+       │    │  POST /api/v1/leader/returns
+       │    │    { transactionId, productId, reason }
+       │    │
+       │    ├──▶ GET /api/v1/leader/returns  (list semua pending)
+       │    │
+       │    └──▶ PATCH /api/v1/leader/returns/:requestId
+       │         { status: 'APPROVED' | 'REJECTED' }
+       │         • APPROVED → stok dikembalikan
+       │
+       └── [ Cashier Functions — accessible oleh LEADER ]
+            └──▶ Sama seperti alur CASHIER section 12.2
+```
+
+---
+
+### 12.5 ADMIN — Administrator Sistem
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: ADMIN                                                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  [ /staff/masuk — Staff Login (role: ADMIN) ]
+              │
+              ▼
+  [ /admin — Admin Panel ]
+              │
+  ┌───────────┴──────────────────────────────────────────────────────────┐
+  │                          ADMIN TABS                                   │
+  ├──────────────┬──────────────┬─────────────┬──────────────┬───────────┤
+  │  Master Data │ Konfigurasi  │   Booth      │    Users     │ Integrasi │
+  └──────┬───────┴──────┬───────┴──────┬──────┴──────┬───────┴─────┬─────┘
+         │              │              │             │              │
+         ▼              ▼              ▼             ▼              ▼
+
+  ┌──────────────┐  ┌────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐
+  │ MASTER DATA  │  │  KONFIG    │  │  BOOTH   │  │  USERS   │  │  INTEGRASI           │
+  │              │  │            │  │          │  │          │  │                      │
+  │ • List/CRUD  │  │ Event name │  │ CRUD     │  │ CRUD     │  │ ┌──────────────────┐ │
+  │   produk     │  │ Venue      │  │ Tenant   │  │ Staff    │  │ │ Odoo Config Tab  │ │
+  │ • Set harga  │  │ Tanggal    │  │ Booth    │  │ accounts │  │ │ • Verify koneksi │ │
+  │ • Set stok   │  │ Logo       │  │          │  │          │  │ │ • Sync Produk    │ │
+  │ • Bulk upload│  │ Warna      │  │ Revenue  │  │ Reset    │  │ │ • Sync Stok      │ │
+  │   via CSV    │  │            │  │ share %  │  │ password │  │ │ • Payment        │ │
+  │ • Sync ke   │  │ Printer IP │  │          │  │          │  │ │   Journals       │ │
+  │   Odoo      │  │            │  │          │  │          │  │ └──────────────────┘ │
+  │              │  │ Tax/PPN    │  │          │  │          │  │                      │
+  │ • Set Odoo  │  │ config     │  │          │  │          │  │ ┌──────────────────┐ │
+  │   category  │  │            │  │          │  │          │  │ │ Sync Log Tab     │ │
+  │              │  │ BCA QRIS   │  │          │  │          │  │ │ • Audit trail    │ │
+  │              │  │ config     │  │          │  │          │  │ │ • Failed txns    │ │
+  │              │  │            │  │          │  │          │  │ │ • Resync button  │ │
+  └──────────────┘  └────────────┘  └──────────┘  └──────────┘  └──────────────────────┘
+
+  ── ALUR BULK PRODUCT UPLOAD ─────────────────────────────────────────────
+
+  Admin download template CSV
+          │
+          ▼
+  Isi data produk (nama, harga, stok, kategori, tenant_id, barcode)
+          │
+          ▼
+  POST /api/v1/admin/products/bulk-upload (multipart/form-data)
+          │
+          ▼
+  Backend validasi → INSERT/UPDATE batch → response: {created, updated, failed}
+          │
+          ▼
+  POST /api/v1/admin/products/sync-odoo  (force=true)
+  → Integration service: push.product.sync.js → create/update Odoo product.template
+
+  ── ALUR MANUAL SYNC ODOO ────────────────────────────────────────────────
+
+  Admin klik "Sync ke Odoo" (MasterDataTab)
+          │
+          ├──▶ POST /api/v1/admin/products/sync-odoo
+          │    → pull produk dari Odoo → update SOS catalog
+          │
+          └──▶ POST /api/v1/admin/stock-sync
+               → pull stock.quant dari Odoo → update SOS stock_quantity
+
+  Admin klik "Resync Transaksi" (IntegrationTab)
+          │
+          └──▶ POST /api/v1/admin/transactions/resync
+               → trigger polling untuk semua TXN PAID yang belum di-xref
+
+  ── AUDIT LOG ────────────────────────────────────────────────────────────
+
+  GET /api/v1/admin/audit-log
+  • Semua aksi sistem dicatat: siapa, kapan, apa, entitas apa
+  • Filter: date range, actor, action type
+```
+
+---
+
+### 12.6 SYSTEM — Integration Service (Odoo Sync)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  FLOW: SYSTEM (Integration Service — sos_integration)                  │
+└─────────────────────────────────────────────────────────────────────────┘
+
+  ══ A. SCHEDULED JOBS (setiap boot) ══════════════════════════════════════
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Product Sync (Odoo → SOS)   interval: PRODUCT_SYNC_INTERVAL_MIN    │
+  │                                                                      │
+  │  Odoo: product.product + product.template                            │
+  │    ↓  filter: active=True, sale_ok=True, has barcode                │
+  │  SOS: products table                                                 │
+  │    ↓  cek integration_xref                                          │
+  │    ├── Ada xref → UPDATE (nama, harga) — TIDAK overwrite stok        │
+  │    └── Tidak ada xref → INSERT produk baru + tambah xref            │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Stock Sync (Odoo → SOS)     interval: STOCK_SYNC_INTERVAL_MIN      │
+  │                                                                      │
+  │  Odoo: stock.quant                                                   │
+  │    ↓  filter: type='product' (storable only), ACTIVE xref           │
+  │  SOS: products.stock_quantity                                        │
+  │    ↓  delta check → no change = SKIPPED                             │
+  │    └── update + catat ke stock_sync_log                             │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  Expiry Sweep                interval: SWEEP_INTERVAL_MIN           │
+  │                                                                      │
+  │  SOS: transactions WHERE status=PENDING AND past timeout             │
+  │    ↓                                                                │
+  │  Odoo: cancel draft sale.order (jika sudah dibuat)                  │
+  │    ↓                                                                │
+  │  SOS: TXN status → EXPIRED, stock dikembalikan                      │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  ══ B. WEBHOOK HANDLERS (event-driven) ═══════════════════════════════════
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  WEBHOOK: customer-registered                                          │
+  │                                                                        │
+  │  Backend ──POST /webhook/customer-registered──▶ Integration           │
+  │  Payload: { customer_id, full_name, phone_number, email }             │
+  │                      │                                                 │
+  │              customer.sync.js                                          │
+  │                      │                                                 │
+  │              Cari res.partner di Odoo (3 strategi):                   │
+  │              1. by ref = customer_id                                   │
+  │              2. by phone                                               │
+  │              3. by email                                               │
+  │                      │                                                 │
+  │              ┌───────▼───────┐                                         │
+  │              │ Ditemukan?    │                                         │
+  │              └───┬───────┬───┘                                         │
+  │               YA │       │ TIDAK                                       │
+  │                  ▼       ▼                                             │
+  │              UPDATE   CREATE res.partner                               │
+  │              partner  + set property_stock_customer                    │
+  │                  │       │                                             │
+  │                  └───┬───┘                                             │
+  │                      ▼                                                 │
+  │              Catat ke integration_xref (entity_type='customer')       │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  WEBHOOK: order-paid  ← ALUR UTAMA                                     │
+  │                                                                        │
+  │  Backend ──POST /webhook/order-paid──▶ Integration                    │
+  │  Payload: { transactionId }                                            │
+  │                                                                        │
+  │  ─── PHASE 1: ORDER PUSH ────────────────────────────────────────────  │
+  │                                                                        │
+  │    order.push.js :: _doPushOrder(transactionId)                        │
+  │         │                                                              │
+  │    [1]  Cek circuit breaker Odoo → OPEN? → retry queue               │
+  │         │                                                              │
+  │    [2]  Cek inFlight guard (60s) → ada proses lain → skip            │
+  │         │                                                              │
+  │    [3]  Cek integration_xref → sudah ada odoo_id? → return success   │
+  │         │                                                              │
+  │    [4]  Mark xref inFlight = true                                     │
+  │         │                                                              │
+  │    [5]  Fetch TXN dari SOS: GET /api/v1/orders/:txnId                │
+  │         │                                                              │
+  │    [6]  Resolve Odoo partner (customer.sync → cari/buat res.partner) │
+  │         │                                                              │
+  │    [7]  Resolve Odoo product IDs per line item:                       │
+  │         │  a. via product_odoo_id (template → variant lookup)         │
+  │         │  b. via barcode                                              │
+  │         │  c. via nama ilike                                           │
+  │         │                                                              │
+  │    [8]  CREATE sale.order di Odoo (state = draft)                     │
+  │         │                                                              │
+  │    [9]  action_confirm → state = sale                                 │
+  │         │  ├── FAIL (route error) → apply fallback route → retry     │
+  │         │  └── SUCCESS → lanjut                                        │
+  │         │                                                              │
+  │   [10]  action_lock → locked = true                                   │
+  │         │                                                              │
+  │   [11]  Simpan odoo_id ke integration_xref (status=ACTIVE)           │
+  │         │                                                              │
+  │  ─── PHASE 2: PAYMENT VOUCHER ───────────────────────────────────────  │
+  │                                                                        │
+  │    payment-voucher.service.js :: _doPushVoucher(transactionId)         │
+  │         │                                                              │
+  │    [A]  Verify SO state = 'sale' atau 'done' di Odoo                  │
+  │         │  └── NOT FOUND → voucher_status = FAILED (terminal)         │
+  │         │                                                              │
+  │    [B]  Buat invoice via sale.advance.payment.inv wizard              │
+  │         │  └── account.move (type=out_invoice) terbentuk              │
+  │         │                                                              │
+  │    [C]  Post invoice → state: draft → posted                          │
+  │         │                                                              │
+  │    [D]  Register payment via account.payment.register wizard          │
+  │         │  • journal_id = mapping[payment_method] (CASH/QRIS/EDC)    │
+  │         │  • payment_date = paid_at                                    │
+  │         │  • communication = transactionId                             │
+  │         │                                                              │
+  │    [E]  Verify payment_state = 'paid' atau 'in_payment'              │
+  │         │                                                              │
+  │    [F]  Update integration_xref: voucher_status = PAID                │
+  │                                                                        │
+  │  Hasil akhir di Odoo:                                                  │
+  │  sale.order (origin: TXN-...)                                          │
+  │    └── state: sale, locked=true                                        │
+  │        └── account.move (INV/YYYY/NNN)                                 │
+  │              └── state: posted, payment_state: paid                    │
+  │                  └── account.payment (journal: sesuai metode bayar)   │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  WEBHOOK: order-cancelled                                              │
+  │                                                                        │
+  │  Backend ──POST /webhook/order-cancelled──▶ Integration               │
+  │                                                                        │
+  │  cancel.sync.js :: cancelOrder(transactionId)                          │
+  │       │                                                                │
+  │  Cari sale.order by origin = transactionId                            │
+  │       │                                                                │
+  │  ┌────▼────┐                                                           │
+  │  │state?   │                                                           │
+  │  └────┬────┘                                                           │
+  │  draft │        sale/done                                              │
+  │       ▼                  ▼                                             │
+  │  action_cancel     Log warning                                         │
+  │  (SO → cancelled)  (sudah confirmed,                                  │
+  │       │             tidak bisa cancel)                                │
+  │       ▼                                                                │
+  │  Hapus integration_xref                                               │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  ══ C. POLLING LOOP (unified — setiap POLLING_INTERVAL_SEC) ══════════════
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  _polling guard: skip jika cycle sebelumnya masih berjalan            │
+  │                                                                        │
+  │  PHASE 1 — ORDER_PUSH Fallback                                         │
+  │  ──────────────────────────────                                        │
+  │  SELECT transactions WHERE status=PAID                                 │
+  │    AND (odoo_id IS NULL                                               │
+  │         OR confirmFailed=true                                          │
+  │         OR manualConfirmRequired=true)                                 │
+  │  LIMIT 5 — sequential                                                  │
+  │                                                                        │
+  │  Setiap baris → orderPush.pushOrder(transactionId)                     │
+  │    → konfirmasi ulang SO atau buat baru                                │
+  │                                                                        │
+  │  PHASE 2 — VoucherPoll Fallback (setelah Phase 1 selesai)             │
+  │  ─────────────────────────────────────────────────────────             │
+  │  SELECT integration_xref WHERE:                                        │
+  │    odoo_id IS NOT NULL                                                 │
+  │    AND voucher_status NOT IN ('PAID', 'FAILED')                        │
+  │    AND confirmFailed IS NOT TRUE                                        │
+  │    AND manualConfirmRequired IS NOT TRUE                               │
+  │  LIMIT 5 — sequential                                                  │
+  │                                                                        │
+  │  Setiap baris → voucherSvc.pushPaymentVoucher(transactionId)           │
+  └────────────────────────────────────────────────────────────────────────┘
+
+  ══ D. RETRY QUEUE (setiap 30 detik) ═════════════════════════════════════
+
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  _retrying guard: skip jika cycle sebelumnya masih berjalan           │
+  │                                                                        │
+  │  retryQueue.processDue(handlers, deadLetterHandlers)                   │
+  │                                                                        │
+  │  Backoff schedule:                                                     │
+  │  • attempt 1 → immediate                                               │
+  │  • attempt 2 → +60s                                                    │
+  │  • attempt 3 → +300s                                                   │
+  │  • attempt 4+ → dead-letter:                                           │
+  │    - PAYMENT_VOUCHER → voucher_status = FAILED                         │
+  │    - ORDER_PUSH      → integration_dead_letter table                   │
+  │                                                                        │
+  │  Circuit Breaker Odoo:                                                 │
+  │  • threshold: 5 gagal berturut → OPEN                                 │
+  │  • reset: 2 menit → HALF-OPEN → probe → CLOSED                        │
+  │  • saat OPEN: semua enqueue ke retry queue (tidak drop)               │
+  └────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 12.7 Ringkasan Interaksi Antar Aktor
+
+```
+                         AMAZING TOYS SOS — ACTOR INTERACTION MAP
+
+  ┌────────────┐    browse/order     ┌───────────────┐    webhook      ┌──────────────────┐
+  │  CUSTOMER  │ ──────────────────▶ │               │ ──────────────▶ │                  │
+  │            │                     │   BACKEND     │                 │  INTEGRATION     │
+  │            │ ◀── WS: PAID ────── │   :3001       │ ◀── health ──── │  SERVICE :4000   │
+  │            │ ◀── WS: PICKUP ──── │               │                 │                  │
+  └────────────┘                     │               │                 └────────┬─────────┘
+                                     │               │                          │ JSON-RPC
+  ┌────────────┐    scan+pay         │               │                          ▼
+  │   CASHIER  │ ──────────────────▶ │               │                 ┌──────────────────┐
+  │            │ ◀── receipt ─────── │               │                 │   ODOO 18 ERP    │
+  └────────────┘                     │               │                 │ edu-student4     │
+                                     │               │                 │ .odoo.com        │
+  ┌────────────┐    view orders      │               │                 │                  │
+  │   TENANT   │ ──────────────────▶ │               │                 │ sale.order       │
+  │            │ ◀── WS: NEW_ORDER── │               │                 │ account.move     │
+  │            │    mark done        │               │                 │ res.partner      │
+  │            │ ──────────────────▶ │               │                 │ product.product  │
+  └────────────┘                     │               │                 │ stock.quant      │
+                                     │               │                 └──────────────────┘
+  ┌────────────┐    dashboard/retur  │               │                          ▲
+  │   LEADER   │ ──────────────────▶ │               │                          │ pull (scheduled)
+  └────────────┘                     │               │                          │
+                                     │               │ ◀────────────────────────┘
+  ┌────────────┐    config/sync      │               │   product + stock sync
+  │   ADMIN    │ ──────────────────▶ │               │
+  └────────────┘                     │               │
+                                     │               │
+                         ┌───────────┘               └────────────┐
+                         │         POSTGRESQL :5432               │
+                         │         amazing_toys_sos               │
+                         └───────────────────────────────────────┘
+```
+
+---
+
+## 13. Deployment Checklist
 
 ```
 □ Isi .env (DB_PASSWORD, JWT_SECRET, ODOO_*, SMTP_*, WEBHOOK_SECRET)

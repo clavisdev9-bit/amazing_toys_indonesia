@@ -588,6 +588,174 @@ setInterval(async () => {
 
 ---
 
+### CR-021 — Price Including Tax Field on Admin Product Form
+**Files:**
+- `frontend/src/pages/admin/tabs/MasterDataTab.jsx`
+
+**Type:** Feature — UI Enhancement  
+**Date:** 2026-05-29
+
+**Background:**  
+Admin tidak memiliki visibilitas harga final (inklusif PPN) saat input/edit produk. Mereka harus menghitung manual tiap kali, dan risiko salah input harga yang tidak sesuai dengan harga yang ditampilkan ke customer di receipt.
+
+**Changes:**
+
+1. **Import `getTaxConfig`** — ditambahkan ke import block dari `'../../../api/admin'`.
+
+2. **State `ppnRate`** — ditambahkan di `MasterDataTab`:
+   ```js
+   const [ppnRate, setPpnRate] = useState(0);
+   ```
+
+3. **Fetch on mount** — dipanggil bersama `getTenants` dan `getCategories` dalam `useEffect`:
+   ```js
+   getTaxConfig()
+     .then((r) => setPpnRate(parseFloat(r.data.data?.ppn_rate) || 0))
+     .catch(() => {}); // silent fallback: ppnRate = 0
+   ```
+
+4. **`FormFields` signature** — tambah prop `ppnRate`:
+   ```js
+   function FormFields({ ..., ppnRate }) { ... }
+   ```
+
+5. **Field "Harga Termasuk Pajak"** — disisipkan tepat di bawah grid Kategori + Harga, full-width:
+   ```jsx
+   <div className="flex flex-col gap-1">
+     <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+       Harga Termasuk Pajak
+       <span className="inline-flex items-center gap-1 text-xs font-normal text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">
+         <svg ...lock icon... />
+         PPN {ppnRate ?? 0}%
+       </span>
+     </label>
+     <div className="border border-gray-200 rounded-lg px-3 py-2 text-sm
+                     bg-gray-50 text-gray-500 cursor-not-allowed select-none">
+       {formatRupiah((parseFloat(form.price) || 0) * (1 + (parseFloat(ppnRate) || 0) / 100))}
+     </div>
+   </div>
+   ```
+
+6. **Prop passed** — `ppnRate={ppnRate}` ditambahkan ke kedua instansi `<FormFields>` (Create modal + Edit modal).
+
+**Behavior:**
+| Kondisi | Tampilan field |
+|---|---|
+| Harga = 295.000, PPN = 11% | `Rp 327.450` |
+| Harga = 0 atau kosong | `Rp 0` (no NaN) |
+| PPN = 0 atau API gagal | Nilai sama dengan Harga (× 1.0) |
+| Harga berubah (onChange) | Update real-time via React re-render |
+
+**Non-requirements (by design):**
+- Tidak ada kolom baru di database — computed display-only
+- Tidak ada perubahan backend
+- PPN rate selalu diambil live dari `/admin/tax-config` saat `MasterDataTab` mount — otomatis sync jika Admin ubah tarif PPN di tab Pajak & SPT
+
+---
+
+### CR-022 — Display Harga Termasuk Pajak di /katalog dan /keranjang
+**Files:**
+- `backend/src/app.js`
+- `frontend/src/components/catalogue/ProductCard.jsx`
+- `frontend/src/components/catalogue/ProductBottomSheet.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Type:** Feature — Display Change  
+**Date:** 2026-05-29
+
+**Background:**  
+Harga yang ditampilkan ke customer di halaman `/katalog` (kartu produk & bottom sheet detail) dan `/keranjang` masih menggunakan harga dasar (pre-tax). CR ini mengubah tampilan harga menjadi **Harga Termasuk Pajak** (`price × (1 + ppn_rate/100)`) agar konsisten dengan harga yang customer bayar di kasir dan tercantum di receipt.
+
+**Perubahan:**
+
+1. **`backend/src/app.js` — Expose `ppn_rate` di `/config/public`**  
+   Endpoint publik ini dapat diakses tanpa auth oleh semua halaman customer. Ditambahkan field `ppn_rate` yang dibaca dari `system_settings.tax_config` (sumber sama dengan `/admin/tax-config`):
+   ```js
+   const taxCfg = await adminSvc.getTaxConfig().catch(() => ({}));
+   res.json({ success: true, data: {
+     ...existing fields...,
+     ppn_rate: parseFloat(taxCfg.ppn_rate) || 0,  // ← NEW
+   }});
+   ```
+   Jika `getTaxConfig` gagal, `ppn_rate` fallback ke `0` (harga tidak berubah).
+
+2. **`ProductCard.jsx` — Harga di kartu produk katalog**  
+   Ditambahkan `usePublicConfig` hook (sudah ada, module-level cached — tidak ada extra network call):
+   ```jsx
+   const config  = usePublicConfig();
+   const ppnRate = parseFloat(config?.ppn_rate) || 0;
+   // ...
+   {formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}
+   ```
+
+3. **`ProductBottomSheet.jsx` — Harga di detail popup produk**  
+   Sama seperti ProductCard: tambah `usePublicConfig`, ganti display harga:
+   ```jsx
+   const ppnRate = parseFloat(config?.ppn_rate) || 0;
+   // ...
+   {formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}
+   ```
+
+4. **`CartPage.jsx` — Harga per item dan total di keranjang**  
+   ```jsx
+   const ppnRate = parseFloat(config?.ppn_rate) || 0;
+   // Per item:
+   {formatRupiah(Math.round(item.price * item.quantity * (1 + ppnRate / 100)))}
+   // Total:
+   {formatRupiah(Math.round(totalAmount * (1 + ppnRate / 100)))}
+   ```
+
+**Yang TIDAK berubah (by design):**
+- `CartContext` (`useCart`) — tidak disentuh; `items[].price` dan `totalAmount` tetap menyimpan harga dasar
+- `handleCheckout` di `CartPage` — logic checkout ke backend tidak berubah; payload order tidak berubah
+- `createOrder` API call — tidak berubah
+- Semua module lain (cashier, payment, receipt, admin, integration) — tidak disentuh
+- `ProductDetailPage` (`/product/:id`) — tidak diubah (di luar scope CR)
+
+**Sumber `ppn_rate`:**  
+`system_settings` table → key `tax_config` → field `ppn_rate`  
+Dikelola via: `/admin` → sub-menu **Pajak & SPT** → field **Tarif PPN (%)**
+
+**Caching:**  
+`usePublicConfig` menggunakan module-level cache (singleton per page load). Tiga komponen yang memanggil hook ini (ProductCard, ProductBottomSheet, CartPage) berbagi satu network request. Jika Admin mengubah tarif PPN, perubahan akan terlihat setelah page refresh customer.
+
+**Contoh Kalkulasi (ppn_rate = 12%):**
+
+| Base Price | Harga Tampil |
+|---|---|
+| Rp 295.000 | Rp 330.400 |
+| Rp 50.000 | Rp 56.000 |
+| Rp 1.000.000 | Rp 1.120.000 |
+
+---
+
+### CR-023a — Display Harga Termasuk Pajak di /pesanan/:transactionId
+**Files:**
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+**Type:** Feature — Display Change  
+**Date:** 2026-05-30
+
+**Background:**  
+Halaman `/pesanan/:transactionId` (OrderTrackingPage) menampilkan harga item masih pre-tax, tidak konsisten dengan `/katalog`, `/keranjang`, dan receipt. CR ini menyamakan tampilan harga menjadi **Harga Termasuk Pajak** di daftar item order dan modal edit jumlah.
+
+**Perubahan:**
+
+1. **Import `usePublicConfig`** dari `../../hooks/useAppLogo` — sumber `ppn_rate` sama dengan CR-022.
+2. **Harga item per baris** — `formatRupiah(item.unit_price * item.quantity)` → `formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))`
+3. **Subtotal di modal edit jumlah** — `formatRupiah(editItem.unit_price * editQty)` → `formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))`
+
+**Yang TIDAK berubah (by design):**
+- `order.total_amount` (header) — sudah include tax sejak disimpan ke DB, tidak diubah
+- Semua logic checkout, API call, backend, CartContext — tidak disentuh
+- Module/page lain — tidak disentuh
+
+**Sumber `ppn_rate`:**  
+`system_settings` table → key `tax_config` → field `ppn_rate`  
+Dikelola via: `/admin` → sub-menu **Master Data** → tab **Pajak & SPT**
+
+---
+
 ## Database Changes
 
 | Type | Description | Applied |
@@ -628,4 +796,72 @@ For a full rebuild and permanent persistence of these changes, rebuild the image
 ```
 docker compose build --no-cache
 docker compose up -d
+```
+
+---
+
+### CR-023 — POS Langsung: Cashier Direct Order Creation & In-Payment Product Browser
+**Files:**
+- `frontend/src/pages/cashier/CashierPOSPage.jsx` *(new)*
+- `frontend/src/pages/cashier/PaymentPage.jsx`
+- `frontend/src/api/cashier.js`
+- `frontend/src/App.jsx`
+- `frontend/src/pages/cashier/CashierDashboardPage.jsx`
+- `backend/src/modules/cashier/cashier.router.js`
+- `backend/src/modules/orders/orders.service.js`
+
+**Type:** Feature — Cashier UX Enhancement  
+**Date:** 2026-05-30  
+**Author:** clavis Development
+
+**Background:**  
+Sebelumnya kasir hanya bisa memproses transaksi berdasarkan ID yang dibuat oleh customer melalui kiosk. Tidak ada cara bagi kasir untuk membuat pesanan langsung (walk-in / offline sale) tanpa customer menggunakan kiosk terlebih dahulu. CR ini menambahkan dua fitur sekaligus:
+1. **POS Langsung** — halaman baru untuk kasir browse produk, buat cart, dan buat pesanan langsung
+2. **In-payment product browser** — kemampuan menambah produk ke transaksi PENDING yang sudah ada di halaman `/cashier/bayar/:id`
+
+**Changes:**
+
+1. **`CashierPOSPage.jsx` (new)** — Halaman POS 2-panel:
+   - Kiri: search bar, category chips, product card grid (fetch dari `GET /products`)
+   - Kanan: cart panel dengan qty controls (`+`/`−`), total, tombol Bayar
+   - Tombol Bayar memanggil `POST /cashier/orders` → redirect ke `PaymentPage` yang sudah ada
+   - Accessible via `/cashier/pos` dan shortcut di `CashierDashboardPage`
+
+2. **`PaymentPage.jsx` — redesign 2-kolom:**
+   - Kolom kiri (460px): detail transaksi + form pembayaran (tidak berubah secara logic)
+   - Kolom kanan (flex-1): product browser baru, hanya ditampilkan saat status transaksi `PENDING`
+     - Kotak hijau (atas): category chips filter
+     - Kotak merah (bawah): product card grid dengan tombol `+ Tambah`
+   - Klik produk → `POST /cashier/orders/:transactionId/items` → auto-refresh transaksi (item list + total terupdate)
+
+3. **`cashier.router.js` — 2 endpoint baru:**
+   ```
+   POST /api/v1/cashier/orders                        → createOrderByCashier
+   POST /api/v1/cashier/orders/:transactionId/items   → addItemToTransaction
+   ```
+   Kedua endpoint menggunakan `authorize('CASHIER', 'LEADER')`.
+
+4. **`orders.service.js` — 2 fungsi baru:**
+   - `createOrderByCashier(cashierId, items)` — menggunakan "Walk-in Customer" (`phone: 0000000000`) yang dibuat otomatis (lazy-create) agar FK `customer_id` pada tabel `transactions` tetap terpenuhi tanpa perubahan schema DB
+   - `addItemToTransaction(transactionId, cashierId, productId, quantity)` — upsert item ke transaksi PENDING, decrement stock, recalculate totals
+
+5. **`App.jsx`** — tambah route `/cashier/pos` dan nav item `🛒 POS Langsung` di sidebar kasir
+
+6. **`CashierDashboardPage.jsx`** — tambah banner/shortcut biru ke `/cashier/pos`
+
+7. **`api/cashier.js`** — tambah `createCashierOrder(items)` dan `addItemToTransaction(transactionId, productId, quantity)`
+
+**Walk-in Customer Logic:**
+```
+POST /cashier/orders
+  → SELECT customer_id FROM customers WHERE phone_number = '0000000000'
+  → (jika tidak ada) INSERT INTO customers (full_name='Walk-in Customer', phone_number='0000000000')
+  → INSERT INTO transactions (customer_id=walkin_id, cashier_id=cashierId, ...)
+```
+
+**Deployment:**  
+Rebuild Docker image diperlukan untuk menerapkan perubahan ini:
+```
+docker compose down
+docker compose up --build -d
 ```

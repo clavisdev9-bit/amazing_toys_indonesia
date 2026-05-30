@@ -4,6 +4,7 @@ import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
   adminDeleteProduct, uploadProductImage, syncOdooProducts, syncStock,
   adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription,
+  getTaxConfig,
 } from '../../../api/admin';
 import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
@@ -38,7 +39,7 @@ function fileToBase64(file) {
 // Defined outside MasterDataTab so its identity is stable across re-renders.
 // Defining it inside would cause React to unmount/remount inputs on every
 // keystroke (new component type each render), which destroys cursor focus.
-function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories, odooLoading, odooError }) {
+function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories, odooLoading, odooError, ppnRate }) {
   return (
     <>
       {!isEdit && (
@@ -71,6 +72,20 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
           value={form.price}
           onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
           required />
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+          Harga Termasuk Pajak
+          <span className="inline-flex items-center gap-1 text-xs font-normal text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+            </svg>
+            PPN {ppnRate ?? 0}%
+          </span>
+        </label>
+        <div className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed select-none">
+          {formatRupiah((parseFloat(form.price) || 0) * (1 + (parseFloat(ppnRate) || 0) / 100))}
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {!isEdit ? (
@@ -166,6 +181,7 @@ export default function MasterDataTab() {
 
   const [form, setForm]         = useState({ ...EMPTY_FORM });
   const [saving, setSaving]     = useState(false);
+  const [ppnRate, setPpnRate]   = useState(0);
   const [formError, setFormError] = useState('');
 
   const [uploadFile, setUploadFile]   = useState(null);
@@ -216,6 +232,7 @@ export default function MasterDataTab() {
   useEffect(() => {
     getTenants({ active_only: false }).then((r) => setTenants(r.data.data ?? []));
     getCategories().then((r) => setCategories(r.data.data ?? []));
+    getTaxConfig().then((r) => setPpnRate(parseFloat(r.data.data?.ppn_rate) || 0)).catch(() => {});
   }, []);
 
   const resolveCategory = useCallback((raw) => {
@@ -619,7 +636,7 @@ export default function MasterDataTab() {
       <Modal open={createModal} onClose={() => setCreateModal(false)} title="Tambah Produk Baru">
         <form onSubmit={handleCreate} className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <FormFields isEdit={false} form={form} setForm={setForm} tenants={tenants} categories={categories}
-            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} />
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}
@@ -637,7 +654,7 @@ export default function MasterDataTab() {
             {editModal?.product_id} &bull; Tenant: {editModal?.tenant_name}
           </p>
           <FormFields isEdit={true} form={form} setForm={setForm} tenants={tenants} categories={categories}
-            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} />
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}

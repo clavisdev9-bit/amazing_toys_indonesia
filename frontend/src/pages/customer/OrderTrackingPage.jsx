@@ -6,6 +6,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { groupByTenant } from '../../utils/order';
 import { useLang } from '../../context/LangContext';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
@@ -26,6 +27,8 @@ export default function OrderTrackingPage() {
   const [saving, setSaving] = useState(false);
   const expiresAt = order?.status === 'PENDING' ? order.expires_at : null;
   const { remaining, mins, secs } = useCountdown(expiresAt);
+  const config  = usePublicConfig();
+  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   const fetchOrder = useCallback(() => {
     getOrder(transactionId)
@@ -164,7 +167,7 @@ export default function OrderTrackingPage() {
                         </button>
                       )}
                     </div>
-                    <span className="text-gray-500">{formatRupiah(item.unit_price * item.quantity)}</span>
+                    <span className="text-gray-500">{formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))}</span>
                   </div>
                 ))}
               </div>
@@ -208,7 +211,7 @@ export default function OrderTrackingPage() {
               >+</button>
             </div>
             <p className="text-center text-sm text-gray-500 mb-4">
-              Subtotal: <span className="font-semibold text-gray-800">{formatRupiah(editItem.unit_price * editQty)}</span>
+              Subtotal: <span className="font-semibold text-gray-800">{formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))}</span>
             </p>
             <div className="flex gap-2">
               <Button variant="secondary" className="flex-1" onClick={() => setEditItem(null)}>Batal</Button>

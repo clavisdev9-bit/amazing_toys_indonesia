@@ -83,6 +83,7 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
   try {
     const adminSvc = require('./modules/admin/admin.service');
     const config   = await adminSvc.getSystemConfig();
+    const taxCfg = await adminSvc.getTaxConfig().catch(() => ({}));
     res.json({ success: true, data: {
       logo_url:         config.logo_url,
       event_name:       config.event_name,
@@ -93,6 +94,7 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
       map_image_url:    config.map_image_url || '',
       maintenance_mode: config.maintenance_mode || false,
       contact_email:    config.contact_email || '',
+      ppn_rate:         parseFloat(taxCfg.ppn_rate) || 0,
     } });
   } catch (err) { next(err); }
 });

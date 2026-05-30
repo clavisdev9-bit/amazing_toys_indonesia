@@ -16,9 +16,9 @@ function formatEventDateRange(start, end) {
   return `${s.getDate()} ${ms} - ${e.getDate()} ${BULAN_ID[e.getMonth()]} ${e.getFullYear()}`;
 }
 
-const FALLBACK_NAME  = 'AMAZING TOYS FAIR';
-const FALLBACK_VENUE = 'JCC Senayan, Jakarta';
-const FALLBACK_DATE  = '19-21 Mei 2026';
+// No static fallbacks — values always come from /config/public (admin config).
+// bustPublicConfigCache() is called by ConfigTab on save, so the next receipt
+// render always reads the latest admin-configured values.
 
 /*
  * Font strategy for thermal printers:
@@ -167,11 +167,11 @@ export default function ThermalReceipt({
 }) {
   const publicCfg = usePublicConfig();
 
-  const eventName  = publicCfg?.event_name || FALLBACK_NAME;
-  const eventVenue = publicCfg?.venue       || FALLBACK_VENUE;
+  const eventName  = publicCfg?.event_name || '';
+  const eventVenue = publicCfg?.venue       || '';
   const eventDate  = publicCfg?.event_date_start
     ? formatEventDateRange(publicCfg.event_date_start, publicCfg.event_date_end)
-    : FALLBACK_DATE;
+    : '';
 
   const paidAt        = success?.paidAt ?? txn?.checkout_time;
   const paymentMethod = success?.paymentMethod;
@@ -312,6 +312,7 @@ export default function ThermalReceipt({
 
       {/* Footer */}
       <div style={S.footer}>
+        <div style={{ ...S.footerLine, marginBottom: '6px' }}>* Item prices include tax.</div>
         <div style={S.footerStrong}>Thank you for visiting!</div>
         <div style={S.footerLine}>Keep this receipt for your records.</div>
         {publicCfg?.contact_email && (

@@ -4,6 +4,7 @@ import { useCart } from '../../hooks/useCart';
 import { useLang } from '../../context/LangContext';
 import { useWishlist } from '../../hooks/useWishlist';
 import { getStockStatus, canAddToCart } from '../../utils/stockUtils';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 
 function formatPrice(price) {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(price ?? 0);
@@ -45,6 +46,8 @@ export default function ProductCard({ product, tourAttr }) {
   const { isWished, toggleWish } = useWishlist();
   const [added, setAdded]       = useState(false);
   const [bouncing, setBouncing] = useState(false);
+  const config  = usePublicConfig();
+  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
@@ -133,7 +136,7 @@ export default function ProductCard({ product, tourAttr }) {
         </p>
 
         <div className="flex items-center justify-between gap-1">
-          <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(product.price)}</span>
+          <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}</span>
           <StockBadge level={stockLevel} label={t(stockKey)} />
         </div>
 
