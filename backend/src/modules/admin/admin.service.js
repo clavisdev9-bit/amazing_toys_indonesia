@@ -425,7 +425,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   venue: 'Jakarta Convention Center',
   event_date_start: '2026-04-01',
   event_date_end: '2026-04-07',
-  pending_timeout_minutes: 30,
+  txn_timeout_checkout: parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10),
   max_items_per_order: 20,
   maintenance_mode: false,
   contact_email: 'admin@amazingtoys.local',

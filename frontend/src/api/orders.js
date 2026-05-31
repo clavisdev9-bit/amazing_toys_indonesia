@@ -6,3 +6,5 @@ export const getOrder = (transactionId) => client.get(`/orders/${transactionId}`
 export const cancelOrder = (transactionId) => client.delete(`/orders/${transactionId}`);
 export const updateOrderItem = (transactionId, productId, quantity) =>
   client.patch(`/orders/${transactionId}/items/${productId}`, { quantity });
+export const deleteOrderItem = (transactionId, productId) =>
+  client.delete(`/orders/${transactionId}/items/${productId}`);

@@ -729,77 +729,6 @@ Dikelola via: `/admin` → sub-menu **Pajak & SPT** → field **Tarif PPN (%)**
 
 ---
 
-### CR-023a — Display Harga Termasuk Pajak di /pesanan/:transactionId
-**Files:**
-- `frontend/src/pages/customer/OrderTrackingPage.jsx`
-
-**Type:** Feature — Display Change  
-**Date:** 2026-05-30
-
-**Background:**  
-Halaman `/pesanan/:transactionId` (OrderTrackingPage) menampilkan harga item masih pre-tax, tidak konsisten dengan `/katalog`, `/keranjang`, dan receipt. CR ini menyamakan tampilan harga menjadi **Harga Termasuk Pajak** di daftar item order dan modal edit jumlah.
-
-**Perubahan:**
-
-1. **Import `usePublicConfig`** dari `../../hooks/useAppLogo` — sumber `ppn_rate` sama dengan CR-022.
-2. **Harga item per baris** — `formatRupiah(item.unit_price * item.quantity)` → `formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))`
-3. **Subtotal di modal edit jumlah** — `formatRupiah(editItem.unit_price * editQty)` → `formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))`
-
-**Yang TIDAK berubah (by design):**
-- `order.total_amount` (header) — sudah include tax sejak disimpan ke DB, tidak diubah
-- Semua logic checkout, API call, backend, CartContext — tidak disentuh
-- Module/page lain — tidak disentuh
-
-**Sumber `ppn_rate`:**  
-`system_settings` table → key `tax_config` → field `ppn_rate`  
-Dikelola via: `/admin` → sub-menu **Master Data** → tab **Pajak & SPT**
-
----
-
-## Database Changes
-
-| Type | Description | Applied |
-|---|---|---|
-| Data correction | Odoo user uid=10 granted access to company 5 (AMAZING TOYS); default company set to 5 | Yes — via Odoo RPC |
-| Data correction | All 56 SOS products restored to `stock_quantity=20` | Yes — direct SQL on `sos_postgres` |
-| Data correction | 26 `integration_xref` entries restored from `CANCELLED` → `ACTIVE` via push-product-sync re-run | Yes — via API |
-| Data correction | Odoo `stock.rule` id=55 `location_src_id` corrected from `False` → `Partners/Vendors` (id=4) | Yes — via Odoo RPC |
-| Data correction | `property_stock_customer` set to `Partners/Customers` (id=5) for partner 707 (Yasmin Salsabila) in company 5 context | Yes — via Odoo RPC |
-| Data correction | Orders S00028, S00029 (wrong company 1) cancelled in Odoo | Yes — via Odoo RPC wizard |
-| Data correction | `integration_xref` entries for TXN-20260527-00002, TXN-20260527-00003, TXN-20260526-00001 deleted and re-created under company 5 | Yes — direct SQL + polling |
-| Data result | TXN-20260527-00002 → Odoo S00030 (AMAZING TOYS, confirmed, locked) | ✓ |
-| Data result | TXN-20260527-00003 → Odoo S00032 (AMAZING TOYS, confirmed, locked) | ✓ |
-| Data result | TXN-20260526-00001 → Odoo S00033 (AMAZING TOYS, confirmed, locked) | ✓ |
-
-| Schema migration | `009_payment_voucher_xref.sql` — tambah kolom `odoo_invoice_id`, `odoo_payment_id`, `voucher_status`, `voucher_synced_at` + index ke tabel `integration_xref` | Yes — applied 2026-05-28 |
-| Data correction | 4 `integration_xref` entries migrated: `sync_metadata.manualConfirmRequired = true` → `confirmFailed = true` for TXN-20260519-00010, TXN-20260519-00013, TXN-20260520-00022, TXN-20260506-00007 | Yes — direct SQL 2026-05-29 |
-| Data result | TXN-20260520-00022 → SO confirmed, invoice INV-250 created & paid (payment id=47) | ✓ 2026-05-29 |
-| Data result | TXN-20260519-00013 → SO confirmed, invoice INV-251 created & paid (payment id=48) | ✓ 2026-05-29 |
-| Data result | TXN-20260519-00010 → SO confirmed, invoice INV-252 created & paid (payment id=49) | ✓ 2026-05-29 |
-| Data result | TXN-20260506-00007 → SO confirmed, invoice INV-253 created & paid (payment id=50) | ✓ 2026-05-29 |
-| Data result | TXN-20260504-00004, TXN-20260506-00005, TXN-20260506-00006 → `voucher_status = FAILED` (Odoo SO ids 62/83/84 not found — require manual re-sync) | ✓ 2026-05-29 |
-
----
-
-## Deployment Notes
-
-All code changes were hot-deployed to the running Docker containers via `docker cp` and a container restart. No image rebuild was required for this fix cycle.
-
-```
-docker cp integration/src/... sos_integration:/app/src/...
-docker cp backend/src/...     sos_backend:/app/src/...
-docker cp frontend/dist/...   sos_frontend:/usr/share/nginx/html/...
-docker restart sos_integration
-```
-
-For a full rebuild and permanent persistence of these changes, rebuild the images from the updated source:
-```
-docker compose build --no-cache
-docker compose up -d
-```
-
----
-
 ### CR-023 — POS Langsung: Cashier Direct Order Creation & In-Payment Product Browser
 **Files:**
 - `frontend/src/pages/cashier/CashierPOSPage.jsx` *(new)*
@@ -865,3 +794,362 @@ Rebuild Docker image diperlukan untuk menerapkan perubahan ini:
 docker compose down
 docker compose up --build -d
 ```
+
+---
+
+### CR-023a — Display Harga Termasuk Pajak di /pesanan/:transactionId
+**Files:**
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+**Type:** Feature — Display Change  
+**Date:** 2026-05-30
+
+**Background:**  
+Halaman `/pesanan/:transactionId` (OrderTrackingPage) menampilkan harga item masih pre-tax, tidak konsisten dengan `/katalog`, `/keranjang`, dan receipt. CR ini menyamakan tampilan harga menjadi **Harga Termasuk Pajak** di daftar item order dan modal edit jumlah.
+
+**Perubahan:**
+
+1. **Import `usePublicConfig`** dari `../../hooks/useAppLogo` — sumber `ppn_rate` sama dengan CR-022.
+2. **Harga item per baris** — `formatRupiah(item.unit_price * item.quantity)` → `formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))`
+3. **Subtotal di modal edit jumlah** — `formatRupiah(editItem.unit_price * editQty)` → `formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))`
+
+**Yang TIDAK berubah (by design):**
+- `order.total_amount` (header) — sudah include tax sejak disimpan ke DB, tidak diubah
+- Semua logic checkout, API call, backend, CartContext — tidak disentuh
+- Module/page lain — tidak disentuh
+
+**Sumber `ppn_rate`:**  
+`system_settings` table → key `tax_config` → field `ppn_rate`  
+Dikelola via: `/admin` → sub-menu **Master Data** → tab **Pajak & SPT**
+
+---
+
+### CR-024 — Display Harga Termasuk Pajak di /product/:id
+**Files:**
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+
+**Type:** Feature — Display Change  
+**Date:** 2026-05-31
+
+**Background:**  
+CR-022 menerapkan Harga Termasuk Pajak di `/katalog`, `/keranjang`, dan bottom sheet detail produk, namun secara eksplisit mengecualikan `ProductDetailPage (/product/:id)` — *"tidak diubah (di luar scope CR)"*. CR ini melengkapi jalur rendering yang tersisa.
+
+**Perubahan:**
+
+1. **Import `usePublicConfig`** dari `../../hooks/useAppLogo`
+2. **Tambah `ppnRate`** di dalam komponen:
+   ```jsx
+   const config  = usePublicConfig();
+   const ppnRate = parseFloat(config?.ppn_rate) || 0;
+   ```
+3. **Harga tampil** — ganti `formatPrice(product.price)` → `formatPrice(Math.round(product.price * (1 + ppnRate / 100)))`
+
+**Yang TIDAK berubah (by design):**
+- `handleAddToCart` — tetap menggunakan `product.price` (pre-tax); CartPage yang bertanggung jawab menampilkan harga tax-inclusive di keranjang
+- Semua logic checkout, API call, backend — tidak disentuh
+- Module/page lain — tidak disentuh
+
+**Sumber `ppn_rate`:**  
+`system_settings` table → key `tax_config` → field `ppn_rate`  
+Dikelola via: `/admin` → sub-menu **Master Data** → tab **Pajak & SPT**
+
+**Status jalur rendering customer (tax-inclusive):**
+| Halaman | File | Status |
+|---|---|---|
+| `/katalog` — kartu produk | `ProductCard.jsx` | ✓ CR-022 |
+| `/katalog` — bottom sheet detail | `ProductBottomSheet.jsx` | ✓ CR-022 |
+| `/keranjang` | `CartPage.jsx` | ✓ CR-022 |
+| `/product/:id` | `MockProductDetailPage.jsx` | ✓ CR-024 |
+| `/pesanan/:id` | `OrderTrackingPage.jsx` | ✓ CR-023a |
+| `/pesanan/:id/receipt` | `ReceiptPickupPage.jsx` | ✓ BUG-008 |
+| Kasir print modal | `ThermalReceipt.jsx` | ✓ CR-014 |
+
+---
+
+### CR-025 — Konfigurasi Durasi Timer Pembayaran via Environment Variable
+**Files:**
+- `backend/.env`
+- `backend/.env.example`
+- `docker-compose.yml`
+
+**Type:** Configuration Documentation  
+**Date:** 2026-05-31  
+**Author:** clavis Development
+
+**Background:**  
+Timer "Pay in X:XX minutes" di halaman `/checkout/sukses` menampilkan sisa waktu pembayaran berdasarkan `expiresAt` yang dikirim backend saat order dibuat. Durasi default 30 menit dapat diubah tanpa menyentuh kode.
+
+**Mechanism (sudah terkonfigurasi):**
+
+Durasi dikontrol oleh satu konstanta di `backend/src/modules/orders/orders.service.js` baris 11:
+```js
+const PENDING_TIMEOUT_MINUTES = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
+```
+
+Konstanta ini dibaca **satu kali saat module load** — perubahan `.env` membutuhkan restart backend.
+
+**Cara mengubah durasi:**
+
+1. Edit `backend/.env`:
+   ```
+   TXN_PENDING_TIMEOUT_MINUTES=15   # contoh: ubah ke 15 menit
+   ```
+2. Restart backend container:
+   ```bash
+   docker compose restart sos_backend
+   ```
+
+**Konfigurasi terverifikasi:**
+
+| Layer | File | Value |
+|---|---|---|
+| Env file | `backend/.env` | `TXN_PENDING_TIMEOUT_MINUTES=30` |
+| Env example | `backend/.env.example` | `TXN_PENDING_TIMEOUT_MINUTES=30` |
+| Docker Compose | `docker-compose.yml` baris 56 | `TXN_PENDING_TIMEOUT_MINUTES: ${TXN_PENDING_TIMEOUT_MINUTES:-30}` |
+| Backend | `orders.service.js` baris 11 | `process.env.TXN_PENDING_TIMEOUT_MINUTES \|\| '30'` |
+
+**Catatan:**  
+Konstanta `PENDING_TIMEOUT_MINUTES` digunakan di dua tempat dalam `orders.service.js`:
+- Baris 72: `createOrder()` — order dari customer kiosk
+- Baris 350: `createOrderByCashier()` — order dari POS Langsung (CR-023)
+
+Kedua path menggunakan nilai yang sama dari env var.
+
+---
+
+### CR-026 — Delete Item dari Pesanan PENDING via Tombol "−" di Edit Jumlah Modal
+**Files:**
+- `backend/src/modules/orders/orders.service.js`
+- `backend/src/modules/orders/orders.router.js`
+- `frontend/src/api/orders.js`
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+**Type:** Feature — UX Enhancement  
+**Date:** 2026-05-31  
+**Author:** clavis Development
+
+**Background:**  
+Sebelumnya tombol "−" di modal Edit Jumlah dinonaktifkan (`disabled`) ketika qty=1, sehingga tidak ada cara bagi customer untuk menghapus satu item dari pesanan PENDING selain membatalkan seluruh order. CR ini menambahkan flow hapus item langsung dari modal qty.
+
+**Flow:**
+1. Customer klik ikon edit (pensil) pada item di halaman `/pesanan/:transactionId`
+2. Modal "Edit Jumlah" terbuka — tombol "−" kini bisa ditekan hingga angka 0
+3. Ketika qty mencapai 0 (dari 1 → klik "−"), modal delete confirmation muncul otomatis
+4. **"Hapus"** → item dihapus dari order, stok dikembalikan, total direcalculate
+5. **"Tidak"** → qty direset ke 1, kembali ke modal edit
+
+**Edge case — item terakhir:**  
+Jika item yang dihapus adalah satu-satunya item dalam order, order otomatis di-`CANCELLED` dan frontend redirect ke `/pesanan` (history).
+
+**Changes:**
+
+1. **`orders.service.js` — fungsi baru `removeOrderItem(transactionId, customerId, productId)`**:
+   - Lock transaction row (FOR UPDATE)
+   - Validasi: txn ada, milik customer, status PENDING
+   - Restore stock item ke `products`
+   - `DELETE FROM transaction_items`
+   - Jika item terakhir → `UPDATE transactions SET status='CANCELLED'` + fire webhook `order-cancelled`
+   - Jika masih ada item lain → recalculate `subtotal_amount`, `tax_amount`, `total_amount`
+   - Audit log `TXN_ITEM_REMOVED`
+
+2. **`orders.router.js` — endpoint baru**:
+   ```
+   DELETE /api/v1/orders/:transactionId/items/:productId
+   ```
+   Guard: `authenticate`, `authorize('CUSTOMER')`
+
+3. **`api/orders.js`**:
+   ```js
+   export const deleteOrderItem = (transactionId, productId) =>
+     client.delete(`/orders/${transactionId}/items/${productId}`);
+   ```
+
+4. **`OrderTrackingPage.jsx`**:
+   - State baru: `deleteConfirmModal` (boolean), `deleting` (boolean)
+   - Tombol "−": jika `editQty === 1` → set `editQty(0)` + `setDeleteConfirmModal(true)` alih-alih decrement; disabled hanya jika `editQty <= 0`
+   - Modal edit disembunyikan saat `deleteConfirmModal=true` (`open={!!editItem && !deleteConfirmModal}`)
+   - Modal baru "Hapus Item": "Hapus" → `handleDeleteItem()`, "Tidak" → reset qty ke 1
+   - `handleDeleteItem`: call `deleteOrderItem` → jika `orderCancelled=true` navigate ke `/pesanan`, selain itu `fetchOrder()`
+
+**Yang TIDAK berubah (by design):**
+- `updateItemQuantity` — validator backend masih `min: 1`, tidak perlu diubah
+- Logic cancel order penuh (`cancelOrder`) — tidak disentuh
+- Cashier edit item path (`/cashier/*`) — tidak disentuh
+
+---
+
+### CR-027 — Field "Batas Waktu Checkout" di Admin Konfigurasi → Aturan Transaksi
+**Files:**
+- `backend/src/modules/admin/admin.service.js`
+- `backend/src/modules/orders/orders.service.js`
+- `frontend/src/pages/admin/tabs/ConfigTab.jsx`
+
+**Type:** Feature — Admin Configurability  
+**Date:** 2026-05-31  
+**Author:** clavis Development
+
+**Background:**  
+Field `pending_timeout_minutes` sudah ada di halaman Admin → Konfigurasi → Aturan Transaksi, namun field ini **tidak terhubung** ke logika pembuatan order — `orders.service.js` membaca timeout dari env var `TXN_PENDING_TIMEOUT_MINUTES` sebagai konstanta module-level yang hanya dibaca saat server boot. Mengubah nilai di UI tidak mengubah perilaku nyata. CR ini memperbaiki gap tersebut sekaligus menambahkan field `txn_timeout_checkout` yang benar-benar fungsional.
+
+**Root cause gap sebelumnya:**
+```js
+// orders.service.js — LAMA: modul-level const, hanya dibaca saat boot
+const PENDING_TIMEOUT_MINUTES = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
+// → Perubahan di admin UI tidak pernah berpengaruh
+```
+
+**Changes:**
+
+1. **`admin.service.js` — `DEFAULT_SYSTEM_CONFIG`**:
+   - Hapus field `pending_timeout_minutes: 30` yang tidak terhubung ke apapun
+   - Tambah field `txn_timeout_checkout` dengan nilai awal dari env var:
+   ```js
+   txn_timeout_checkout: parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10),
+   ```
+   Field ini disimpan ke `data/system-config.json` saat admin klik "Simpan Konfigurasi".
+
+2. **`orders.service.js` — runtime read**:
+   - Hapus `const PENDING_TIMEOUT_MINUTES = ...` (module-level, read-once)
+   - Tambah import `fs` + `path`
+   - Tambah helper `_getCheckoutTimeoutMinutes()` yang membaca `system-config.json` saat order dibuat:
+   ```js
+   function _getCheckoutTimeoutMinutes() {
+     try {
+       const cfg = JSON.parse(fs.readFileSync(_SYSTEM_CONFIG_PATH, 'utf8'));
+       const val = parseInt(cfg.txn_timeout_checkout, 10);
+       return (Number.isFinite(val) && val > 0) ? val : _ENV_TIMEOUT;
+     } catch {
+       return _ENV_TIMEOUT; // fallback ke TXN_PENDING_TIMEOUT_MINUTES env var
+     }
+   }
+   ```
+   - Ganti dua titik pemakaian `PENDING_TIMEOUT_MINUTES * 60 * 1000` → `_getCheckoutTimeoutMinutes() * 60 * 1000`
+     - `createOrder()` (baris ~86) — order dari customer kiosk
+     - `createOrderByCashier()` (baris ~457) — order dari POS Langsung (CR-023)
+
+3. **`ConfigTab.jsx` — "Aturan Transaksi" section**:
+   - Ganti field `pending_timeout_minutes` → `txn_timeout_checkout`
+   - Label: "Batas Waktu Checkout (menit)"
+   - Tambah helper text: "Timer 'Bayar dalam X menit' di halaman konfirmasi order. Sumber: `TXN_PENDING_TIMEOUT_MINUTES`"
+   - Validasi: `parseInt(e.target.value, 10) || 30` — fallback ke 30 jika input tidak valid
+
+**Priority order (cascade):**
+```
+1. system-config.json → txn_timeout_checkout  (admin UI, persistent)
+2. env var TXN_PENDING_TIMEOUT_MINUTES          (fallback jika file tidak ada)
+3. hardcoded 30                                  (fallback akhir)
+```
+
+**Tidak perlu restart server** — `_getCheckoutTimeoutMinutes()` membaca file di setiap order creation, sehingga perubahan dari Admin langsung efektif untuk order berikutnya.
+
+**Yang TIDAK berubah (by design):**
+- `data/system-config.json` schema — hanya mengganti nama satu key
+- Semua logika order lainnya — tidak disentuh
+- `TXN_PENDING_TIMEOUT_MINUTES` di `.env` tetap relevan sebagai fallback awal dan untuk existing deployments
+
+**Deployment:**
+```bash
+docker compose build backend && docker compose up -d backend
+docker compose build frontend && docker compose up -d frontend
+```
+
+**Catatan untuk existing deployment:**  
+`system-config.json` yang sudah ada mungkin masih punya `pending_timeout_minutes` (lama) tapi tidak ada `txn_timeout_checkout`. Saat admin membuka Admin → Konfigurasi pertama kali, nilai default dari env var (`TXN_PENDING_TIMEOUT_MINUTES`) akan digunakan. Setelah admin klik "Simpan Konfigurasi", `txn_timeout_checkout` akan tertulis ke file.
+
+---
+
+### CR-028 — Enforce "Maks Item per Order" di Backend dan Frontend
+**Files:**
+- `backend/src/modules/orders/orders.service.js`
+- `backend/src/app.js`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Type:** Bug Fix — Dead Config Enforcement  
+**Date:** 2026-05-31  
+**Author:** clavis Development  
+**Triggered by:** BUG-014 (TXN-20260531-00058 — customer berhasil order > 20 item)
+
+**Root cause:**  
+`max_items_per_order` dalam `DEFAULT_SYSTEM_CONFIG` (admin.service.js) disimpan ke `system-config.json` dan ditampilkan di Admin → Konfigurasi → Aturan Transaksi, tetapi **tidak pernah dibaca oleh kode apapun** — tidak ada validasi di backend maupun di frontend.
+
+**Changes:**
+
+1. **`orders.service.js` — fungsi baru `_getMaxItemsPerOrder()`**:
+   ```js
+   function _getMaxItemsPerOrder() {
+     try {
+       const cfg = JSON.parse(fs.readFileSync(_SYSTEM_CONFIG_PATH, 'utf8'));
+       const val = parseInt(cfg.max_items_per_order, 10);
+       return (Number.isFinite(val) && val > 0) ? val : 20;
+     } catch { return 20; }
+   }
+   ```
+
+2. **`orders.service.js` — validasi di 3 titik**:
+
+   | Fungsi | Validasi |
+   |---|---|
+   | `createOrder()` | Hitung total qty semua items → throw 422 jika > limit |
+   | `createOrderByCashier()` | Sama seperti `createOrder()` |
+   | `addItemToTransaction()` | Query `SUM(quantity)` dari DB → throw 422 jika `current + addition > limit` |
+
+   Pesan error: `"Maksimal X item per order. Total saat ini: Y item."`
+
+3. **`app.js` — expose ke `/config/public`**:
+   ```js
+   max_items_per_order: parseInt(config.max_items_per_order, 10) || 20,
+   ```
+
+4. **`CartPage.jsx` — validasi UX**:
+   - Hitung `totalQty = items.reduce((sum, i) => sum + i.quantity, 0)`
+   - Jika `totalQty > maxItemsPerOrder`: tampilkan banner merah + counter "X / 20 item (Melebihi batas)"
+   - Tombol "Checkout" di-`disabled` jika over limit
+   - Backend tetap menjadi garis pertahanan terakhir
+
+**Catatan penting — definisi "item":**  
+Yang dihitung adalah **total quantity** (jumlah unit/pcs) dari semua line item, bukan jumlah baris produk berbeda. Jika limit = 20 dan customer beli 3 produk masing-masing 7 unit (total 21), order ditolak.
+
+---
+
+## Database Changes
+
+| Type | Description | Applied |
+|---|---|---|
+| Data correction | Odoo user uid=10 granted access to company 5 (AMAZING TOYS); default company set to 5 | Yes — via Odoo RPC |
+| Data correction | All 56 SOS products restored to `stock_quantity=20` | Yes — direct SQL on `sos_postgres` |
+| Data correction | 26 `integration_xref` entries restored from `CANCELLED` → `ACTIVE` via push-product-sync re-run | Yes — via API |
+| Data correction | Odoo `stock.rule` id=55 `location_src_id` corrected from `False` → `Partners/Vendors` (id=4) | Yes — via Odoo RPC |
+| Data correction | `property_stock_customer` set to `Partners/Customers` (id=5) for partner 707 (Yasmin Salsabila) in company 5 context | Yes — via Odoo RPC |
+| Data correction | Orders S00028, S00029 (wrong company 1) cancelled in Odoo | Yes — via Odoo RPC wizard |
+| Data correction | `integration_xref` entries for TXN-20260527-00002, TXN-20260527-00003, TXN-20260526-00001 deleted and re-created under company 5 | Yes — direct SQL + polling |
+| Data result | TXN-20260527-00002 → Odoo S00030 (AMAZING TOYS, confirmed, locked) | ✓ |
+| Data result | TXN-20260527-00003 → Odoo S00032 (AMAZING TOYS, confirmed, locked) | ✓ |
+| Data result | TXN-20260526-00001 → Odoo S00033 (AMAZING TOYS, confirmed, locked) | ✓ |
+
+| Schema migration | `009_payment_voucher_xref.sql` — tambah kolom `odoo_invoice_id`, `odoo_payment_id`, `voucher_status`, `voucher_synced_at` + index ke tabel `integration_xref` | Yes — applied 2026-05-28 |
+| Data correction | 4 `integration_xref` entries migrated: `sync_metadata.manualConfirmRequired = true` → `confirmFailed = true` for TXN-20260519-00010, TXN-20260519-00013, TXN-20260520-00022, TXN-20260506-00007 | Yes — direct SQL 2026-05-29 |
+| Data result | TXN-20260520-00022 → SO confirmed, invoice INV-250 created & paid (payment id=47) | ✓ 2026-05-29 |
+| Data result | TXN-20260519-00013 → SO confirmed, invoice INV-251 created & paid (payment id=48) | ✓ 2026-05-29 |
+| Data result | TXN-20260519-00010 → SO confirmed, invoice INV-252 created & paid (payment id=49) | ✓ 2026-05-29 |
+| Data result | TXN-20260506-00007 → SO confirmed, invoice INV-253 created & paid (payment id=50) | ✓ 2026-05-29 |
+| Data result | TXN-20260504-00004, TXN-20260506-00005, TXN-20260506-00006 → `voucher_status = FAILED` (Odoo SO ids 62/83/84 not found — require manual re-sync) | ✓ 2026-05-29 |
+
+---
+
+## Deployment Notes
+
+All code changes were hot-deployed to the running Docker containers via `docker cp` and a container restart. No image rebuild was required for this fix cycle.
+
+```
+docker cp integration/src/... sos_integration:/app/src/...
+docker cp backend/src/...     sos_backend:/app/src/...
+docker cp frontend/dist/...   sos_frontend:/usr/share/nginx/html/...
+docker restart sos_integration
+```
+
+For a full rebuild and permanent persistence of these changes, rebuild the images from the updated source:
+```
+docker compose build --no-cache
+docker compose up -d
+```
+

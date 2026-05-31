@@ -14,8 +14,11 @@ export default function CartPage() {
   const { t } = useLang();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
+  const config          = usePublicConfig();
+  const ppnRate         = parseFloat(config?.ppn_rate) || 0;
+  const maxItemsPerOrder = parseInt(config?.max_items_per_order, 10) || 20;
+  const totalQty        = items.reduce((sum, i) => sum + i.quantity, 0);
+  const isOverLimit     = totalQty > maxItemsPerOrder;
 
   async function handleCheckout() {
     setError('');
@@ -116,20 +119,29 @@ export default function CartPage() {
 
       {/* Summary */}
       <div id="tour-cart-total" className="p-4 bg-white border-t mt-2">
+        {isOverLimit && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-3">
+            Maksimal <strong>{maxItemsPerOrder} item</strong> per order. Saat ini <strong>{totalQty} item</strong> — kurangi sebelum checkout.
+          </div>
+        )}
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-3">
             {error}
           </div>
         )}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-1">
           <span className="text-gray-600">{t('cart.total')}</span>
           <span className="text-xl font-bold text-blue-700">{formatRupiah(Math.round(totalAmount * (1 + ppnRate / 100)))}</span>
+        </div>
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs text-gray-400">{totalQty} / {maxItemsPerOrder} item</span>
+          {isOverLimit && <span className="text-xs text-red-500 font-medium">Melebihi batas</span>}
         </div>
         <p className="text-xs text-gray-400 mb-3">
           {t('cart.pendingNote')}
         </p>
         <div id="tour-checkout-btn">
-          <Button size="full" onClick={handleCheckout} loading={loading}>
+          <Button size="full" onClick={handleCheckout} loading={loading} disabled={isOverLimit}>
             {t('cart.checkout')}
           </Button>
         </div>

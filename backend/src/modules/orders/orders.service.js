@@ -1,5 +1,8 @@
 'use strict';
 
+const fs   = require('fs');
+const path = require('path');
+
 const { withTransaction, query } = require('../../config/database');
 const { AppError }               = require('../../middlewares/error.middleware');
 const { generateTxnId }          = require('../../utils/txnId');
@@ -8,7 +11,28 @@ const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
 const { fireWebhook }            = require('../../utils/webhook');
 
-const PENDING_TIMEOUT_MINUTES = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
+const _SYSTEM_CONFIG_PATH = path.join(__dirname, '../../../data/system-config.json');
+const _ENV_TIMEOUT = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
+
+function _getCheckoutTimeoutMinutes() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(_SYSTEM_CONFIG_PATH, 'utf8'));
+    const val = parseInt(cfg.txn_timeout_checkout, 10);
+    return (Number.isFinite(val) && val > 0) ? val : _ENV_TIMEOUT;
+  } catch {
+    return _ENV_TIMEOUT;
+  }
+}
+
+function _getMaxItemsPerOrder() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(_SYSTEM_CONFIG_PATH, 'utf8'));
+    const val = parseInt(cfg.max_items_per_order, 10);
+    return (Number.isFinite(val) && val > 0) ? val : 20;
+  } catch {
+    return 20;
+  }
+}
 
 async function _getTaxSettings() {
   try {
@@ -34,6 +58,12 @@ async function _getTaxSettings() {
  */
 async function createOrder(customerId, items) {
   if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
+
+  const maxItems = _getMaxItemsPerOrder();
+  const totalQty = items.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0);
+  if (totalQty > maxItems) {
+    throw new AppError(`Maksimal ${maxItems} item per order. Total saat ini: ${totalQty} item.`, 422);
+  }
 
   return withTransaction(async (client) => {
     // 1. Load & lock product rows
@@ -69,7 +99,7 @@ async function createOrder(customerId, items) {
 
     // 4. Generate TXN ID
     const transactionId = await generateTxnId();
-    const expiresAt = new Date(Date.now() + PENDING_TIMEOUT_MINUTES * 60 * 1000);
+    const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
 
     // 5. Generate QR payload
     const qrPayload = await generateTransactionQR(transactionId);
@@ -295,11 +325,110 @@ async function updateItemQuantity(transactionId, customerId, productId, newQty) 
 }
 
 /**
+ * Customer removes one item from their own PENDING order.
+ * Restores stock, recalculates totals.
+ * If it is the last item, the order is automatically cancelled.
+ */
+async function removeOrderItem(transactionId, customerId, productId) {
+  return withTransaction(async (client) => {
+    const txResult = await client.query(
+      `SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId]
+    );
+    const txn = txResult.rows[0];
+    if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
+    if (txn.customer_id !== customerId) throw new AppError('Akses ditolak.', 403);
+    if (txn.status !== 'PENDING') throw new AppError('Item hanya bisa dihapus pada pesanan PENDING.');
+
+    const itemResult = await client.query(
+      `SELECT * FROM transaction_items WHERE transaction_id = $1 AND product_id = $2`,
+      [transactionId, productId]
+    );
+    const item = itemResult.rows[0];
+    if (!item) throw new AppError('Item tidak ditemukan dalam pesanan ini.', 404);
+
+    // Restore stock
+    await client.query(
+      `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+      [item.quantity, productId]
+    );
+
+    // Delete item row
+    await client.query(
+      `DELETE FROM transaction_items WHERE transaction_id = $1 AND product_id = $2`,
+      [transactionId, productId]
+    );
+
+    // Check remaining items
+    const remainingResult = await client.query(
+      `SELECT COUNT(*) AS cnt FROM transaction_items WHERE transaction_id = $1`,
+      [transactionId]
+    );
+    const remainingCount = parseInt(remainingResult.rows[0].cnt, 10);
+
+    if (remainingCount === 0) {
+      // Last item deleted — cancel the order automatically
+      await client.query(
+        `UPDATE transactions SET status = 'CANCELLED', cancelled_at = NOW(),
+         cancellation_reason = 'Semua item dihapus oleh customer'
+         WHERE transaction_id = $1`,
+        [transactionId]
+      );
+      await writeAuditLog({
+        action: 'TXN_ITEM_REMOVED', actorId: customerId, actorRole: 'CUSTOMER',
+        entityType: 'TRANSACTION', entityId: transactionId,
+        oldValue: { productId, quantity: item.quantity },
+        newValue: { deleted: true, orderCancelled: true },
+      });
+      fireWebhook('/webhook/order-cancelled', {
+        transactionId, status: 'CANCELLED',
+        cancelledAt: new Date().toISOString(), customerId,
+      });
+      return { transactionId, productId, deleted: true, orderCancelled: true };
+    }
+
+    // Recalculate transaction total
+    const totalResult = await client.query(
+      `SELECT SUM(subtotal) AS subtotal, tax_rate
+       FROM transaction_items ti
+       JOIN transactions t ON t.transaction_id = ti.transaction_id
+       WHERE ti.transaction_id = $1
+       GROUP BY t.tax_rate`,
+      [transactionId]
+    );
+    const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
+    const txnTaxRate   = parseFloat(totalResult.rows[0].tax_rate ?? 12);
+    const newTaxAmount = Math.round(newSubtotal * txnTaxRate / 100);
+    const newTotal     = newSubtotal + newTaxAmount;
+    await client.query(
+      `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
+       WHERE transaction_id = $4`,
+      [newSubtotal, newTaxAmount, newTotal, transactionId]
+    );
+
+    await writeAuditLog({
+      action: 'TXN_ITEM_REMOVED', actorId: customerId, actorRole: 'CUSTOMER',
+      entityType: 'TRANSACTION', entityId: transactionId,
+      oldValue: { productId, quantity: item.quantity },
+      newValue: { deleted: true, total_amount: newTotal },
+    });
+
+    return { transactionId, productId, deleted: true, total_amount: newTotal };
+  });
+}
+
+/**
  * Create a walk-in order on behalf of a cashier.
  * Uses a reserved walk-in customer so the transactions FK is satisfied.
  */
 async function createOrderByCashier(cashierId, items) {
   if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
+
+  const maxItems = _getMaxItemsPerOrder();
+  const totalQty = items.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0);
+  if (totalQty > maxItems) {
+    throw new AppError(`Maksimal ${maxItems} item per order. Total saat ini: ${totalQty} item.`, 422);
+  }
 
   return withTransaction(async (client) => {
     // Resolve or lazily-create the shared walk-in customer record
@@ -347,7 +476,7 @@ async function createOrderByCashier(cashierId, items) {
 
     // 4. Generate IDs
     const transactionId = await generateTxnId();
-    const expiresAt = new Date(Date.now() + PENDING_TIMEOUT_MINUTES * 60 * 1000);
+    const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
     const qrPayload = await generateTransactionQR(transactionId);
 
     // 5. Insert transaction with cashier_id pre-filled
@@ -408,11 +537,27 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
       throw new AppError(`Stok "${product.product_name}" tidak mencukupi.`);
     }
 
-    // Upsert item
-    const existing = await client.query(
+    // Check max items per order (total qty across all items + net addition)
+    const currentTotals = await client.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS total_qty FROM transaction_items WHERE transaction_id = $1`,
+      [transactionId]
+    );
+    const existingForProduct = await client.query(
       `SELECT quantity FROM transaction_items WHERE transaction_id = $1 AND product_id = $2`,
       [transactionId, productId]
     );
+    const currentTotal = parseInt(currentTotals.rows[0].total_qty, 10);
+    const netAddition  = quantity; // upsert: we add on top of existing qty
+    const maxItems     = _getMaxItemsPerOrder();
+    if (currentTotal + netAddition > maxItems) {
+      throw new AppError(
+        `Maksimal ${maxItems} item per order. Saat ini sudah ${currentTotal} item, tidak bisa tambah ${netAddition} lagi.`,
+        422
+      );
+    }
+
+    // Upsert item
+    const existing = existingForProduct;
     if (existing.rows.length > 0) {
       const newQty = existing.rows[0].quantity + quantity;
       await client.query(
@@ -462,4 +607,4 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
   });
 }
 
-module.exports = { createOrder, createOrderByCashier, addItemToTransaction, getTransaction, cancelOrder, getCustomerOrders, updateItemQuantity };
+module.exports = { createOrder, createOrderByCashier, addItemToTransaction, getTransaction, cancelOrder, getCustomerOrders, updateItemQuantity, removeOrderItem };

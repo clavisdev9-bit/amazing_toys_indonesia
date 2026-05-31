@@ -324,6 +324,28 @@ Perubahan harga tampilan harus diterapkan ke **semua** jalur rendering customer:
 4. `OrderTrackingPage.jsx` — halaman tracking order ✓ (CR-023a / BUG-011a)
 5. `ReceiptPickupPage.jsx` — receipt digital ✓ (BUG-008)
 6. `ThermalReceipt.jsx` — print modal kasir ✓ (CR-014)
+7. `MockProductDetailPage.jsx` — halaman detail produk ✓ (CR-024 / BUG-011b)
+
+---
+
+## BUG-011b — `/product/:id` Masih Tampilkan Harga Pre-Tax
+
+**Symptom:**  
+Halaman detail produk (`/product/:id`) menampilkan harga dengan `formatPrice(product.price)` — harga dasar tanpa pajak — tidak konsisten dengan semua halaman customer lain yang sudah tax-inclusive.
+
+**Root Cause:**  
+CR-022 secara eksplisit mengecualikan `ProductDetailPage (/product/:id)` dari scope-nya. Tidak ada CR lain yang menangani halaman ini setelah itu.
+
+**Resolution:**  
+Display-only fix pada `MockProductDetailPage.jsx`:
+1. Tambah import `usePublicConfig` dari `../../hooks/useAppLogo`
+2. Tambah `const ppnRate = parseFloat(config?.ppn_rate) || 0;`
+3. Harga tampil: `formatPrice(Math.round(product.price * (1 + ppnRate / 100)))`
+
+`handleAddToCart` tidak diubah — tetap kirim `product.price` (pre-tax) ke CartContext; CartPage bertanggung jawab tampilan tax-inclusive di keranjang.
+
+**Files Changed:**  
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
 
 ---
 
@@ -504,4 +526,38 @@ Karena tabel `transactions` memiliki FK `customer_id NOT NULL` yang merujuk ke t
 
 ---
 
+## BUG-014 — Limit "Maks Item per Order" Tidak Dienforce (TXN-20260531-00058)
+
+**Date:** 2026-05-31  
+**Related CR:** CR-028
+
+**Symptom:**  
+Customer berhasil melakukan checkout dengan total lebih dari 20 item (pcs) meskipun setting "Maks Item per Order = 20" telah dikonfigurasi di Admin → Konfigurasi → Aturan Transaksi. Transaksi TXN-20260531-00058 berhasil dibuat dengan quantity melebihi batas.
+
+**Root Cause:**  
+`max_items_per_order` adalah **dead config** — nilai tersimpan di `system-config.json` dan tampil di admin UI, tetapi tidak pernah dibaca oleh:
+- `orders.service.js` saat membuat order (`createOrder`, `createOrderByCashier`)
+- `addItemToTransaction` saat kasir menambah item ke order PENDING
+- `/config/public` endpoint (frontend tidak pernah tahu nilai limitnya)
+- `CartPage.jsx` (tidak ada validasi sisi client)
+
+Sama seperti `pending_timeout_minutes` yang ditemukan sebagai dead config di CR-027 — pattern ini terjadi karena konfigurasi ditambahkan ke admin UI tanpa menghubungkannya ke logika bisnis.
+
+**Fix (CR-028):**
+
+| Layer | Fix |
+|---|---|
+| `orders.service.js` | Tambah `_getMaxItemsPerOrder()` + validasi total qty di `createOrder`, `createOrderByCashier`, `addItemToTransaction` |
+| `app.js` | Expose `max_items_per_order` di `GET /config/public` |
+| `CartPage.jsx` | Tampilkan counter "X / 20 item", banner merah jika over limit, disable tombol Checkout |
+
+**Final State:**
+- Backend: throw HTTP 422 dengan pesan jelas jika total qty > limit — berlaku untuk semua path order (customer kiosk, POS langsung, tambah item kasir)
+- Frontend: user diberi feedback real-time sebelum checkout, tombol disabled jika melebihi batas
+- Admin dapat mengubah limit dari UI → efektif untuk order berikutnya tanpa restart
+
+**Recurrence Prevention:**  
+Setiap konfigurasi yang ditambahkan ke `DEFAULT_SYSTEM_CONFIG` harus langsung dihubungkan ke enforcement logic di layer yang relevan. Dead config yang hanya tersimpan di JSON tanpa dibaca oleh business logic tidak memberikan nilai apapun dan dapat membingungkan admin.
+
+---
 

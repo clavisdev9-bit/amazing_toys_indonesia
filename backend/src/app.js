@@ -93,8 +93,9 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
       map_embed_url:    config.map_embed_url || '',
       map_image_url:    config.map_image_url || '',
       maintenance_mode: config.maintenance_mode || false,
-      contact_email:    config.contact_email || '',
-      ppn_rate:         parseFloat(taxCfg.ppn_rate) || 0,
+      contact_email:       config.contact_email || '',
+      ppn_rate:            parseFloat(taxCfg.ppn_rate) || 0,
+      max_items_per_order: parseInt(config.max_items_per_order, 10) || 20,
     } });
   } catch (err) { next(err); }
 });

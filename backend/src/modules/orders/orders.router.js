@@ -86,6 +86,24 @@ router.patch('/:transactionId/items/:productId',
 );
 
 /**
+ * DELETE /api/v1/orders/:transactionId/items/:productId
+ * Customer removes one item from their own PENDING order
+ */
+router.delete('/:transactionId/items/:productId',
+  authenticate, authorize('CUSTOMER'),
+  async (req, res, next) => {
+    try {
+      const data = await ordersSvc.removeOrderItem(
+        req.params.transactionId,
+        req.user.customerId,
+        req.params.productId,
+      );
+      res.json({ success: true, message: 'Item berhasil dihapus.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
  * DELETE /api/v1/orders/:transactionId
  * Customer cancels their own PENDING order
  */

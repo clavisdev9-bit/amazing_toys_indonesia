@@ -295,11 +295,16 @@ export default function ConfigTab() {
           {/* ── Transaction Rules ────────────────────────────────────────── */}
           <section>
             <SectionHeader color="blue" icon="🛒" title="Aturan Transaksi" />
-            <div className="bg-white rounded-xl border p-4">
+            <div className="bg-white rounded-xl border p-4 space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <Input label="Timeout Pending (menit)" type="number" min="1" max="1440"
-                  value={config.pending_timeout_minutes ?? 30}
-                  onChange={(e) => set('pending_timeout_minutes', parseInt(e.target.value, 10))} />
+                <div>
+                  <Input label="Batas Waktu Checkout (menit)" type="number" min="1" max="1440"
+                    value={config.txn_timeout_checkout ?? 30}
+                    onChange={(e) => set('txn_timeout_checkout', parseInt(e.target.value, 10) || 30)} />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Timer "Bayar dalam X menit" di halaman konfirmasi order customer. Sumber: <code className="bg-gray-100 px-1 rounded">TXN_PENDING_TIMEOUT_MINUTES</code>
+                  </p>
+                </div>
                 <Input label="Maks Item per Order" type="number" min="1" max="100"
                   value={config.max_items_per_order ?? 20}
                   onChange={(e) => set('max_items_per_order', parseInt(e.target.value, 10))} />

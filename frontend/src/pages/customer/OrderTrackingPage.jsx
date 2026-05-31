@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getOrder, cancelOrder, updateOrderItem } from '../../api/orders';
+import { getOrder, cancelOrder, updateOrderItem, deleteOrderItem } from '../../api/orders';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useCountdown } from '../../hooks/useCountdown';
 import { formatRupiah, formatDate } from '../../utils/format';
@@ -25,6 +25,8 @@ export default function OrderTrackingPage() {
   const [editItem, setEditItem] = useState(null); // { product_id, product_name, quantity, unit_price }
   const [editQty, setEditQty] = useState(1);
   const [saving, setSaving] = useState(false);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const expiresAt = order?.status === 'PENDING' ? order.expires_at : null;
   const { remaining, mins, secs } = useCountdown(expiresAt);
   const config  = usePublicConfig();
@@ -68,6 +70,23 @@ export default function OrderTrackingPage() {
       setEditItem(null);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDeleteItem() {
+    if (!editItem) return;
+    setDeleting(true);
+    try {
+      const res = await deleteOrderItem(transactionId, editItem.product_id);
+      setDeleteConfirmModal(false);
+      setEditItem(null);
+      if (res.data?.data?.orderCancelled) {
+        navigate('/pesanan');
+      } else {
+        await fetchOrder();
+      }
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -194,15 +213,22 @@ export default function OrderTrackingPage() {
         </div>
       )}
 
-      <Modal open={!!editItem} onClose={() => setEditItem(null)} title="Edit Jumlah">
+      <Modal open={!!editItem && !deleteConfirmModal} onClose={() => setEditItem(null)} title="Edit Jumlah">
         {editItem && (
           <>
             <p className="text-sm text-gray-600 mb-4">{editItem.product_name}</p>
             <div className="flex items-center justify-center gap-4 mb-6">
               <button
-                onClick={() => setEditQty(q => Math.max(1, q - 1))}
+                onClick={() => {
+                  if (editQty === 1) {
+                    setEditQty(0);
+                    setDeleteConfirmModal(true);
+                  } else {
+                    setEditQty(q => q - 1);
+                  }
+                }}
                 className="w-10 h-10 rounded-full border border-gray-300 text-xl font-bold text-gray-600 hover:bg-gray-100 flex items-center justify-center disabled:opacity-40"
-                disabled={editQty <= 1}
+                disabled={editQty <= 0}
               >−</button>
               <span className="text-2xl font-bold w-10 text-center">{editQty}</span>
               <button
@@ -219,6 +245,24 @@ export default function OrderTrackingPage() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal open={deleteConfirmModal} onClose={() => { setDeleteConfirmModal(false); setEditQty(1); }} title="Hapus Item">
+        <p className="text-sm text-gray-600 mb-4">
+          Apakah anda yakin menghapus <span className="font-semibold">{editItem?.product_name}</span> dari pesanan ini?
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            className="flex-1"
+            onClick={() => { setDeleteConfirmModal(false); setEditQty(1); }}
+          >
+            Tidak
+          </Button>
+          <Button variant="danger" className="flex-1" loading={deleting} onClick={handleDeleteItem}>
+            Hapus
+          </Button>
+        </div>
       </Modal>
 
       <Modal open={cancelModal} onClose={() => setCancelModal(false)} title={t('order.cancelTitle')}>
