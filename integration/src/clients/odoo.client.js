@@ -262,12 +262,14 @@ async function resolveStartupRefs() {
   for (const j of journals) {
     _cache.journals[j.name.toUpperCase()] = j.id;
   }
-  const txnField    = sosFields.find(f => f.name === 'x_studio_sos_transaction_id');
-  const tenantField = sosFields.find(f => f.name === 'x_studio_sos_tenant_ids');
+  const txnField      = sosFields.find(f => f.name === 'x_studio_sos_transaction_id');
+  const tenantField   = sosFields.find(f => f.name === 'x_studio_sos_tenant_ids');
+  const voucherField  = sosFields.find(f => f.name === 'x_voucher_code');
   _cache.hasSosTransactionId    = !!txnField;
   _cache.hasSosTenantId         = !!tenantField;
   _cache.tenantIdFieldType      = tenantField?.ttype     || null;
   _cache.tenantIdFieldRelation  = tenantField?.relation  || null;
+  _cache.hasVoucherCodeField    = !!voucherField;
   _cache.warehouseId = warehouses[0]?.id || null;
   _cache.customerLocationId = custLocs[0]?.id || null;
   _cache.fallbackRouteId = fallbackRoutes[0]?.id || null;

@@ -18,6 +18,22 @@ function saveCart(items) {
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadCart);
 
+  // ── Voucher state ─────────────────────────────────────────────────────────
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [discountAmount, setDiscountAmount] = useState(0);
+
+  const applyVoucher = useCallback((voucherData) => {
+    setAppliedVoucher(voucherData);
+    setDiscountAmount(voucherData.discount_amount || 0);
+  }, []);
+
+  const removeVoucher = useCallback(() => {
+    setAppliedVoucher(null);
+    setDiscountAmount(0);
+  }, []);
+
+  // ── Cart operations ───────────────────────────────────────────────────────
+
   const updateItems = useCallback((next) => {
     setItems(next);
     saveCart(next);
@@ -70,13 +86,18 @@ export function CartProvider({ children }) {
   const clearCart = useCallback(() => {
     sessionStorage.removeItem('sos_cart');
     setItems([]);
+    setAppliedVoucher(null);
+    setDiscountAmount(0);
   }, []);
 
   const totalAmount = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
-  const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
+  const totalItems  = items.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
-    <CartContext.Provider value={{ items, addItem, updateQty, removeItem, clearCart, totalAmount, totalItems }}>
+    <CartContext.Provider value={{
+      items, addItem, updateQty, removeItem, clearCart, totalAmount, totalItems,
+      appliedVoucher, discountAmount, applyVoucher, removeVoucher,
+    }}>
       {children}
     </CartContext.Provider>
   );

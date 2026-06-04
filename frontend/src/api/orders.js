@@ -1,6 +1,7 @@
 import client from './client';
 
-export const createOrder = (items) => client.post('/orders', { items });
+export const createOrder = (items, voucherCode = null) =>
+  client.post('/orders', { items, ...(voucherCode ? { voucher_code: voucherCode } : {}) });
 export const getMyOrders = () => client.get('/orders/my');
 export const getOrder = (transactionId) => client.get(`/orders/${transactionId}`);
 export const cancelOrder = (transactionId) => client.delete(`/orders/${transactionId}`);

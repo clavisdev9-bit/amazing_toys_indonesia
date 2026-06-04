@@ -131,6 +131,14 @@ export default function ReceiptPickupPage() {
                 );
               })}
             </div>
+            {parseFloat(order.discount_amount ?? 0) > 0 && (
+              <div className="flex justify-between items-center px-4 py-2.5 text-sm border-t text-green-600">
+                <span>
+                  Diskon{order.voucher_code ? ` (${order.voucher_code})` : ''}
+                </span>
+                <span className="font-medium">− {formatRupiah(parseFloat(order.discount_amount))}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center px-4 py-3 border-t">
               <span className="font-bold text-gray-900 text-sm">{t('receipt.total')}</span>
               <span className="font-bold text-gray-900 text-sm">{formatRupiah(order.total_amount)}</span>

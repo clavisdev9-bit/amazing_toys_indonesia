@@ -561,3 +561,110 @@ Setiap konfigurasi yang ditambahkan ke `DEFAULT_SYSTEM_CONFIG` harus langsung di
 
 ---
 
+## BUG-015 — Migration 010 Gagal: FK `customers(id)` Tidak Ditemukan
+
+**Date:** 2026-06-04  
+**Related CR:** CR-029
+
+**Symptom:**  
+Saat menjalankan `010_voucher_tables.sql`, migration ROLLBACK dengan error:
+```
+psql:/tmp/010_voucher_tables.sql:50: ERROR: column "id" referenced in foreign key constraint does not exist
+```
+Tabel `vouchers` berhasil dibuat tapi `voucher_usages` dan semua perintah sesudahnya dibatalkan.
+
+**Root Cause:**  
+Migration menulis `REFERENCES customers(id)` padahal primary key tabel `customers` adalah `customer_id`, bukan `id`. Ini berbeda dari konvensi umum PostgreSQL — proyek ini menggunakan nama kolom yang lebih deskriptif.
+
+```sql
+-- SALAH (ditulis di spec awal):
+customer_id UUID REFERENCES customers(id) ON DELETE SET NULL
+
+-- BENAR (sesuai schema aktual):
+customer_id UUID REFERENCES customers(customer_id) ON DELETE SET NULL
+```
+
+**Fix:**  
+Koreksi nama kolom referensi di `010_voucher_tables.sql` lalu jalankan ulang migration.
+
+**Files Changed:**  
+- `backend/migrations/010_voucher_tables.sql`
+
+**Recurrence Prevention:**  
+Sebelum menulis FK ke tabel yang sudah ada, verifikasi nama PK:
+
+---
+
+## BUG-016 — Voucher Tenant-Scoped Menerapkan Diskon ke Semua Item (TXN-20260604-00024)
+
+**Date:** 2026-06-04  
+**Related CR:** CR-029
+
+**Symptom:**  
+Transaksi `TXN-20260604-00024` menggunakan voucher `AMZ50%` yang dikonfigurasi hanya berlaku untuk tenant `T001`. Diskon 50% justru diterapkan ke **semua item** di cart (termasuk item dari tenant lain), bukan hanya item milik T001.
+
+**Root Cause (3 titik):**
+
+| # | File | Defect |
+|---|---|---|
+| 1 | `backend/src/modules/vouchers/vouchers.service.js:73` | `validateVoucher` menghitung `discountAmount` dari `cartTotal` (total seluruh item), padahal seharusnya dari subtotal item milik tenant yang dibatasi saja. Tenant check (step 5) hanya memvalidasi keberadaan tenant di cart, tetapi tidak mempengaruhi base kalkulasi diskon. |
+| 2 | `integration/src/services/order.push.js:25` | `_calcLineDiscount` tidak mengenal `voucher_tenant_id`. Fungsi menerapkan `discount` ke **semua** `sale.order.line` tanpa cek apakah item berasal dari tenant yang dibatasi. |
+| 3 | `backend/src/modules/orders/orders.service.js` `getTransaction` | Query tidak JOIN tabel `vouchers`, sehingga `voucher_tenant_id` tidak disertakan dalam response API. Integration service tidak bisa mengetahui batasan tenant voucher. |
+
+**Skenario konkret (AMZ50% untuk T001 saja):**
+
+```
+Cart: T001 Rp 100.000 + T002 Rp 100.000 = Rp 200.000
+
+SEBELUM fix:
+  discountAmount = 200.000 × 50% = Rp 100.000  ← SALAH (semua item)
+  Di Odoo: semua line dapat discount = 50%
+
+SETELAH fix:
+  tenantScopedSubtotal = Rp 100.000 (T001 saja)
+  discountAmount = 100.000 × 50% = Rp 50.000   ← BENAR
+  Di Odoo: T001 line → discount = 50%, T002 line → discount = 0%
+```
+
+**Fixes Applied:**
+
+1. **`vouchers.service.js`** — Terima parameter `items: [{price, quantity, tenant_id}]`. Saat `v.tenant_id` ada, hitung `tenantScopedSubtotal` dari item yang cocok dan gunakan sebagai base kalkulasi. Return `voucher_tenant_id` di result untuk downstream.
+
+2. **`vouchers.routes.js`** — Accept field opsional `items` di body `POST /vouchers/validate`, map ke format `{price, quantity, tenant_id}` sebelum diteruskan ke service.
+
+3. **`orders.service.js`** — `createOrder` dan `createOrderByCashier` kini pass `resolvedItems` (dengan `price` dan `tenant_id` dari `productMap`) ke `validateVoucher`. `getTransaction` ditambah `LEFT JOIN vouchers v ON v.code = t.voucher_code` untuk expose `voucher_tenant_id` di response API.
+
+4. **`order.push.js`** — `_calcLineDiscount(txn, item, allItems)`:
+   - Jika `txn.voucher_tenant_id` ada dan `item.tenant_id` tidak termasuk → return `0.0`
+   - FIXED: distribusi proporsional hanya dalam `eligibleItems` (item dari tenant yang dibatasi)
+   - Call site diperbarui: `_calcLineDiscount(txn, item, items)`
+
+5. **`VoucherInput.jsx`** — Terima prop `items` dan sertakan dalam body `POST /vouchers/validate`.
+
+6. **`CartPage.jsx`** — Pass `items` (dari CartContext) ke `VoucherInput`.
+
+**Files Changed:**
+- `backend/src/modules/vouchers/vouchers.service.js`
+- `backend/src/modules/vouchers/vouchers.routes.js`
+- `backend/src/modules/orders/orders.service.js`
+- `integration/src/services/order.push.js`
+- `frontend/src/components/cart/VoucherInput.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Odoo Integration — Tidak Terdampak:**  
+Mekanisme CR-015 (payment voucher chain: SO → invoice → payment) tidak berubah. `_calcLineDiscount` hanya mengubah nilai `discount` per baris; `action_confirm`, `action_create_invoices`, dan `account.payment` tetap berjalan normal. Amount total di Odoo akan otomatis mencerminkan diskon yang scoped karena `discount` hanya ada di baris T001.
+
+**Recurrence Prevention:**  
+Setiap voucher dengan `tenant_id` harus menggunakan `effectiveSubtotal` (subtotal dari tenant yang dibatasi) sebagai base kalkulasi diskon. Validasi keberadaan tenant di cart (step 5) dan kalkulasi diskon (step 7) harus menggunakan basis yang konsisten.
+
+---
+```sql
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'target_table' AND column_default LIKE '%uuid%';
+-- atau
+\d target_table  -- di psql
+```
+Tabel-tabel di proyek ini menggunakan pola `<table_singular>_id` sebagai PK (misal `customer_id`, `product_id`, `user_id`), bukan kolom generic `id`.
+
+---
+

@@ -7,12 +7,14 @@ import AuditLogTab    from './tabs/AuditLogTab';
 import ConfigTab      from './tabs/ConfigTab';
 import IntegrationTab from './tabs/IntegrationTab';
 import TaxTab         from './tabs/TaxTab';
+import VoucherTab     from './tabs/VoucherTab';
 
 const TABS = [
   { key: 'master-data', label: 'Master Data', icon: '📦', active: 'bg-blue-600 text-white shadow',   desc: 'Kelola produk & foto' },
   { key: 'user-role',   label: 'User & Role',  icon: '👥', active: 'bg-violet-600 text-white shadow', desc: 'Buat & atur akun user' },
   { key: 'booth',       label: 'Booth Tenant', icon: '🏪', active: 'bg-emerald-600 text-white shadow',desc: 'Kelola data booth & kontak' },
   { key: 'config',      label: 'Konfigurasi',  icon: '⚙️',  active: 'bg-amber-500 text-white shadow',  desc: 'Setup event & logo' },
+  { key: 'voucher',     label: 'Voucher',      icon: '🏷️', active: 'bg-pink-600 text-white shadow',   desc: 'Buat & kelola kode diskon event' },
   { key: 'audit-log',   label: 'Audit Log',    icon: '📋', active: 'bg-slate-600 text-white shadow',  desc: 'Monitor aktivitas' },
   { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
   { key: 'tax',         label: 'Pajak & SPT',  icon: '🧮', active: 'bg-orange-500 text-white shadow',  desc: 'Konfigurasi PPN, Tax Grid SPT Masa, dan mapping akun Odoo' },
@@ -72,6 +74,7 @@ export default function AdminPage() {
         {tab === 'user-role'   && <UserRoleTab />}
         {tab === 'booth'       && <BoothTab />}
         {tab === 'config'      && <ConfigTab />}
+        {tab === 'voucher'     && <VoucherTab />}
         {tab === 'audit-log'   && <AuditLogTab />}
         {tab === 'integration' && <IntegrationTab />}
         {tab === 'tax'         && <TaxTab />}

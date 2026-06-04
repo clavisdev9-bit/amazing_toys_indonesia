@@ -19,11 +19,16 @@ router.post('/',
     body('items').isArray({ min: 1 }).withMessage('Keranjang tidak boleh kosong.'),
     body('items.*.product_id').notEmpty(),
     body('items.*.quantity').isInt({ min: 1 }),
+    body('voucher_code').optional({ nullable: true }).isString(),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const data = await ordersSvc.createOrder(req.user.customerId, req.body.items);
+      const data = await ordersSvc.createOrder(
+        req.user.customerId,
+        req.body.items,
+        req.body.voucher_code || null
+      );
       res.status(201).json({ success: true, message: 'Pesanan berhasil dibuat.', data });
     } catch (err) { next(err); }
   }

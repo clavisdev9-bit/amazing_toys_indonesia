@@ -132,7 +132,15 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
   printer.drawLine();
 
   // ── Totals ────────────────────────────────────────────────────────────────
-  const COL = 32; // total line width on 80mm / 42 char mode
+  const COL         = 32; // total line width on 80mm / 42 char mode
+  const discountVal = parseFloat(txn?.discount_amount ?? 0);
+  const voucherCode = txn?.voucher_code || '';
+
+  if (discountVal > 0) {
+    const discLabel = voucherCode ? `Diskon (${voucherCode})` : 'Diskon';
+    printer.println(pad(discLabel, COL - 14) + rpad(`-${formatRupiah(discountVal)}`, 14));
+  }
+
   printer.bold(true);
   printer.setTextSize(1, 0);
   printer.println(pad('TOTAL', COL - 14) + rpad(formatRupiah(grandTotal), 14));

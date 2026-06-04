@@ -247,7 +247,13 @@ export default function ThermalReceipt({
 
       <hr style={S.ruleSolid} />
 
-      {/* Totals — item prices include tax; grand total shown only */}
+      {/* Totals — item prices include tax; discount shown if applicable */}
+      {parseFloat(txn?.discount_amount ?? 0) > 0 && (
+        <div style={{ ...S.totalRow, color: '#2a7a5a' }}>
+          <span>Diskon{txn?.voucher_code ? ` (${txn.voucher_code})` : ''}</span>
+          <span>− {formatRupiah(parseFloat(txn.discount_amount))}</span>
+        </div>
+      )}
       <div style={S.grandTotal}>
         <span>TOTAL</span>
         <span>{formatRupiah(parseFloat(txn?.total_amount ?? 0))}</span>

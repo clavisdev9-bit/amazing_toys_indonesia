@@ -1111,6 +1111,220 @@ Yang dihitung adalah **total quantity** (jumlah unit/pcs) dari semua line item, 
 
 ---
 
+### CR-029 — Sistem Voucher Diskon End-to-End (SOS × Odoo 18)
+**Files:**
+- `backend/migrations/010_voucher_tables.sql` *(new)*
+- `backend/src/modules/vouchers/vouchers.service.js` *(new)*
+- `backend/src/modules/vouchers/vouchers.routes.js` *(new)*
+- `frontend/src/api/vouchers.js` *(new)*
+- `frontend/src/components/cart/VoucherInput.jsx` *(new)*
+- `backend/src/modules/orders/orders.service.js`
+- `backend/src/modules/orders/orders.router.js`
+- `backend/src/app.js`
+- `integration/src/services/order.push.js`
+- `integration/src/clients/odoo.client.js`
+- `frontend/src/context/CartContext.jsx`
+- `frontend/src/api/orders.js`
+- `frontend/src/pages/customer/CartPage.jsx`
+- `frontend/src/components/cashier/ThermalReceipt.jsx`
+- `frontend/src/pages/customer/ReceiptPickupPage.jsx`
+- `backend/src/modules/print/print.service.js`
+
+**Type:** Feature — Voucher Discount System  
+**Date:** 2026-06-04  
+**Author:** clavis Development
+
+**Background:**  
+Tidak ada mekanisme diskon berbasis kode voucher di SOS. Admin tidak bisa membuat kampanye potongan harga untuk event, dan tidak ada jejak diskon di Odoo SO atau receipt.
+
+**Changes:**
+
+#### 1. Database — Migration `010_voucher_tables.sql`
+
+Tabel baru dan extend `transactions`:
+
+```sql
+-- Tabel vouchers (master data kode diskon)
+vouchers (
+  code VARCHAR(50) UNIQUE,
+  discount_type VARCHAR(10)   -- 'PERCENT' | 'FIXED'
+  discount_value NUMERIC,     -- persen atau nominal IDR
+  min_purchase NUMERIC,
+  max_discount NUMERIC,       -- cap nominal untuk PERCENT
+  usage_limit INTEGER,        -- NULL = unlimited
+  usage_count INTEGER,
+  valid_from / valid_until TIMESTAMPTZ,
+  is_active BOOLEAN,
+  tenant_id VARCHAR(10)       -- NULL = berlaku semua tenant
+)
+
+-- Tabel voucher_usages (histori pemakaian, idempotency guard)
+voucher_usages (
+  voucher_code → vouchers(code),
+  transaction_id VARCHAR(30),
+  customer_id UUID → customers(customer_id) ON DELETE SET NULL,
+  discount_amount NUMERIC,
+  UNIQUE (voucher_code, transaction_id)
+)
+
+-- Extend transactions
+ALTER TABLE transactions
+  ADD COLUMN voucher_code VARCHAR(50) → vouchers(code),
+  ADD COLUMN discount_amount NUMERIC DEFAULT 0;
+```
+
+#### 2. Backend — Modul Vouchers Baru
+
+**`vouchers.service.js`:**
+
+- `validateVoucher({ code, customerId, cartTotal, tenantIds })` — 7 validasi berurutan: aktif, waktu, usage limit, min purchase, tenant scope, duplikasi customer, hitung `discount_amount`
+- `applyVoucher({ code, transactionId, customerId, discountAmount, client })` — idempotent insert ke `voucher_usages`, increment `usage_count`, update `transactions`; mendukung shared DB client untuk atomic operation
+- CRUD admin: `listVouchers`, `getVoucherByCode`, `createVoucher`, `updateVoucher`, `deactivateVoucher`
+
+**`vouchers.routes.js`:**
+
+| Endpoint | Auth | Fungsi |
+|---|---|---|
+| `POST /api/v1/vouchers/validate` | CUSTOMER / CASHIER / LEADER | Validasi kode voucher |
+| `POST /api/v1/vouchers/apply` | ADMIN | Record pemakaian voucher (internal) |
+| `GET /api/v1/admin/vouchers` | ADMIN | List semua voucher |
+| `POST /api/v1/admin/vouchers` | ADMIN | Buat voucher baru |
+| `PATCH /api/v1/admin/vouchers/:code` | ADMIN | Update voucher |
+| `DELETE /api/v1/admin/vouchers/:code` | ADMIN | Soft delete (is_active=false) |
+
+#### 3. Backend — Extend `orders.service.js`
+
+**Formula yang benar (perbaikan kritis dari spec awal):**
+```js
+// Discount diterapkan pre-tax; PPN dihitung ulang dari taxable amount
+const taxableAmount = subtotalAmount - discountAmount;
+const taxAmount     = Math.round(taxableAmount * TAX_RATE / 100);
+const totalAmount   = taxableAmount + taxAmount;
+```
+
+`createOrder(customerId, items, voucherCode = null)` dan `createOrderByCashier(cashierId, items, voucherCode = null)`:
+1. Validate voucher → `discountAmount` (sebelum INSERT)
+2. INSERT transactions dengan `voucher_code` dan `discount_amount` bersama nilai `tax_amount`/`total_amount` yang sudah dihitung ulang
+3. `applyVoucher()` dipanggil **dalam DB transaction yang sama** — jika gagal (race condition), rollback seluruh order
+
+Walk-in Customer (POS Langsung) skip duplicate-customer check di `validateVoucher`.
+
+#### 4. Integration — Extend `order.push.js`
+
+**Helper `_calcLineDiscount(txn, item)`:**
+
+```js
+// PERCENT: uniform % ke semua baris
+if (discountType === 'PERCENT') return discountValue;
+
+// FIXED: distribusi proporsional per baris
+const rawPercent = (discountAmount / subtotalAmount) * 100;
+return Math.min(parseFloat(rawPercent.toFixed(4)), 100);
+```
+
+Field `discount` ditulis ke setiap `sale.order.line`. Field `x_voucher_code` ditulis ke `sale.order` header jika tersedia di Odoo (`cache.hasVoucherCodeField`).
+
+Audit log ORDER_PUSH diperluas dengan `voucher_code` dan `discount_amount`.
+
+Warning (bukan block) jika total SOS vs Odoo berbeda > Rp 1.
+
+**`odoo.client.js`:** Deteksi `x_voucher_code` field di startup refs → set `cache.hasVoucherCodeField`.
+
+#### 5. Frontend — VoucherInput + CartContext + CartPage
+
+**`VoucherInput.jsx` (komponen baru):**
+- Input kode + tombol "Pakai" → `POST /api/v1/vouchers/validate`
+- State: `idle | loading | valid | invalid`
+- Valid: chip hijau "Voucher KODE — hemat Rp X" + tombol ×
+- Error: pesan spesifik per kode error (VOUCHER_NOT_FOUND, VOUCHER_EXPIRED, dll.)
+
+**`CartContext.jsx`:**
+- State baru: `appliedVoucher`, `discountAmount`
+- Fungsi baru: `applyVoucher(voucherData)`, `removeVoucher()`
+- `clearCart()` sekarang juga clear voucher state
+
+**`CartPage.jsx` — ringkasan harga baru:**
+```
+Subtotal:          Rp xxx.xxx   (pre-tax)
+Diskon (KODE):   − Rp xxx.xxx   (hanya tampil jika ada voucher)
+PPN 11%:           Rp xxx.xxx   (dihitung dari taxable = subtotal - diskon)
+Total:             Rp xxx.xxx
+```
+
+`createOrder(items, voucherCode)` dikirim ke backend saat checkout.
+
+#### 6. Receipt — Update Tiga Jalur Rendering
+
+Semua tiga jalur receipt kini menampilkan baris diskon jika `discount_amount > 0`:
+
+| File | Perubahan |
+|---|---|
+| `ThermalReceipt.jsx` | Baris "Diskon (KODE) − Rp X" sebelum TOTAL, warna hijau |
+| `ReceiptPickupPage.jsx` | Baris "Diskon (KODE) − Rp X" sebelum TOTAL, class `text-green-600` |
+| `print.service.js` | Baris "Diskon (KODE) -Rp X" dalam ESC/POS output sebelum TOTAL |
+
+**Odoo Setup (wajib sebelum production — dilakukan manual):**
+1. Settings → Sales → Pricing → centang "Discounts" (mengaktifkan `sale.order.line.discount`)
+2. Buat field `x_voucher_code` (Char 50) di `sale.order` via Odoo Shell atau UI
+3. Lihat `docs/voucher-implementation-prompts.md` Prompt E untuk panduan lengkap
+
+---
+
+---
+
+### CR-030 — Fix Voucher Tenant-Scoped: Diskon Harus Terbatas pada Item Tenant yang Dibatasi
+**Files:**
+- `backend/src/modules/vouchers/vouchers.service.js`
+- `backend/src/modules/vouchers/vouchers.routes.js`
+- `backend/src/modules/orders/orders.service.js`
+- `integration/src/services/order.push.js`
+- `frontend/src/components/cart/VoucherInput.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Type:** Bug Fix — CR-029  
+**Date:** 2026-06-04  
+**Triggered by:** BUG-016 (TXN-20260604-00024 — voucher AMZ50% untuk T001 menerapkan diskon global)
+
+**Root cause:** Lihat BUG-016 di RESOLUTION.md.
+
+**Changes:**
+
+1. **`vouchers.service.js`** — `validateVoucher` menerima parameter baru `items: [{price, quantity, tenant_id}]`. Ketika voucher memiliki `tenant_id`, base kalkulasi diskon diubah dari `cartTotal` menjadi `tenantScopedSubtotal` (subtotal item dari tenant yang dibatasi). Return menambahkan `voucher_tenant_id`.
+
+   ```js
+   // SEBELUM (salah):
+   const raw = cartTotal * (discount_value / 100);  // seluruh cart
+
+   // SESUDAH (benar):
+   const tenantScopedSubtotal = items
+     .filter(i => allowedTenants.includes(i.tenant_id))
+     .reduce((s, i) => s + i.price * i.quantity, 0);
+   const raw = tenantScopedSubtotal * (discount_value / 100);  // tenant scope only
+   ```
+
+2. **`vouchers.routes.js`** — `POST /api/v1/vouchers/validate` menerima field opsional `items` di request body.
+
+3. **`orders.service.js`** — `createOrder` dan `createOrderByCashier` pass `resolvedItems` dengan `price` dan `tenant_id` ke `validateVoucher`. `getTransaction` ditambah `LEFT JOIN vouchers` untuk expose `voucher_tenant_id` di API response.
+
+4. **`order.push.js`** — `_calcLineDiscount(txn, item, allItems)`:
+
+   ```js
+   // Item dari tenant lain → tidak dapat diskon
+   if (voucherTenantId && !allowedTenants.includes(item.tenant_id)) return 0.0;
+
+   // FIXED: distribusi hanya dalam eligible items (bukan semua item)
+   const eligibleSubtotal = eligibleItems.reduce((s, i) => s + i.unit_price * i.quantity, 0);
+   ```
+
+5. **`VoucherInput.jsx`** — Menerima prop `items` dan menyertakannya dalam body API call.
+
+6. **`CartPage.jsx`** — Pass `items` dari CartContext ke `VoucherInput`.
+
+**Odoo Integration — Tidak Terdampak:**  
+Payment voucher chain (CR-015/CR-016) tidak berubah. Perubahan hanya pada nilai `discount` per baris yang kini 0% untuk baris dari tenant yang tidak dibatasi. `action_confirm`, invoicing, dan payment tetap berjalan normal.
+
+---
+
 ## Database Changes
 
 | Type | Description | Applied |
@@ -1127,6 +1341,7 @@ Yang dihitung adalah **total quantity** (jumlah unit/pcs) dari semua line item, 
 | Data result | TXN-20260526-00001 → Odoo S00033 (AMAZING TOYS, confirmed, locked) | ✓ |
 
 | Schema migration | `009_payment_voucher_xref.sql` — tambah kolom `odoo_invoice_id`, `odoo_payment_id`, `voucher_status`, `voucher_synced_at` + index ke tabel `integration_xref` | Yes — applied 2026-05-28 |
+| Schema migration | `010_voucher_tables.sql` — buat tabel `vouchers`, `voucher_usages`; tambah kolom `voucher_code`, `discount_amount` ke `transactions` + 5 index | Yes — applied 2026-06-04 |
 | Data correction | 4 `integration_xref` entries migrated: `sync_metadata.manualConfirmRequired = true` → `confirmFailed = true` for TXN-20260519-00010, TXN-20260519-00013, TXN-20260520-00022, TXN-20260506-00007 | Yes — direct SQL 2026-05-29 |
 | Data result | TXN-20260520-00022 → SO confirmed, invoice INV-250 created & paid (payment id=47) | ✓ 2026-05-29 |
 | Data result | TXN-20260519-00013 → SO confirmed, invoice INV-251 created & paid (payment id=48) | ✓ 2026-05-29 |
@@ -1138,6 +1353,7 @@ Yang dihitung adalah **total quantity** (jumlah unit/pcs) dari semua line item, 
 
 ## Deployment Notes
 
+### CR-001 s/d CR-028 (previous cycles)
 All code changes were hot-deployed to the running Docker containers via `docker cp` and a container restart. No image rebuild was required for this fix cycle.
 
 ```
@@ -1147,9 +1363,40 @@ docker cp frontend/dist/...   sos_frontend:/usr/share/nginx/html/...
 docker restart sos_integration
 ```
 
-For a full rebuild and permanent persistence of these changes, rebuild the images from the updated source:
+### CR-029 (2026-06-04)
+
+Migration dijalankan langsung ke container PostgreSQL:
+```bash
+docker cp backend/migrations/010_voucher_tables.sql sos_postgres:/tmp/
+docker exec sos_postgres psql -U postgres -d amazing_toys_sos -f /tmp/010_voucher_tables.sql
 ```
+
+Backend dan integration hot-deployed via file copy individual:
+```bash
+docker cp backend/src/app.js                                      sos_backend:/app/src/app.js
+docker cp backend/src/modules/vouchers/                           sos_backend:/app/src/modules/vouchers/
+docker cp backend/src/modules/orders/orders.service.js            sos_backend:/app/src/modules/orders/
+docker cp backend/src/modules/orders/orders.router.js             sos_backend:/app/src/modules/orders/
+docker cp backend/src/modules/print/print.service.js              sos_backend:/app/src/modules/print/
+docker cp integration/src/services/order.push.js                  sos_integration:/app/src/services/
+docker cp integration/src/clients/odoo.client.js                  sos_integration:/app/src/clients/
+docker restart sos_backend sos_integration
+```
+
+Frontend direbuild karena perubahan source React (bukan hot-swap):
+```bash
+docker compose build frontend
+docker compose up -d frontend
+```
+
+For a full rebuild and permanent persistence of all changes:
+```bash
 docker compose build --no-cache
 docker compose up -d
 ```
+
+**Pending (manual, dilakukan di Odoo sebelum production):**
+1. Aktifkan Discounts: Settings → Sales → Pricing → centang "Discounts"
+2. Buat field `x_voucher_code` (Char 50) di `sale.order` via Odoo Shell
+3. Panduan lengkap: `docs/voucher-implementation-prompts.md` → Prompt E
 

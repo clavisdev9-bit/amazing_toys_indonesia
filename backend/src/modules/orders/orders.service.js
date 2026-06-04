@@ -10,6 +10,7 @@ const { generateTransactionQR }  = require('../../utils/qrcode');
 const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
 const { fireWebhook }            = require('../../utils/webhook');
+const voucherSvc                 = require('../vouchers/vouchers.service');
 
 const _SYSTEM_CONFIG_PATH = path.join(__dirname, '../../../data/system-config.json');
 const _ENV_TIMEOUT = parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10);
@@ -52,11 +53,12 @@ async function _getTaxSettings() {
  * Create a new order from a validated cart.
  * Validates stock, locks rows, decrements stock, creates TXN record.
  *
- * @param {string}   customerId
- * @param {Array}    items   [{ product_id, quantity }]
+ * @param {string}      customerId
+ * @param {Array}       items         [{ product_id, quantity }]
+ * @param {string|null} voucherCode   optional voucher code
  * @returns {object} transaction with QR code
  */
-async function createOrder(customerId, items) {
+async function createOrder(customerId, items, voucherCode = null) {
   if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
 
   const maxItems = _getMaxItemsPerOrder();
@@ -88,14 +90,36 @@ async function createOrder(customerId, items) {
       }
     }
 
-    // 3. Calculate totals — read PPN rate from config (falls back to 12%)
-    const taxCfg      = await _getTaxSettings();
-    const TAX_RATE    = taxCfg.active ? taxCfg.rate : 0;
+    // 3. Calculate totals — PPN dihitung pada (subtotal - diskon)
+    const taxCfg         = await _getTaxSettings();
+    const TAX_RATE       = taxCfg.active ? taxCfg.rate : 0;
     const subtotalAmount = items.reduce((sum, item) => {
       return sum + (productMap[item.product_id].price * item.quantity);
     }, 0);
-    const taxAmount   = Math.round(subtotalAmount * TAX_RATE / 100);
-    const totalAmount = subtotalAmount + taxAmount;
+
+    // Validate & compute discount BEFORE inserting
+    // Pass resolved items so validateVoucher can scope discount to the restricted tenant
+    let discountAmount = 0;
+    if (voucherCode) {
+      const tenantIds = [...new Set(items.map(i => productMap[i.product_id]?.tenant_id).filter(Boolean))];
+      const resolvedItems = items.map(i => ({
+        price:     productMap[i.product_id].price,
+        quantity:  i.quantity,
+        tenant_id: productMap[i.product_id].tenant_id,
+      }));
+      const vResult = await voucherSvc.validateVoucher({
+        code: voucherCode,
+        customerId,
+        cartTotal: subtotalAmount,
+        tenantIds,
+        items: resolvedItems,
+      });
+      discountAmount = vResult.discount_amount;
+    }
+
+    const taxableAmount = subtotalAmount - discountAmount;
+    const taxAmount     = Math.round(taxableAmount * TAX_RATE / 100);
+    const totalAmount   = taxableAmount + taxAmount;
 
     // 4. Generate TXN ID
     const transactionId = await generateTxnId();
@@ -105,12 +129,14 @@ async function createOrder(customerId, items) {
     const qrPayload = await generateTransactionQR(transactionId);
     console.log('QR Generated - Length:', qrPayload?.length);
 
-    // 6. Insert transaction
+    // 6. Insert transaction (with discount fields)
     await client.query(
       `INSERT INTO transactions
-         (transaction_id, customer_id, status, subtotal_amount, tax_rate, tax_amount, total_amount, qr_payload, expires_at)
-       VALUES ($1, $2, 'PENDING', $3, $4, $5, $6, $7, $8)`,
-      [transactionId, customerId, subtotalAmount, TAX_RATE, taxAmount, totalAmount, qrPayload, expiresAt]
+         (transaction_id, customer_id, status, subtotal_amount, tax_rate, tax_amount, total_amount,
+          voucher_code, discount_amount, qr_payload, expires_at)
+       VALUES ($1, $2, 'PENDING', $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [transactionId, customerId, subtotalAmount, TAX_RATE, taxAmount, totalAmount,
+       voucherCode || null, discountAmount, qrPayload, expiresAt]
     );
 
     // 7. Insert items & decrement stock
@@ -127,16 +153,35 @@ async function createOrder(customerId, items) {
       );
     }
 
-    // 8. Audit log
+    // 8. Record voucher usage (within same DB transaction)
+    if (voucherCode && discountAmount > 0) {
+      try {
+        await voucherSvc.applyVoucher({
+          code: voucherCode,
+          transactionId,
+          customerId,
+          discountAmount,
+          client,
+        });
+      } catch (vErr) {
+        // Race condition: voucher taken by concurrent request — rollback the whole order
+        throw new AppError(
+          `Voucher tidak lagi tersedia, silakan coba tanpa voucher. (${vErr.message})`,
+          409
+        );
+      }
+    }
+
+    // 9. Audit log
     await writeAuditLog({
       action: 'TXN_CREATED', actorId: customerId, actorRole: 'CUSTOMER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { customerId, totalAmount, items: items.length },
+      newValue: { customerId, totalAmount, items: items.length, discountAmount, voucherCode },
     });
 
     console.log('Order created - TXN:', transactionId, 'QR Length:', qrPayload?.length);
 
-    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, expiresAt, qrPayload, status: 'PENDING' };
+    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, discountAmount, voucherCode: voucherCode || null, expiresAt, qrPayload, status: 'PENDING' };
   });
 }
 
@@ -146,10 +191,12 @@ async function createOrder(customerId, items) {
 async function getTransaction(transactionId, requesterId, requesterRole) {
   const txResult = await query(
     `SELECT t.*, c.full_name AS customer_name, c.phone_number AS customer_phone,
-            c.email AS customer_email, u.display_name AS cashier_name
+            c.email AS customer_email, u.display_name AS cashier_name,
+            v.tenant_id AS voucher_tenant_id
      FROM transactions t
      JOIN customers c ON c.customer_id = t.customer_id
      LEFT JOIN users u ON u.user_id = t.cashier_id
+     LEFT JOIN vouchers v ON v.code = t.voucher_code
      WHERE t.transaction_id = $1`,
     [transactionId]
   );
@@ -420,8 +467,12 @@ async function removeOrderItem(transactionId, customerId, productId) {
 /**
  * Create a walk-in order on behalf of a cashier.
  * Uses a reserved walk-in customer so the transactions FK is satisfied.
+ *
+ * @param {string}      cashierId
+ * @param {Array}       items
+ * @param {string|null} voucherCode  optional voucher code
  */
-async function createOrderByCashier(cashierId, items) {
+async function createOrderByCashier(cashierId, items, voucherCode = null) {
   if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
 
   const maxItems = _getMaxItemsPerOrder();
@@ -467,12 +518,32 @@ async function createOrderByCashier(cashierId, items) {
       }
     }
 
-    // 3. Calculate totals
+    // 3. Calculate totals — PPN dihitung pada (subtotal - diskon)
     const taxCfg         = await _getTaxSettings();
     const TAX_RATE       = taxCfg.active ? taxCfg.rate : 0;
     const subtotalAmount = items.reduce((sum, item) => sum + productMap[item.product_id].price * item.quantity, 0);
-    const taxAmount      = Math.round(subtotalAmount * TAX_RATE / 100);
-    const totalAmount    = subtotalAmount + taxAmount;
+
+    let discountAmount = 0;
+    if (voucherCode) {
+      const tenantIds = [...new Set(items.map(i => productMap[i.product_id]?.tenant_id).filter(Boolean))];
+      const resolvedItems = items.map(i => ({
+        price:     productMap[i.product_id].price,
+        quantity:  i.quantity,
+        tenant_id: productMap[i.product_id].tenant_id,
+      }));
+      const vResult = await voucherSvc.validateVoucher({
+        code: voucherCode,
+        customerId,
+        cartTotal: subtotalAmount,
+        tenantIds,
+        items: resolvedItems,
+      });
+      discountAmount = vResult.discount_amount;
+    }
+
+    const taxableAmount = subtotalAmount - discountAmount;
+    const taxAmount     = Math.round(taxableAmount * TAX_RATE / 100);
+    const totalAmount   = taxableAmount + taxAmount;
 
     // 4. Generate IDs
     const transactionId = await generateTxnId();
@@ -482,9 +553,11 @@ async function createOrderByCashier(cashierId, items) {
     // 5. Insert transaction with cashier_id pre-filled
     await client.query(
       `INSERT INTO transactions
-         (transaction_id, customer_id, cashier_id, status, subtotal_amount, tax_rate, tax_amount, total_amount, qr_payload, expires_at)
-       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9)`,
-      [transactionId, customerId, cashierId, subtotalAmount, TAX_RATE, taxAmount, totalAmount, qrPayload, expiresAt]
+         (transaction_id, customer_id, cashier_id, status, subtotal_amount, tax_rate, tax_amount, total_amount,
+          voucher_code, discount_amount, qr_payload, expires_at)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [transactionId, customerId, cashierId, subtotalAmount, TAX_RATE, taxAmount, totalAmount,
+       voucherCode || null, discountAmount, qrPayload, expiresAt]
     );
 
     // 6. Insert items & decrement stock
@@ -501,13 +574,31 @@ async function createOrderByCashier(cashierId, items) {
       );
     }
 
+    // 7. Record voucher usage (within same DB transaction)
+    if (voucherCode && discountAmount > 0) {
+      try {
+        await voucherSvc.applyVoucher({
+          code: voucherCode,
+          transactionId,
+          customerId,
+          discountAmount,
+          client,
+        });
+      } catch (vErr) {
+        throw new AppError(
+          `Voucher tidak lagi tersedia, silakan coba tanpa voucher. (${vErr.message})`,
+          409
+        );
+      }
+    }
+
     await writeAuditLog({
       action: 'TXN_CREATED', actorId: cashierId, actorRole: 'CASHIER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { cashierId, customerId, totalAmount, items: items.length },
+      newValue: { cashierId, customerId, totalAmount, items: items.length, discountAmount, voucherCode },
     });
 
-    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, expiresAt, qrPayload, status: 'PENDING' };
+    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, discountAmount, voucherCode: voucherCode || null, expiresAt, qrPayload, status: 'PENDING' };
   });
 }
 

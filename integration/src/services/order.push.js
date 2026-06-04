@@ -15,6 +15,55 @@ const toOdooDatetime = (iso) =>
   new Date(iso || undefined).toISOString().replace('T', ' ').slice(0, 19);
 
 /**
+ * Calculate the Odoo `discount` percent for a single order line.
+ * Odoo's `discount` field = percentage, 0–100.
+ *
+ * When the voucher has a tenant restriction (txn.voucher_tenant_id):
+ *   - Lines from OTHER tenants receive discount = 0
+ *   - Lines from the RESTRICTED tenant receive the full PERCENT or a
+ *     proportional share of the FIXED amount within only those lines.
+ *
+ * @param {object}   txn       full transaction object (includes voucher_tenant_id)
+ * @param {object}   item      the specific order line item being processed
+ * @param {object[]} allItems  all items in the transaction (needed for FIXED scoping)
+ */
+function _calcLineDiscount(txn, item, allItems) {
+  const discountAmount   = parseFloat(txn.discount_amount || 0);
+  if (!discountAmount || discountAmount <= 0) return 0.0;
+
+  const discountType    = txn.discount_type    || '';
+  const discountValue   = parseFloat(txn.discount_value || 0);
+  const voucherTenantId = txn.voucher_tenant_id || null;
+
+  // ── Tenant scope check ────────────────────────────────────────────────────
+  if (voucherTenantId) {
+    const allowedTenants = voucherTenantId.split(',').map(t => t.trim());
+    if (!allowedTenants.includes(item.tenant_id)) return 0.0;
+  }
+
+  if (discountType === 'PERCENT') {
+    return parseFloat(Math.min(discountValue, 100).toFixed(4));
+  }
+
+  // FIXED: distribute proportionally within eligible items only
+  // Eligible = all items when no tenant restriction; only tenant-matching items when restricted
+  const eligibleItems = voucherTenantId
+    ? (allItems || []).filter(i => {
+        const allowed = voucherTenantId.split(',').map(t => t.trim());
+        return allowed.includes(i.tenant_id);
+      })
+    : (allItems || []);
+
+  const eligibleSubtotal = eligibleItems.reduce(
+    (sum, i) => sum + parseFloat(i.unit_price) * parseFloat(i.quantity), 0
+  );
+  if (eligibleSubtotal <= 0) return 0.0;
+
+  const rawPercent = (discountAmount / eligibleSubtotal) * 100;
+  return parseFloat(Math.min(rawPercent, 100).toFixed(4));
+}
+
+/**
  * Resolve Odoo product.product id for a SOS order line item.
  * Strategy (in order):
  *   1. product_odoo_id (template ID from SOS products table) → find the variant
@@ -214,12 +263,15 @@ async function _doPushOrder(transactionId) {
       return { success: false, odoo_order_id: null, error: `Unresolved product in Odoo: ${item.product_name}` };
     }
 
+    // Compute per-line discount for Odoo (field `discount` = percent, 0–100)
+    const lineDiscount = _calcLineDiscount(txn, item, items);
+
     lines.push([0, 0, {
       product_id: odooProductId,
       product_uom_qty: parseFloat(item.quantity),
       price_unit: parseFloat(item.unit_price),
       name: item.product_name,
-      discount: 0.0,
+      discount: lineDiscount,
     }]);
   }
 
@@ -249,7 +301,10 @@ async function _doPushOrder(transactionId) {
 
   // warehouse_id is required for action_confirm to resolve delivery routes.
   if (cache.warehouseId) orderVals.warehouse_id = cache.warehouseId;
-  if (cache.hasSosTransactionId) orderVals.x_studio_sos_transaction_id = transactionId;
+  if (cache.hasSosTransactionId)  orderVals.x_studio_sos_transaction_id = transactionId;
+  if (cache.hasVoucherCodeField && txn.voucher_code) {
+    orderVals.x_voucher_code = txn.voucher_code;
+  }
   if (cache.hasSosTenantId) {
     if (cache.tenantIdFieldType === 'many2many') {
       const odooTenantIds = [];
@@ -384,6 +439,23 @@ async function _doPushOrder(transactionId) {
     // Non-fatal verification — delivery creation is handled by Odoo procurement.
   }
 
+  // ── Total mismatch check (warning only) ─────────────────────────────────────
+  try {
+    const sosTotal  = parseFloat(txn.total_amount || 0);
+    if (sosTotal > 0) {
+      const odooOrders = await odoo.searchRead(
+        'sale.order', [['id', '=', odooOrderId]], ['amount_total']
+      );
+      const odooTotal = parseFloat(odooOrders[0]?.amount_total || 0);
+      const diff = Math.abs(sosTotal - odooTotal);
+      if (diff > 1) {
+        logger.warn('Order push: total mismatch between SOS and Odoo', {
+          transactionId, odooOrderId, sosTotal, odooTotal, diff,
+        });
+      }
+    }
+  } catch (_err) { /* non-fatal */ }
+
   // ── Finalise ─────────────────────────────────────────────────────────────────
   await xref.upsertXref('order', transactionId, odooOrderId, { tenantIds });
   audit.log({
@@ -393,6 +465,10 @@ async function _doPushOrder(transactionId) {
     action: 'CREATE',
     status: 'SUCCESS',
     duration_ms: Date.now() - startAt,
+    request_summary: JSON.stringify({
+      voucher_code: txn.voucher_code || null,
+      discount_amount: parseFloat(txn.discount_amount || 0),
+    }).slice(0, 2000),
   });
   logger.info('Order push: success', { transactionId, odooOrderId, durationMs: Date.now() - startAt });
   return { success: true, odoo_order_id: odooOrderId, error: null };
