@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import ProductBulkUpload from '../ProductBulkUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
@@ -188,6 +189,7 @@ export default function MasterDataTab() {
   const [uploading, setUploading]     = useState(false);
   const [previewUrl, setPreviewUrl]   = useState(null);
 
+  const [qrModal, setQrModal]             = useState(null); // product for QR display
   const [holdingId, setHoldingId]         = useState(null); // productId being toggled
   const [syncingToOdoo, setSyncingToOdoo] = useState(false);
   const [bulkCatModal, setBulkCatModal]   = useState(false);
@@ -207,6 +209,18 @@ export default function MasterDataTab() {
   const [page, setPage]           = useState(1);
   const [pageSize, setPageSize]   = useState(20);
   const [pagination, setPagination] = useState({ total: 0, page: 1, page_size: 20, total_pages: 1 });
+
+  function handleDownloadQR() {
+    const canvas = document.getElementById('qr-barcode-canvas');
+    if (!canvas) return;
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `barcode-${qrModal?.barcode ?? 'qr'}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 
   const fetchProducts = useCallback(() => {
     setLoading(true);
@@ -586,7 +600,7 @@ export default function MasterDataTab() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  {['ID / Nama','Deskripsi','Kategori','Harga','Tenant','Stok','Status','Foto','Diperbarui','Aksi'].map((h) => (
+                  {['ID / Nama','Deskripsi','Kategori','Harga','Tenant','Barcode','Status','Foto','Diperbarui','Aksi'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -607,8 +621,20 @@ export default function MasterDataTab() {
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.category}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-700 whitespace-nowrap">{formatRupiah(p.price)}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.tenant_name}</td>
-                    <td className="px-3 py-2.5 text-xs font-semibold">
-                      <span className={stockColor(p.stock_quantity)}>{p.stock_quantity}</span>
+                    <td className="px-3 py-2.5">
+                      <button
+                        onClick={() => setQrModal(p)}
+                        title={p.barcode}
+                        className="flex flex-col items-center px-2 py-1 rounded border border-violet-300 text-violet-600 hover:bg-violet-50 transition-colors"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                          <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                          <rect x="3" y="14" width="7" height="7" rx="1"/>
+                          <rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/>
+                          <rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/>
+                        </svg>
+                        <span className="font-mono text-[9px] text-gray-400 truncate max-w-[72px] mt-0.5">{p.barcode}</span>
+                      </button>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(p)}`}>
@@ -824,6 +850,30 @@ export default function MasterDataTab() {
             <Button className="flex-1" loading={bulkDescSaving} disabled={!bulkDescValue.trim()} onClick={handleBulkDescription}>
               Terapkan
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Barcode QR Modal */}
+      <Modal open={!!qrModal} onClose={() => setQrModal(null)} title="Barcode QR Code">
+        <div className="flex flex-col items-center gap-4 py-2">
+          <div>
+            <p className="text-sm font-semibold text-gray-800 text-center">{qrModal?.product_name}</p>
+            <p className="text-xs text-gray-400 font-mono text-center mt-0.5">{qrModal?.product_id}</p>
+          </div>
+          <div className="p-4 bg-white border-2 border-gray-100 rounded-2xl shadow-sm">
+            <QRCodeCanvas
+              id="qr-barcode-canvas"
+              value={qrModal?.barcode ?? ''}
+              size={200}
+              level="M"
+              includeMargin={false}
+            />
+          </div>
+          <p className="text-base font-mono font-bold text-gray-700 tracking-widest">{qrModal?.barcode}</p>
+          <div className="flex gap-2 w-full pt-1">
+            <Button variant="secondary" className="flex-1" onClick={() => setQrModal(null)}>Tutup</Button>
+            <Button className="flex-1" onClick={handleDownloadQR}>Unduh PNG</Button>
           </div>
         </div>
       </Modal>

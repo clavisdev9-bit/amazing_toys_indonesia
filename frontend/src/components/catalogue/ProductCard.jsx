@@ -49,7 +49,8 @@ export default function ProductCard({ product, tourAttr }) {
   const [imgError, setImgError] = useState(false);
   const config       = usePublicConfig();
   const ppnRate      = parseFloat(config?.ppn_rate) || 0;
-  const isHelperMode = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
+  const isHelperMode  = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
+  const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
 
   const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
@@ -144,7 +145,7 @@ export default function ProductCard({ product, tourAttr }) {
         </div>
 
         {/* Add to cart button */}
-        {isHelperMode ? (
+        {(isHelperMode || isApproveMode) ? (
           <div
             className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-[11px] font-semibold mt-1"
             style={{

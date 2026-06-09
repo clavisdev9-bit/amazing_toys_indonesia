@@ -11,7 +11,6 @@ const router = express.Router();
 
 // GET /api/v1/products — public browse (Customer)
 router.get('/',
-  authenticate,
   [
     qv('tenant_id').optional().isString(),
     qv('category').optional().isString(),
@@ -37,7 +36,7 @@ router.get('/',
 );
 
 // GET /api/v1/products/categories
-router.get('/categories', authenticate, async (req, res, next) => {
+router.get('/categories', async (req, res, next) => {
   try {
     const data = await productsSvc.listCategories();
     res.json({ success: true, data });

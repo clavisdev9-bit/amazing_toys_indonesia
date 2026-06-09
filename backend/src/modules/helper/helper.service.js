@@ -624,6 +624,7 @@ async function getApprovalQueue(helperTenantId) {
      LEFT JOIN customers c ON c.customer_id = t.customer_id
      WHERE ti.tenant_id = $1
        AND t.status = 'PENDING_APPROVAL'
+       AND ti.approval_status = 'PENDING'
      GROUP BY t.transaction_id, t.status, t.voucher_code,
               t.created_at, t.expires_at,
               c.full_name, c.phone_number

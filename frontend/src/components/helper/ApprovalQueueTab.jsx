@@ -4,6 +4,7 @@ import { formatRupiah, formatDate } from '../../utils/format';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 import Modal from '../ui/Modal';
+import { useWebSocket } from '../../hooks/useWebSocket';
 
 function ApprovalCard({ txn, onApprove, onReject, approving, rejecting }) {
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -125,6 +126,7 @@ export default function ApprovalQueueTab({ onCountChange }) {
   const [approvingId, setApprovingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
   const [toast, setToast]       = useState(null);
+  const { subscribe }           = useWebSocket();
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
@@ -151,10 +153,24 @@ export default function ApprovalQueueTab({ onCountChange }) {
     return () => clearInterval(id);
   }, [fetchQueue]);
 
+  // Real-time: refresh when another helper (other booth) acts on the queue
+  useEffect(() => {
+    return subscribe('APPROVAL_QUEUE_UPDATE', fetchQueue);
+  }, [subscribe, fetchQueue]);
+
+  function removeFromQueue(txnId) {
+    setQueue((prev) => {
+      const updated = prev.filter((t) => t.transaction_id !== txnId);
+      onCountChange?.(updated.length);
+      return updated;
+    });
+  }
+
   async function handleApprove(txnId) {
     setApprovingId(txnId);
     try {
       await approveOrder(txnId);
+      removeFromQueue(txnId);
       showToast('Pesanan disetujui. Stok dikurangi dan timer dimulai.');
       fetchQueue();
     } catch (err) {
@@ -168,6 +184,7 @@ export default function ApprovalQueueTab({ onCountChange }) {
     setRejectingId(txnId);
     try {
       await rejectOrder(txnId, reason);
+      removeFromQueue(txnId);
       showToast('Pesanan ditolak.');
       fetchQueue();
     } catch (err) {

@@ -53,7 +53,15 @@
       "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"*ApprovalQueue*\")",
       "Bash(xargs grep -l \"approve\\\\|approval\")",
       "Bash(dir frontend\\\\src\\\\pages /B /S)",
-      "Bash(findstr /i \"order\\\\|pesanan\\\\|transaction\")"
+      "Bash(findstr /i \"order\\\\|pesanan\\\\|transaction\")",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\backend\\\\src\\\\modules\" -type d | head -20)",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\frontend\\\\src\" -name \"*Route*\" -o -name \"*route*\" | head -10)",
+      "Bash(ls \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\backend\\\\migrations\\\\\" 2>/dev/null)",
+      "Bash(ls \"/mnt/c/Dev/amazing_toys_odoo_online - Hybrid/docs/\" 2>/dev/null || echo \"DIR_NOT_FOUND\")",
+      "Bash(ls \"/mnt/c/Dev/\" 2>/dev/null | head -20)",
+      "Bash(npm list *)",
+      "PowerShell(node -e \"require\\('docx'\\); console.log\\('ok'\\)\" 2>&1)",
+      "PowerShell(node -e \"console.log\\(require.resolve.paths\\('docx'\\)\\)\" 2>&1)"
     ]
   }
 }

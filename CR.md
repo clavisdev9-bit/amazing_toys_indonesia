@@ -2261,3 +2261,122 @@ docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid \
 docker compose build backend
 docker compose up -d backend
 ```
+
+---
+
+## CR-042 — HELPER_APPROVE Mode: ProductCard & QR Scanner Behavior
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:** `frontend/src/components/catalogue/ProductCard.jsx`, `frontend/src/pages/customer/BrowsePage.jsx`
+
+### Tujuan
+
+Ketika `order_mode === 'HELPER_APPROVE'`, sesuaikan dua titik interaksi utama di halaman katalog pelanggan:
+1. Tombol "+ Cart" di `ProductCard` → dinonaktifkan, tampil label "Pesan via booth"
+2. QR Scanner di `BrowsePage` → scan barcode langsung `addItem()` ke cart → toast sukses → navigate ke `/keranjang` (bukan navigate ke `/product/:barcode` seperti semula)
+
+Mode `HELPER_INPUT` dan `SELF_ORDER` **tidak berubah**.
+
+### Perubahan
+
+#### `ProductCard.jsx`
+
+Tambah variabel `isApproveMode`:
+```js
+const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
+```
+
+Kondisi tombol cart diubah dari `isHelperMode ?` menjadi `(isHelperMode || isApproveMode) ?` — sehingga mode HELPER_APPROVE juga menampilkan div info "🙋 Pesan via booth" tanpa tombol aktif.
+
+#### `BrowsePage.jsx`
+
+**Imports baru:**
+```js
+import { usePublicConfig }     from '../../hooks/useAppLogo';
+import { useCart }             from '../../hooks/useCart';
+import { getProductByBarcode } from '../../api/products';
+```
+
+**Hooks baru di dalam komponen:**
+```js
+const config        = usePublicConfig();
+const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
+const { addItem }   = useCart();
+const [scanToast, setScanToast] = useState(null);
+```
+
+**`handleQrResult` diubah menjadi async:**
+- Jika bukan `HELPER_APPROVE`: behavior lama (navigate ke `/product/:barcode`)
+- Jika `HELPER_APPROVE`: lookup barcode via `getProductByBarcode` → `addItem()` → toast hijau 900ms → navigate ke `/keranjang`
+- Jika barcode tidak ditemukan: toast merah 3 detik, tidak pindah halaman
+
+**Toast UI (`ScanToast`):** elemen JSX didefinisikan sebagai variabel (`const ScanToast = scanToast && <div ...>`), ditempatkan di awal kedua cabang return (wishlist view dan normal view) agar selalu terlihat di kedua kondisi.
+
+### Tidak Ada Perubahan Backend
+
+Endpoint `GET /api/v1/products/barcode/:barcode` sudah ada. `addItem()` sudah tersedia dari `CartContext`.
+
+### Field Mapping Barcode Response
+
+| Response field | addItem field |
+|---|---|
+| `p.product_id` | `product_id` |
+| `p.product_name` | `product_name` |
+| `p.price` | `price` |
+| `p.tenant_id` | `tenant_id` |
+| `p.tenant_name ?? ''` | `tenant_name` |
+| `p.image_url ?? null` | `image_url` |
+| `p.is_on_hold ?? false` | `is_on_hold` |
+
+---
+
+## CR-043 — Kolom "Stok" di Master Data Tab Diganti Button QR Code Barcode
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:** `frontend/src/pages/admin/tabs/MasterDataTab.jsx`
+
+### Tujuan
+
+Kolom "Stok" di tabel produk Admin → Master Data diganti dengan kolom "Barcode" yang menampilkan tombol QR. Klik tombol membuka modal dengan:
+- QR Code `200×200` yang di-generate dari nilai `barcode` produk
+- Teks barcode (font mono)
+- Tombol "Unduh PNG" (download canvas ke file)
+- Tombol "Tutup"
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | Import | — | `import { QRCodeCanvas } from 'qrcode.react'` |
+| 2 | State | — | `const [qrModal, setQrModal] = useState(null)` |
+| 3 | Fungsi | — | `handleDownloadQR()` — ambil canvas `#qr-barcode-canvas`, `toDataURL`, trigger download |
+| 4 | Header kolom | `'Stok'` | `'Barcode'` |
+| 5 | Cell isi | `<span>{p.stock_quantity}</span>` | button icon QR + teks barcode (truncate 72px) |
+| 6 | Modal | — | `<Modal>` berisi `<QRCodeCanvas id="qr-barcode-canvas" ...>` + barcode text + 2 tombol |
+
+### Catatan
+
+- `qrcode.react` sudah ada di `package.json` (v4.2.0), tidak perlu install baru
+- `QRCodeCanvas` digunakan (bukan `QRCodeSVG`) agar download PNG via `canvas.toDataURL()` bisa langsung
+- ID `qr-barcode-canvas` dipakai untuk menghubungkan `handleDownloadQR` dengan canvas DOM element
+- Stok quantity tidak ditampilkan di tabel — masih bisa dilihat/edit via modal "Edit Produk"
+
+---
+
+## CR-044 — Hide Language Switcher di Halaman /katalog
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:** `frontend/src/components/layout/CustomerShell.jsx`
+
+### Tujuan
+
+Sembunyikan tombol language switcher (EN/ID) di header CustomerShell khusus saat user berada di halaman `/katalog`.
+
+### Perubahan
+
+- Import: tambah `useLocation` dari `react-router-dom`
+- Tambah `const { pathname } = useLocation()` dan `const isKatalog = pathname === '/katalog'`
+- Language switcher div dibungkus `{!isKatalog && (...)}`

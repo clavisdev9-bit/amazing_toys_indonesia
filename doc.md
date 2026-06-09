@@ -1,55 +1,112 @@
-# Dokumentasi Amazing Toys SOS
+# Dokumentasi Amazing Toys SOS — Hybrid
 
-## Perbedaan `http://localhost/` vs `http://localhost:5173/`
+## Cara Menjalankan Service
+
+### Mode Docker (Port 8080) — Production-like
+
+Semua service (Frontend Nginx, Backend, Integration, PostgreSQL, WAHA) berjalan via Docker Compose.
+
+```powershell
+# START
+docker compose up -d
+
+# RESTART semua service
+docker compose restart
+
+# RESTART service tertentu
+docker compose restart frontend
+docker compose restart backend
+docker compose restart integration
+
+# STOP semua service (container dihapus, data tetap)
+docker compose down
+
+# STOP + hapus volume data (DESTRUCTIVE — reset database)
+docker compose down -v
+```
+
+Akses: `http://localhost:8080`
+
+---
+
+### Mode Dev (Port 5175) — Hot Reload
+
+Frontend Vite dev server berjalan lokal. **Tidak bisa bersamaan dengan Docker** — backend akan konflik.
+
+**Wajib stop Docker dulu:**
+```powershell
+docker compose down
+```
+
+Lalu jalankan di **2 terminal terpisah**:
+
+**Terminal 1 — Backend (port 3002):**
+```powershell
+cd backend
+npm run dev
+```
+
+**Terminal 2 — Frontend (port 5175):**
+```powershell
+cd frontend
+npm run dev
+```
+
+Akses: `http://localhost:5175`
+
+Stop: tekan `Ctrl+C` di masing-masing terminal.
+
+---
+
+### Ringkasan Port
+
+| Port | Service | Mode |
+|---|---|---|
+| `8080` | Frontend (Nginx) | Docker |
+| `5175` | Frontend (Vite dev server) | Dev lokal |
+| `3002` | Backend API (host-mapped) | Keduanya |
+| `3010` | WAHA (WhatsApp gateway) | Docker |
+
+---
+
+## Perbedaan `http://localhost:8080` vs `http://localhost:5175`
 
 Keduanya menampilkan aplikasi React yang sama, tetapi lewat jalur berbeda.
 
 ---
 
-### `http://localhost:5173/` — Mode Development
+### `http://localhost:5175/` — Mode Development
 
 | Aspek | Detail |
 |---|---|
 | Dijalankan oleh | Vite dev server (`npm run dev` di folder `frontend/`) |
 | Hot Reload | **Ya** — perubahan kode langsung terlihat di browser tanpa refresh manual |
-| API proxy | Vite meneruskan `/api`, `/uploads`, `/ws` → `localhost:3001` (backend Node.js) |
+| API proxy | Vite meneruskan `/api`, `/uploads`, `/ws` → `localhost:3002` (backend Node.js) |
 | Butuh Docker? | **Tidak** — backend berjalan langsung di mesin, bukan container |
 | Kecepatan startup | Sangat cepat, cocok untuk coding aktif |
 
-**Cara menjalankan:**
-```bash
-# Dari folder frontend/
-npm run dev
-```
-
 ---
 
-### `http://localhost/` (port 80) — Mode Production (Docker)
+### `http://localhost:8080/` — Mode Production (Docker)
 
 | Aspek | Detail |
 |---|---|
-| Dijalankan oleh | Nginx di dalam Docker container (`docker-compose up`) |
+| Dijalankan oleh | Nginx di dalam Docker container (`docker compose up -d`) |
 | Hot Reload | **Tidak** — kode di-build dulu (`npm run build`), lalu di-serve secara static |
 | API proxy | Nginx meneruskan `/api`, `/uploads`, `/ws` → container `backend:3001` |
 | Butuh Docker? | **Ya** — semua service berjalan dalam container |
-| Kecepatan startup | Lebih lambat, ini yang dipakai di production |
-
-**Cara menjalankan:**
-```bash
-# Dari root project
-docker-compose up --build
-```
+| Kecepatan startup | Lebih lambat, ini yang dipakai di production/demo |
 
 ---
 
 ### Kapan Memilih Masing-Masing
 
-**Gunakan `:5173` saat:**
+**Gunakan `:5175` saat:**
 - Sedang aktif mengembangkan atau debug kode
 - Ingin melihat perubahan kode langsung (hot reload)
 - Tidak perlu integration service Odoo aktif
 
-**Gunakan port `80` (Docker) saat:**
+**Gunakan `:8080` (Docker) saat:**
 - Ingin menguji hasil build final
 - Ingin menguji semua service terintegrasi (termasuk integration service Odoo)
 - Ingin simulasi environment production atau demo ke stakeholder
@@ -435,25 +492,48 @@ WAHA berjalan sebagai Docker service `sos_waha` (container: `hybrid_waha`) di po
 
 | URL | Keterangan |
 |---|---|
+| `http://localhost:3010/dashboard` | Dashboard UI — manajemen session & QR scan |
 | `http://localhost:3010` | Swagger UI — docs & test API |
 | `http://localhost:3010/api/...` | REST API endpoint |
 
-**Autentikasi:** Tidak ada username/password. WAHA menggunakan **API Key** via header `X-Api-Key`.
+**Credentials Dashboard (`http://localhost:3010/dashboard`):**
+
+| Field | Value |
+|---|---|
+| Username | `admin` |
+| Password | `AmazingToys2026` |
+
+> **Catatan:** Username default WAHA adalah `admin` (bukan `waha`). Dikontrol via env `WAHA_DASHBOARD_USERNAME`.
+
+**API Key (untuk Swagger & REST API):**
+
+WAHA versi terbaru selalu memerlukan autentikasi. Jika `WAHA_API_KEY` tidak di-set di `.env`, key akan di-generate acak setiap container restart. Simpan ke `.env` agar permanen:
 
 ```env
-# .env — kosongkan jika tidak ingin autentikasi
-WAHA_API_KEY=rahasia-api-key-kamu
+# .env
+WAHA_API_KEY=8ae2f0e1516441f9a32e7d6bb0d8d48c       # API key untuk REST/Swagger
+WAHA_DASHBOARD_USERNAME=admin                        # Username dashboard (default: admin)
+WAHA_DASHBOARD_PASSWORD=AmazingToys2026              # Password dashboard
 ```
 
-Jika `WAHA_API_KEY` tidak diset → WAHA berjalan tanpa autentikasi.
+Cara mendapatkan key yang di-generate: `docker logs hybrid_waha | grep WAHA_API_KEY`
 
 **Konfigurasi di Admin Panel:**
 
 1. Pilih provider `WAHA (Self-hosted)`
 2. Isi **Session Name** (default: `default`)
 3. Isi **WAHA Base URL**: `http://localhost:3010` (dev) atau `http://hybrid_waha:3000` (internal Docker)
-4. Isi **X-Api-Key** jika diset (opsional)
+4. Isi **X-Api-Key**: nilai `WAHA_API_KEY` dari `.env`
 5. Klik **Mulai Session** → scan QR dengan WhatsApp
+
+**Cara menghubungkan nomor WhatsApp (via Dashboard):**
+
+1. Buka `http://localhost:3010/dashboard` → login `admin` / `AmazingToys2026`
+2. Klik **Start** pada session `default`
+3. Tunggu status berubah ke `SCAN_QR_CODE`
+4. Klik **QR** — akan muncul QR code
+5. Buka WhatsApp di HP → **⋮ → Perangkat Tertaut → Tautkan Perangkat** → scan QR
+6. Status berubah ke `WORKING` — siap kirim pesan
 
 **Status session WAHA:**
 

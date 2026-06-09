@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
 
 const TXN_PATTERN = /TXN-\d{8}-\d{5}/i;
@@ -26,15 +26,24 @@ export default function QrScannerModal({
   hint = 'Arahkan kamera ke QR code pada struk pelanggan',
   resultParser = parseTxnFromQr,
 }) {
-  const videoRef  = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef    = useRef(null);
-  const [error, setError]     = useState(null);
+  const videoRef         = useRef(null);
+  const canvasRef        = useRef(null);
+  const streamRef        = useRef(null);
+  const rafRef           = useRef(null);
+  const onResultRef      = useRef(onResult);
+  const resultParserRef  = useRef(resultParser);
+  const [error, setError]       = useState(null);
   const [starting, setStarting] = useState(true);
 
+  // Keep refs pointing at the latest callbacks without restarting the camera effect
+  useLayoutEffect(() => {
+    onResultRef.current     = onResult;
+    resultParserRef.current = resultParser;
+  });
+
   useEffect(() => {
-    let active = true;
+    let active     = true;
+    let frameCount = 0;
 
     async function start() {
       // Guard: getUserMedia requires a secure context (HTTPS or localhost)
@@ -65,8 +74,8 @@ export default function QrScannerModal({
         if (!active) return;
         const name = err?.name || '';
         let friendly;
-        if (name === 'NotAllowedError')  friendly = 'Akses kamera ditolak. Izinkan kamera di pengaturan browser.';
-        else if (name === 'NotFoundError')   friendly = 'Tidak ada kamera yang tersedia di perangkat ini.';
+        if (name === 'NotAllowedError')   friendly = 'Akses kamera ditolak. Izinkan kamera di pengaturan browser.';
+        else if (name === 'NotFoundError')    friendly = 'Tidak ada kamera yang tersedia di perangkat ini.';
         else if (name === 'NotReadableError') friendly = 'Kamera sedang digunakan aplikasi lain. Tutup lalu coba lagi.';
         else friendly = `Kamera tidak dapat dibuka (${name || err?.message || 'unknown'}).`;
         setError(friendly);
@@ -76,20 +85,30 @@ export default function QrScannerModal({
 
     function scanLoop() {
       if (!active) return;
+      frameCount++;
+
       const video  = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
         rafRef.current = requestAnimationFrame(scanLoop);
         return;
       }
+
+      // Process every 3rd frame (~20 fps) — reduces CPU load while maintaining responsiveness
+      if (frameCount % 3 !== 0) {
+        rafRef.current = requestAnimationFrame(scanLoop);
+        return;
+      }
+
       const w = video.videoWidth, h = video.videoHeight;
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       ctx.drawImage(video, 0, 0, w, h);
-      const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+      // attemptBoth: tries normal AND inverted QR codes — catches more real-world cases
+      const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
       if (code) {
-        const parsed = resultParser(code.data);
-        if (parsed) { onResult(parsed); return; }
+        const parsed = resultParserRef.current(code.data);
+        if (parsed) { onResultRef.current(parsed); return; }
       }
       rafRef.current = requestAnimationFrame(scanLoop);
     }
@@ -100,7 +119,7 @@ export default function QrScannerModal({
       cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  }, [onResult]);
+  }, []); // empty deps — camera starts once on mount; callbacks stay current via refs above
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">

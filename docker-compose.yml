@@ -137,6 +137,8 @@ services:
     restart: unless-stopped
     environment:
       - WHATSAPP_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-AmazingToys2026}
     volumes:
       - waha_data:/app/.sessions
     networks:

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
 import { usePublicConfig } from '../../hooks/useAppLogo';
@@ -166,6 +166,8 @@ export default function CustomerShell() {
   const eventName = publicConfig?.event_name ?? 'Amazing Toys Fair';
   const venue     = publicConfig?.venue ?? 'Marketplace';
   const { lang, setLang, t } = useLang();
+  const { pathname } = useLocation();
+  const isKatalog = pathname === '/katalog';
   const { restartTour, isActive: isTourActive } = useTour();
   const { count: wishCount, wishlistMode, setWishlistMode, toastMsg } = useWishlist();
   const { subscribe } = useWebSocket();
@@ -242,26 +244,28 @@ export default function CustomerShell() {
           </div>
         </div>
 
-        {/* Centre — language switcher */}
-        <div
-          className="flex items-center gap-1 rounded-[20px] px-[10px] py-1"
-          style={{ background: 'rgba(248,249,254,0.80)' }}
-        >
-          {SUPPORTED_LANGS.map(({ code, label }) => (
-            <button
-              key={code}
-              onClick={() => setLang(code)}
-              className="px-2 py-[3px] rounded-xl text-xs font-semibold transition-all duration-200 border-none cursor-pointer"
-              style={
-                lang === code
-                  ? { background: '#3B5BDB', color: '#fff' }
-                  : { background: 'transparent', color: '#868E96' }
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {/* Centre — language switcher (hidden on /katalog) */}
+        {!isKatalog && (
+          <div
+            className="flex items-center gap-1 rounded-[20px] px-[10px] py-1"
+            style={{ background: 'rgba(248,249,254,0.80)' }}
+          >
+            {SUPPORTED_LANGS.map(({ code, label }) => (
+              <button
+                key={code}
+                onClick={() => setLang(code)}
+                className="px-2 py-[3px] rounded-xl text-xs font-semibold transition-all duration-200 border-none cursor-pointer"
+                style={
+                  lang === code
+                    ? { background: '#3B5BDB', color: '#fff' }
+                    : { background: 'transparent', color: '#868E96' }
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Right — wishlist + tour + logout */}
         <div className="flex items-center gap-2.5 shrink-0">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getProduct } from '../../api/products';
+import { getProduct, getProductByBarcode } from '../../api/products';
 import { getStockStatus } from '../../utils/stockUtils';
 import { useCart } from '../../hooks/useCart';
 import { useLang } from '../../context/LangContext';
@@ -68,7 +68,12 @@ export default function MockProductDetailPage() {
     setLoading(true);
     getProduct(id)
       .then((r) => setProduct(r.data.data))
-      .catch(() => setProduct(null))
+      .catch(() =>
+        // Fallback: id might be a barcode value (from QR scan) instead of product_id
+        getProductByBarcode(id)
+          .then((r) => setProduct(r.data.data))
+          .catch(() => setProduct(null))
+      )
       .finally(() => setLoading(false));
   }, [id]);
 

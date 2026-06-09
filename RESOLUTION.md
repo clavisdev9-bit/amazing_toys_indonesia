@@ -1625,3 +1625,406 @@ docker compose up -d frontend backend
 
 ---
 
+## BUG-027 — Tombol "Setuju" di Antrian Approval Tidak Menghilangkan Item dari Antrian
+
+**Date:** 2026-06-09
+**Related CR:** CR-040 (HELPER_APPROVE Model D)
+
+**Symptom:**
+Pada halaman `/helper` tab "Antrian Approval", setelah Helper mengklik tombol "✓ Setujui", order tetap tampil di antrian. Item tidak hilang dari daftar meskipun proses approval berhasil (backend return 200).
+
+**Root Cause (2 lapisan):**
+
+### Root Cause 1 (PRIMARY) — SQL `getApprovalQueue` tidak filter `approval_status`
+
+Query di `helper.service.js`:
+```sql
+-- SEBELUM (salah):
+WHERE ti.tenant_id = $1
+  AND t.status = 'PENDING_APPROVAL'
+-- Missing: AND ti.approval_status = 'PENDING'
+```
+
+**Skenario bug (multi-booth):**
+1. Customer order item dari **Booth A dan Booth B** → 1 transaksi `PENDING_APPROVAL`
+2. Kedua `transaction_items` punya `approval_status = 'PENDING'`
+3. Helper A klik "Setuju" → `approveOrder()`:
+   - Mark item Booth A sebagai `approval_status = 'APPROVED'`
+   - `pendingCheck` → Booth B masih `PENDING` → `allApproved = false`
+   - `transactions.status` tetap `PENDING_APPROVAL`
+4. Frontend `fetchQueue()` → query berjalan:
+   - `t.status = 'PENDING_APPROVAL'` ✓ masih true
+   - `ti.tenant_id = 'BoothA'` ✓ masih ada baris (meski approval_status = APPROVED)
+5. **Transaksi masih dikembalikan → item tidak hilang dari antrian**
+
+### Root Cause 2 (SECONDARY) — Frontend tidak subscribe `APPROVAL_QUEUE_UPDATE` WS event
+
+Backend sudah broadcast `APPROVAL_QUEUE_UPDATE` via WebSocket setelah approve/reject, tapi `ApprovalQueueTab` tidak subscribe event ini. Antrian hanya refresh via auto-poll 20 detik — artinya tampilan tertinggal sampai poll berikutnya.
+
+**Fixes:**
+
+### Fix 1 — Backend: `getApprovalQueue` query (helper.service.js)
+
+Tambah `AND ti.approval_status = 'PENDING'` ke WHERE clause:
+
+```sql
+-- SESUDAH (benar):
+WHERE ti.tenant_id = $1
+  AND t.status = 'PENDING_APPROVAL'
+  AND ti.approval_status = 'PENDING'
+```
+
+Logika: Tampilkan transaksi hanya jika booth ini masih punya item yang **belum disetujui**. Karena `approveOrder` menyetujui semua item dari satu booth sekaligus (`UPDATE ... WHERE tenant_id = $2`), filter ini selalu all-or-nothing per booth — tidak ada partial-within-booth.
+
+### Fix 2 — Frontend: Optimistic remove + WS subscriber (ApprovalQueueTab.jsx)
+
+1. **`removeFromQueue(txnId)`** — helper function untuk remove item dari local state + update counter segera setelah API berhasil (sebelum `fetchQueue()` selesai)
+2. **WS subscriber** — subscribe `APPROVAL_QUEUE_UPDATE` event untuk sync real-time ketika booth lain juga act on an order
+3. **Konsisten** — `handleReject` juga pakai `removeFromQueue` agar perilaku sama
+
+```js
+// Tambah import
+import { useWebSocket } from '../../hooks/useWebSocket';
+
+// Tambah di dalam komponen
+const { subscribe } = useWebSocket();
+
+// Subscribe WS event
+useEffect(() => {
+  return subscribe('APPROVAL_QUEUE_UPDATE', fetchQueue);
+}, [subscribe, fetchQueue]);
+
+// Optimistic remove
+function removeFromQueue(txnId) {
+  setQueue((prev) => {
+    const updated = prev.filter((t) => t.transaction_id !== txnId);
+    onCountChange?.(updated.length);
+    return updated;
+  });
+}
+
+// handleApprove dan handleReject memanggil removeFromQueue() sebelum fetchQueue()
+```
+
+**Files Changed:**
+- `backend/src/modules/helper/helper.service.js` — tambah `AND ti.approval_status = 'PENDING'` di `getApprovalQueue`
+- `frontend/src/components/helper/ApprovalQueueTab.jsx` — import `useWebSocket`, tambah `removeFromQueue`, subscribe `APPROVAL_QUEUE_UPDATE`
+
+**Recurrence Prevention:**
+
+| Rule | Context |
+|---|---|
+| Query `getApprovalQueue` harus selalu memfilter berdasarkan `approval_status` dari booth yang sedang aktif | Setiap query yang membaca antrian approval WAJIB menyertakan `AND ti.approval_status = 'PENDING'` |
+| Setiap endpoint yang mengubah state antrian (approve/reject) WAJIB memiliki WS event yang dikonsumsi oleh semua listener antrian | Lihat `broadcastToTenant(helperTenantId, { event: 'APPROVAL_QUEUE_UPDATE', ... })` di `approveOrder` dan `rejectOrder` |
+| Setelah aksi berhasil di frontend, langsung hapus item dari local state (optimistic) sebelum menunggu re-fetch | Pola ini mencegah UX gap antara API sukses dan tampilan terupdate |
+
+**Standardisasi Approval (Rekomendasi):**
+
+| Aspek | Standar |
+|---|---|
+| Status transaksi | `PENDING_APPROVAL` → `PENDING` (approve) atau `CANCELLED` (reject) |
+| Status per-item | `transaction_items.approval_status` = `PENDING` → `APPROVED` / `REJECTED` |
+| Granularitas | Per-booth: satu helper menyetujui/menolak semua item dari booth-nya sekaligus |
+| Query antrian | Selalu filter `AND ti.approval_status = 'PENDING'` untuk menghindari double-show pada multi-booth order |
+| WS event | Backend wajib broadcast `APPROVAL_QUEUE_UPDATE` setelah setiap aksi; frontend wajib subscribe untuk sync real-time |
+| Optimistic UI | Frontend menghapus item dari local state segera setelah API sukses, lalu re-fetch sebagai fallback sync |
+
+---
+
+
+## BUG-029 — "Registration failed. Please try again." di Halaman `/daftar`
+
+**Date:** 2026-06-09  
+**Resolved by:** clavis Development  
+**Affected:** `backend/.env`, `backend/node_modules` (sharp missing), Vite dev mode
+
+### Symptom
+
+Customer membuka halaman `/daftar` (`http://localhost:5175/daftar`), mengisi form registrasi, klik **Daftar Sekarang** → muncul error banner:
+> "Registration failed. Please try again."
+
+API registrasi tidak pernah mencapai backend.
+
+### Root Cause (2 lapisan)
+
+#### Root Cause 1 (PRIMER) — Backend crash saat startup: `sharp` tidak terpasang
+
+`backend/src/modules/admin/admin.service.js` baris 6 melakukan `require('sharp')`. Package `sharp` ada di `package.json` tapi **tidak terpasang** di `node_modules` lokal (dev machine). Akibatnya backend langsung crash:
+
+```
+Error: Cannot find module 'sharp'
+  at admin.service.js:6
+```
+
+Backend tidak pernah berhasil listen — semua API call gagal dengan network error, dan `err.response` di frontend selalu `undefined`.
+
+#### Root Cause 2 (SEKUNDER) — PORT mismatch antara `backend/.env` dan Vite proxy
+
+| Setting | Value |
+|---|---|
+| `vite.config.js` proxy target | `http://localhost:3002` |
+| `backend/.env` PORT (sebelum fix) | `3001` |
+
+Ketika backend berhasil distart, ia mendengarkan di port **3001** — bukan port **3002** yang dituju Vite proxy. Seluruh API call dari dev frontend mendapat **connection refused** dari proxy.
+
+### Chain of Failure
+
+```
+User klik "Daftar Sekarang"
+→ Browser: POST http://localhost:5175/api/v1/auth/register (via Vite proxy)
+→ Vite proxy: forward ke http://localhost:3002/api/v1/auth/register
+→ Proxy: "Connection refused" (nothing listening at port 3002)
+→ Axios: network error, err.response = undefined
+→ Frontend catch: err.response?.data?.message ?? t('register.error')
+→ Shows: "Registration failed. Please try again."
+```
+
+### Fixes Applied
+
+**1. Install `sharp` package:**
+```bash
+cd backend && npm install
+```
+
+**2. `backend/.env` — ubah PORT dari 3001 → 3002:**
+```diff
+-PORT=3001
++PORT=3002
+```
+
+**3. `backend/.env` — tambah port 5175 ke CORS_ORIGIN, hapus 3001:**
+```diff
+-CORS_ORIGIN=http://localhost:8080,http://localhost:5173,...,http://localhost:3001,...
++CORS_ORIGIN=http://localhost:8080,http://localhost:5175,http://localhost:5173,...,http://localhost:3002,...
+```
+
+### Cara Start Backend (Dev Mode) Setelah Fix
+
+```bash
+cd backend
+npm install       # pastikan sharp dan semua dependencies terpasang
+node src/app.js   # backend start di port 3002
+```
+
+Frontend Vite di port 5175 → proxy ke backend port 3002 → semua API berjalan normal.
+
+### Files Changed
+
+- `backend/.env` — PORT 3001 → 3002; CORS_ORIGIN tambah 5175, ganti 3001 → 3002
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| `backend/.env` PORT **harus selalu cocok** dengan target di `vite.config.js` proxy (`3002`) | Cek setiap kali ada perubahan port konfigurasi di kedua file |
+| Sebelum dev mode, selalu `npm install` di `backend/` untuk pastikan native modules (sharp, bcrypt) terpasang | Platform-specific modules tidak selalu ada setelah clone baru atau OS reinstall |
+| `sharp` adalah native module — setelah upgrade Node.js, jalankan `npm rebuild sharp` | Di Docker Alpine, sudah di-handle lewat `apk add libc6-compat` di Dockerfile (CR-IMG-001) |
+
+---
+
+## BUG-030 — `/katalog` Produk Tidak Ter-load ("barang korang tidak ter load")
+
+**Date:** 2026-06-09  
+**Page:** `/katalog`  
+**Symptom:** Halaman katalog menampilkan loading terus atau daftar produk kosong. Console menunjukkan `401 Authentication token required.` dari `GET /api/v1/products`.
+
+### Root Cause
+
+Dua masalah terpisah yang terjadi bersamaan:
+
+**1. `authenticate` middleware dipasang di endpoint publik (`products.router.js`)**  
+Route `GET /api/v1/products` dan `GET /api/v1/products/categories` memiliki komentar "public browse (Customer)" namun middleware `authenticate` tetap dipasang — artinya setiap request tanpa Bearer token (termasuk customer yang belum login) langsung ditolak dengan 401.
+
+**2. Migrasi 011–016 belum diaplikasikan ke local dev database**  
+Setelah 401 diperbaiki, endpoint masih error: `column p.is_on_hold does not exist`. Migration `011_cr035_hybrid_model_c.sql` menambahkan kolom `is_on_hold`, `is_display_only`, `max_per_customer`, `bundle_group` ke tabel `products` — tetapi kolom-kolom tersebut belum ada di local dev database (`amazing_toys_sos` di PostgreSQL lokal), menyebabkan query gagal dengan `Internal server error.`
+
+### Chain of Failure
+
+```
+Customer buka /katalog
+  → useCatalogueState: getProducts({ limit: 500 })
+  → GET /api/v1/products (tanpa Bearer token)
+  → authenticate middleware → 401 Authentication token required
+  → Frontend: catch(console.error) → products tetap []
+  → UI: loading spinner tidak berhenti / produk kosong
+
+Setelah fix #1 (hapus authenticate):
+  → Query SQL: SELECT p.is_on_hold FROM products ...
+  → PostgreSQL: ERROR column p.is_on_hold does not exist
+  → Backend: 500 Internal server error
+  → Frontend: sama — produk tidak ter-load
+```
+
+### Fix
+
+**Fix #1 — Hapus `authenticate` dari endpoint publik** (`backend/src/modules/products/products.router.js`):
+- `GET /` — hapus `authenticate` (customer browse tidak butuh login)
+- `GET /categories` — hapus `authenticate` (dropdown kategori harus publik)
+- `GET /barcode/:barcode`, `GET /:productId`, semua PATCH/POST — tetap `authenticate` (cashier & admin only)
+
+**Fix #2 — Aplikasikan migrasi yang pending ke local dev database**:
+```bash
+psql -U postgres -d amazing_toys_sos -f backend/migrations/011_cr035_hybrid_model_c.sql
+psql -U postgres -d amazing_toys_sos -f backend/migrations/012_cr035_seed_helper.sql
+psql -U postgres -d amazing_toys_sos -f backend/migrations/013_cr036_qr_delivery.sql
+psql -U postgres -d amazing_toys_sos -f backend/migrations/014_cr036_waha_session.sql
+psql -U postgres -d amazing_toys_sos -f backend/migrations/015_cr040_helper_approve.sql
+psql -U postgres -d amazing_toys_sos -f backend/migrations/016_drop_expires_at_not_null.sql
+```
+
+### Files Changed
+
+- `backend/src/modules/products/products.router.js` — hapus `authenticate` dari `GET /` dan `GET /categories`
+- Local dev database `amazing_toys_sos` — migrasi 011–016 diaplikasikan
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Endpoint publik (customer-facing browse) **tidak boleh** punya `authenticate` middleware | Cek komentar di router; jika ada "public" maka tidak boleh ada `authenticate` |
+| Setiap migrasi baru di `backend/migrations/` **harus diaplikasikan** ke local dev DB setelah pull | Jalankan: `psql -U postgres -d amazing_toys_sos -f backend/migrations/<file>.sql` |
+| Semua kolom yang direferensikan di `products.service.js` harus ada di semua environment (local, Docker, prod) | Saat menambah kolom via migration, pastikan local dev DB juga di-update |
+
+---
+
+## BUG-031 — QR Scanner Kamera Tidak Bisa Mendeteksi QR Code
+
+**Date:** 2026-06-09  
+**Component:** `frontend/src/components/ui/QrScannerModal.jsx`  
+**Symptom:** Kamera terbuka tapi QR code tidak pernah terdeteksi — scanner tidak merespons meski QR code jelas terlihat di kamera.
+
+### Root Cause
+
+Dua masalah terpisah yang terjadi bersamaan:
+
+**1. Callback instability — `useEffect` restart loop**  
+`QrScannerModal` punya `useEffect([onResult])` yang bergantung pada prop `onResult`. Di BrowsePage dan CustomerShell, `handleQrResult` adalah fungsi biasa (bukan `useCallback`) yang didefinisikan ulang setiap render. Setiap kali komponen induk re-render (contoh: saat `config`/`usePublicConfig()` selesai fetch), referensi `handleQrResult` berubah → `QrScannerModal` cleanup dipicu (kamera stop) → effect jalan ulang (kamera restart). Scanner terus restart sebelum sempat mendeteksi QR apapun.
+
+**2. `inversionAttempts: 'dontInvert'` — jsQR terlalu ketat**  
+jsQR dengan setting `dontInvert` hanya mencoba mendeteksi QR hitam-di-putih (normal). QR yang ditampilkan di layar atau hasil print sering memiliki kontras berbeda karena auto-exposure kamera, pencahayaan ruangan, atau warna latar belakang. Setting ini menyebabkan banyak QR code yang valid di dunia nyata tidak terdeteksi.
+
+### Chain of Failure
+
+```
+Komponen induk (BrowsePage) render
+  → config/usePublicConfig() selesai fetch → state berubah → re-render
+  → handleQrResult = new function reference (bukan useCallback)
+  → QrScannerModal: useEffect cleanup → kamera stop
+  → QrScannerModal: useEffect re-run → kamera restart
+  → [loop restart terus sebelum QR sempat terdeteksi]
+
+Bahkan jika restart berhenti:
+  → jsQR({ inversionAttempts: 'dontInvert' }) — skip inverted QR
+  → QR dari layar/print kondisi cahaya tertentu tidak terdeteksi
+```
+
+### Fix
+
+**Fix #1 — Stabilisasi callback dengan `useRef` + `useLayoutEffect`** (`QrScannerModal.jsx`):
+- Tambah `onResultRef` dan `resultParserRef` yang selalu menunjuk ke versi terbaru prop
+- `useLayoutEffect` (tanpa deps) update ref setiap render tanpa restart effect
+- `useEffect` diubah ke deps `[]` — camera hanya start **sekali** saat modal mount
+- `scanLoop` menggunakan `onResultRef.current` dan `resultParserRef.current`
+
+**Fix #2 — Ubah `inversionAttempts`** (`QrScannerModal.jsx`):
+- `'dontInvert'` → `'attemptBoth'` — jsQR mencoba QR normal DAN inverted per frame
+
+**Fix #3 — Frame skip** (`QrScannerModal.jsx`):
+- Tambah `frameCount % 3 !== 0` skip — proses setiap frame ke-3 (~20 fps)
+- Mengurangi CPU load tanpa mengorbangi responsivitas
+
+### Files Changed
+
+- `frontend/src/components/ui/QrScannerModal.jsx`
+  - Import: tambah `useLayoutEffect`
+  - Tambah `onResultRef`, `resultParserRef` (refs untuk callbacks)
+  - Tambah `useLayoutEffect` tanpa deps untuk sync refs tiap render
+  - `useEffect` deps: `[onResult]` → `[]`
+  - `scanLoop`: tambah `frameCount++` dan `frameCount % 3 !== 0` guard
+  - `inversionAttempts`: `'dontInvert'` → `'attemptBoth'`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| `QrScannerModal` menggunakan refs untuk callbacks — tidak perlu `useCallback` di komponen pemanggil | Perbaikan bersifat permanen di modal; tambahan `useCallback` di luar boleh tapi tidak wajib |
+| Jangan pernah jadikan function prop sebagai deps `useEffect` yang mengelola hardware (camera, mic) | Hardware effect harus `[]` deps + callback via ref |
+| `inversionAttempts: 'attemptBoth'` default untuk deteksi lebih baik | `dontInvert` terlalu ketat untuk kondisi real-world |
+
+---
+
+## BUG-032 — Scan QR di /katalog: "Produk tidak ditemukan"
+
+**Date:** 2026-06-09  
+**Page:** `/katalog` → `/product/:barcode`  
+**Component:** `frontend/src/pages/customer/MockProductDetailPage.jsx`  
+**Symptom:** Setelah scan QR barcode produk di halaman `/katalog`, halaman `/product/:id` menampilkan "Produk tidak ditemukan" meski produk ada di database.
+
+### Root Cause
+
+**Field mismatch: barcode vs product_id**
+
+QR code yang di-generate admin panel (CR-043) meng-encode nilai field `barcode` (contoh: `"6016478556530"`). Saat di-scan, `handleQrResult` meneruskan nilai barcode ini ke navigasi `/product/${barcode}`.
+
+`MockProductDetailPage` membaca URL param `id = "6016478556530"` dan memanggil:
+```js
+getProduct("6016478556530")
+// → GET /api/v1/products/6016478556530
+// → query: WHERE p.product_id = '6016478556530'
+```
+
+Tidak ada produk dengan `product_id = "6016478556530"` karena `product_id` punya format berbeda (contoh: `P3293-T001`). Query mengembalikan 0 baris → backend 404 → halaman tampilkan "Produk tidak ditemukan".
+
+### Chain of Failure
+
+```
+Admin cetak QR barcode produk (CR-043):
+  → QRCodeCanvas value = p.barcode = "6016478556530"
+
+Customer scan QR di /katalog:
+  → jsQR decode → code.data = "6016478556530"
+  → handleQrResult("6016478556530")
+  → navigate('/product/6016478556530')
+
+MockProductDetailPage:
+  → useParams id = "6016478556530"
+  → getProduct("6016478556530")
+  → GET /api/v1/products/6016478556530
+  → getProductById: WHERE p.product_id = '6016478556530' → 0 rows → 404
+  → setProduct(null)
+  → render: "Produk tidak ditemukan"
+```
+
+### Fix
+
+Tambah fallback di `MockProductDetailPage` — jika `getProduct(id)` gagal (404), otomatis coba `getProductByBarcode(id)`:
+
+```js
+getProduct(id)
+  .then((r) => setProduct(r.data.data))
+  .catch(() =>
+    getProductByBarcode(id)         // ← fallback: id is a barcode value from QR scan
+      .then((r) => setProduct(r.data.data))
+      .catch(() => setProduct(null))
+  )
+  .finally(() => setLoading(false));
+```
+
+Dengan ini:
+- Navigate dari katalog dengan `product_id` → `getProduct` sukses, tidak perlu fallback
+- Navigate dari QR scanner dengan `barcode` → `getProduct` 404 → fallback ke `getProductByBarcode` → sukses
+
+### Files Changed
+
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+  - Import: tambah `getProductByBarcode`
+  - `useEffect`: tambah fallback `.catch(() => getProductByBarcode(id).then(...).catch(...))`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| QR code encode **barcode**, bukan product_id — dua field yang berbeda | Setiap fitur yang menerima input dari QR scanner harus support lookup by barcode |
+| `MockProductDetailPage` dan `ProductDetailPage` sekarang support dual-lookup (product_id + barcode) | Tidak perlu ubah handler QR di BrowsePage/CustomerShell |
+
+---

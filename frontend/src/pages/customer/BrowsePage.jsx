@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLang }                  from '../../context/LangContext';
+import { usePublicConfig }          from '../../hooks/useAppLogo';
+import { useCart }                  from '../../hooks/useCart';
+import { getProductByBarcode }      from '../../api/products';
 import { useCatalogueState }    from '../../hooks/useCatalogueState';
 import { useWishlist }          from '../../hooks/useWishlist';
 import { FLOOR_NAMES }          from '../../data/mockData';
@@ -19,11 +22,15 @@ import Spinner                  from '../../components/ui/Spinner';
 export default function BrowsePage() {
   const navigate = useNavigate();
   const { t } = useLang();
+  const config        = usePublicConfig();
+  const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
+  const { addItem }   = useCart();
   const { state, actions } = useCatalogueState();
   const { wishedIds, wishlistMode, setWishlistMode } = useWishlist();
   const searchRef      = useTourTarget('step-katalog-search');
   const categoriesRef  = useTourTarget('step-katalog-categories');
   const [showScanner, setShowScanner] = useState(false);
+  const [scanToast, setScanToast]     = useState(null);
 
   const {
     mode, curCat, curFloor,
@@ -35,9 +42,35 @@ export default function BrowsePage() {
     categories, floors, loading,
   } = state;
 
-  function handleQrResult(text) {
+  async function handleQrResult(text) {
     setShowScanner(false);
-    navigate(`/product/${text}`);
+
+    if (!isApproveMode) {
+      navigate(`/product/${text}`);
+      return;
+    }
+
+    try {
+      const res = await getProductByBarcode(text);
+      const p   = res.data.data;
+      addItem({
+        product_id:   p.product_id,
+        product_name: p.product_name,
+        price:        p.price,
+        tenant_id:    p.tenant_id,
+        tenant_name:  p.tenant_name ?? '',
+        image_url:    p.image_url  ?? null,
+        is_on_hold:   p.is_on_hold ?? false,
+      }, 1);
+      setScanToast({ msg: `"${p.product_name}" ditambahkan ke keranjang`, type: 'success' });
+      setTimeout(() => {
+        setScanToast(null);
+        navigate('/keranjang');
+      }, 900);
+    } catch {
+      setScanToast({ msg: 'Produk tidak ditemukan. Coba scan ulang.', type: 'error' });
+      setTimeout(() => setScanToast(null), 3000);
+    }
   }
 
   // All products in wishlist (search-aware, ignores category filter)
@@ -49,10 +82,27 @@ export default function BrowsePage() {
 
   const floorLabel = FLOOR_NAMES[curFloor] ?? curFloor;
 
+  const ScanToast = scanToast && (
+    <div
+      className="fixed top-4 left-1/2 z-[70] px-4 py-3 rounded-2xl text-sm font-semibold text-white shadow-lg"
+      style={{
+        transform: 'translateX(-50%)',
+        minWidth: 220,
+        textAlign: 'center',
+        background: scanToast.type === 'success'
+          ? 'linear-gradient(135deg,#087F5B,#2F9E44)'
+          : 'linear-gradient(135deg,#C92A2A,#E03131)',
+      }}
+    >
+      {scanToast.type === 'success' ? '✓ ' : '✕ '}{scanToast.msg}
+    </div>
+  );
+
   // ── Wishlist mode view ────────────────────────────────────────────────────
   if (wishlistMode) {
     return (
       <div className="max-w-[390px] mx-auto">
+        {ScanToast}
 
         {/* Sticky controls */}
         <div
@@ -183,6 +233,7 @@ export default function BrowsePage() {
   // ── Normal catalogue view ─────────────────────────────────────────────────
   return (
     <div className="max-w-[390px] mx-auto">
+      {ScanToast}
 
       {/* ── Sticky controls bar ───────────────────────────────────────── */}
       <div
