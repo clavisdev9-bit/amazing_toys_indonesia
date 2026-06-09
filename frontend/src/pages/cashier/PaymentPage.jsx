@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { lookupPayment, processPayment } from '../../api/payments';
 import { getProducts, getCategories } from '../../api/products';
-import { addItemToTransaction } from '../../api/cashier';
+import { addItemToTransaction, applyVoucherToOrder } from '../../api/cashier';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
@@ -14,6 +14,7 @@ import Spinner from '../../components/ui/Spinner';
 import ToastContainer from '../../components/ui/Toast';
 import PrintReceiptButton from '../../components/cashier/PrintReceiptButton';
 import PrintConfirmationModal from '../../components/cashier/PrintConfirmationModal';
+import VoucherInput from '../../components/cart/VoucherInput';
 import { sendEReceipt } from '../../services/sendEReceipt';
 
 const METHODS = ['CASH', 'QRIS', 'EDC', 'TRANSFER'];
@@ -36,6 +37,7 @@ function AddProductCard({ product, onAdd, adding }) {
   const addable = canAddToCart(product.stock);
   const isAdding = adding === product.id;
   const stockLabel = { out: 'Habis', low: 'Terbatas', available: 'Tersedia' }[level] ?? 'Tersedia';
+  const [imgError, setImgError] = useState(false);
 
   return (
     <div
@@ -45,8 +47,8 @@ function AddProductCard({ product, onAdd, adding }) {
       onClick={() => addable && !isAdding && onAdd(product)}
     >
       <div className="aspect-square bg-gray-50 flex items-center justify-center" style={{ minHeight: 72 }}>
-        {product.image_url
-          ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" />
+        {product.image_url && !imgError
+          ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" onError={() => setImgError(true)} />
           : <span className="text-3xl">🧸</span>
         }
       </div>
@@ -77,8 +79,9 @@ function AddProductCard({ product, onAdd, adding }) {
 
 export default function PaymentPage() {
   const { transactionId } = useParams();
-  const navigate = useNavigate();
-  const { user } = useAuth();
+  const navigate    = useNavigate();
+  const location    = useLocation();
+  const { user }    = useAuth();
   const { toasts, addToast, removeToast } = useToast();
   const cashierName = user?.name ?? user?.username ?? 'Kasir';
 
@@ -92,6 +95,12 @@ export default function PaymentPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Voucher state
+  const [voucherApplying, setVoucherApplying] = useState(false);
+  const [voucherKey, setVoucherKey]           = useState(0); // force-remount VoucherInput on failure
+  const autoVoucherDone = useRef(false);
+  const preVoucher = location.state?.preVoucher ?? null; // voucher code passed from dashboard
 
   // Product browser state
   const [products, setProducts] = useState([]);
@@ -136,6 +145,15 @@ export default function PaymentPage() {
       .finally(() => setLoadingProducts(false));
   }, []);
 
+  // Auto-apply voucher passed from CashierDashboardPage navigation state
+  useEffect(() => {
+    if (!autoVoucherDone.current && txn && txn.status === 'PENDING' && !txn.voucher_code && preVoucher) {
+      autoVoucherDone.current = true;
+      handleApplyVoucher(preVoucher);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txn?.transaction_id]);
+
   const filteredProducts = useMemo(() => {
     let list = products;
     if (activeCategory !== 'Semua') list = list.filter(p => p.category === activeCategory);
@@ -160,6 +178,25 @@ export default function PaymentPage() {
       addToast(err.response?.data?.message ?? 'Gagal menambahkan produk', 'error');
     } finally {
       setAddingProduct(null);
+    }
+  }
+
+  async function handleApplyVoucher(voucherOrCode) {
+    const code = typeof voucherOrCode === 'string' ? voucherOrCode : voucherOrCode.code;
+    setVoucherApplying(true);
+    try {
+      const result = await applyVoucherToOrder(transactionId, code);
+      await refreshTxn();
+      const saved = result.data?.data?.discountAmount;
+      addToast(
+        `Voucher ${code} diterapkan${saved ? ` — hemat ${formatRupiah(saved)}` : ''}`,
+        'success'
+      );
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menerapkan voucher', 'error');
+      setVoucherKey(k => k + 1); // force VoucherInput remount → reset stale "applied" state
+    } finally {
+      setVoucherApplying(false);
     }
   }
 
@@ -292,23 +329,31 @@ export default function PaymentPage() {
                   ))}
                 </div>
                 {(() => {
-                  const subtotal = parseFloat(txn.subtotal_amount ?? 0);
-                  const taxAmt   = parseFloat(txn.tax_amount ?? 0);
-                  const taxRate  = parseFloat(txn.tax_rate ?? 12);
-                  const hasTax   = taxAmt > 0;
+                  const subtotal     = parseFloat(txn.subtotal_amount ?? 0);
+                  const taxAmt       = parseFloat(txn.tax_amount ?? 0);
+                  const taxRate      = parseFloat(txn.tax_rate ?? 12);
+                  const discountAmt  = parseFloat(txn.discount_amount ?? 0);
+                  const hasTax       = taxAmt > 0;
+                  const hasDiscount  = discountAmt > 0;
                   return (
                     <div className="border-t pt-2 mt-2 space-y-1 text-sm">
+                      {(hasTax || hasDiscount) && (
+                        <div className="flex justify-between text-gray-500">
+                          <span>Subtotal</span>
+                          <span>{formatRupiah(subtotal)}</span>
+                        </div>
+                      )}
+                      {hasDiscount && (
+                        <div className="flex justify-between text-green-600">
+                          <span>Diskon ({txn.voucher_code})</span>
+                          <span>-{formatRupiah(discountAmt)}</span>
+                        </div>
+                      )}
                       {hasTax && (
-                        <>
-                          <div className="flex justify-between text-gray-500">
-                            <span>Subtotal</span>
-                            <span>{formatRupiah(subtotal)}</span>
-                          </div>
-                          <div className="flex justify-between text-gray-500">
-                            <span>PPN {taxRate}%</span>
-                            <span>{formatRupiah(taxAmt)}</span>
-                          </div>
-                        </>
+                        <div className="flex justify-between text-gray-500">
+                          <span>PPN {taxRate}%</span>
+                          <span>{formatRupiah(taxAmt)}</span>
+                        </div>
                       )}
                       <div className="flex justify-between font-bold">
                         <span>Total</span>
@@ -318,6 +363,30 @@ export default function PaymentPage() {
                   );
                 })()}
               </div>
+
+              {/* Voucher — hanya saat PENDING dan belum ada voucher */}
+              {isPending && !txn.voucher_code && (
+                <div className="bg-white rounded-xl border p-4">
+                  <h2 className="font-semibold text-gray-700 mb-3 text-sm">🏷️ Voucher</h2>
+                  <VoucherInput
+                    key={voucherKey}
+                    cartTotal={parseFloat(txn.subtotal_amount ?? 0)}
+                    tenantIds={(txn.items ?? []).map(i => i.tenant_id).filter(Boolean)}
+                    items={(txn.items ?? []).map(i => ({
+                      price: parseFloat(i.unit_price ?? 0),
+                      quantity: i.quantity,
+                      tenant_id: i.tenant_id,
+                    }))}
+                    onVoucherApplied={handleApplyVoucher}
+                    onVoucherRemoved={() => {}}
+                  />
+                  {voucherApplying && (
+                    <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                      <Spinner className="w-3 h-3" /> Menerapkan voucher...
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Payment form */}
               <form onSubmit={handleProcess} className="bg-white rounded-xl border p-4 space-y-4">

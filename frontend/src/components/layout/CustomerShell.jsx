@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useCart } from '../../hooks/useCart';
@@ -6,8 +6,102 @@ import { usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
 import { useTour } from '../../hooks/useTour';
 import { useWishlist } from '../../hooks/useWishlist';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { formatRupiah } from '../../utils/format';
 import MapModal from '../ui/MapModal';
 import QrScannerModal from '../ui/QrScannerModal';
+
+// ── In-app order notification card ───────────────────────────────────────────
+const NOTIF_TTL_MS = 10_000;
+
+function OrderNotifCard({ notif, onDismiss, onOpen }) {
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
+  useEffect(() => {
+    const t = setTimeout(() => onDismissRef.current(), NOTIF_TTL_MS);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — intentional mount-only
+
+  return (
+    <div
+      role="alertdialog"
+      aria-label="Pesanan siap dibayar"
+      style={{
+        background: 'rgba(255,255,255,0.97)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderRadius: 16,
+        boxShadow: '0 8px 32px rgba(59,91,219,0.22), 0 2px 8px rgba(59,91,219,0.10)',
+        border: '1.5px solid rgba(59,91,219,0.18)',
+        overflow: 'hidden',
+        animation: 'slideDownNotif 260ms cubic-bezier(.22,.68,0,1.2)',
+        cursor: 'pointer',
+      }}
+      onClick={onOpen}
+    >
+      {/* Auto-dismiss progress bar */}
+      <div style={{
+        width: '100%',
+        height: 3,
+        background: 'linear-gradient(90deg, #3B5BDB, #748FFC)',
+        animationName: 'notifProgress',
+        animationDuration: `${NOTIF_TTL_MS}ms`,
+        animationTimingFunction: 'linear',
+        animationFillMode: 'forwards',
+      }} />
+
+      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        {/* Icon */}
+        <div style={{
+          width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+          background: 'linear-gradient(135deg, #EEF2FF, #E0E7FF)',
+          border: '1.5px solid rgba(59,91,219,0.15)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 20,
+        }}>
+          🛒
+        </div>
+
+        {/* Text */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#3B5BDB', marginBottom: 2 }}>
+            Pesanan Siap Bayar!
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#1A1B2E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {notif.boothName}
+          </div>
+          {notif.itemSummary ? (
+            <div style={{ fontSize: 11, color: '#868E96', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+              {notif.itemSummary}
+            </div>
+          ) : null}
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#3B5BDB', marginTop: 4 }}>
+            {formatRupiah(notif.totalAmount)}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); onDismiss(); }}
+            style={{ background: 'none', border: 'none', color: '#CED4DA', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 2 }}
+            aria-label="Tutup notifikasi"
+          >
+            ✕
+          </button>
+          <div style={{
+            background: 'linear-gradient(135deg, #3B5BDB, #748FFC)',
+            borderRadius: 8, padding: '5px 10px',
+            fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap',
+          }}>
+            Lihat QR →
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const MESH_BG = `
   radial-gradient(ellipse 65% 55% at 15% 8%, rgba(160,190,255,0.80) 0%, transparent 68%),
@@ -74,8 +168,23 @@ export default function CustomerShell() {
   const { lang, setLang, t } = useLang();
   const { restartTour, isActive: isTourActive } = useTour();
   const { count: wishCount, wishlistMode, setWishlistMode, toastMsg } = useWishlist();
+  const { subscribe } = useWebSocket();
   const [mapOpen, setMapOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+
+  // CR-036 Layer 2 — in-app order notification
+  const [orderNotifs, setOrderNotifs] = useState([]);
+
+  useEffect(() => {
+    return subscribe('ORDER_RESERVED_FOR_CUSTOMER', (data) => {
+      const p = data?.payload;
+      if (!p?.txnId) return;
+      setOrderNotifs(prev => [
+        ...prev,
+        { id: Date.now(), txnId: p.txnId, boothName: p.boothName || 'Booth', itemSummary: p.itemSummary || '', totalAmount: p.totalAmount || 0 },
+      ]);
+    });
+  }, [subscribe]);
 
   function handleLogout() {
     logout();
@@ -344,6 +453,33 @@ export default function CustomerShell() {
         />
       </nav>
 
+      {/* CR-036 Layer 2 — in-app order notifications (stacked below header) */}
+      {orderNotifs.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          top: 64,
+          left: 12,
+          right: 12,
+          zIndex: 60,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          pointerEvents: 'auto',
+        }}>
+          {orderNotifs.slice(-2).map(notif => (
+            <OrderNotifCard
+              key={notif.id}
+              notif={notif}
+              onDismiss={() => setOrderNotifs(prev => prev.filter(n => n.id !== notif.id))}
+              onOpen={() => {
+                navigate(`/pesanan/${notif.txnId}`);
+                setOrderNotifs(prev => prev.filter(n => n.id !== notif.id));
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Global wishlist toast */}
       {toastMsg && (
         <div
@@ -366,6 +502,14 @@ export default function CustomerShell() {
         @keyframes fadeInUp {
           from { opacity: 0; transform: translate(-50%, 8px); }
           to   { opacity: 1; transform: translate(-50%, 0); }
+        }
+        @keyframes slideDownNotif {
+          from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        @keyframes notifProgress {
+          from { width: 100%; }
+          to   { width: 0%;   }
         }
       `}</style>
     </div>

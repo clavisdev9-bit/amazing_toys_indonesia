@@ -668,3 +668,960 @@ Tabel-tabel di proyek ini menggunakan pola `<table_singular>_id` sebagai PK (mis
 
 ---
 
+## BUG-017 — `FOR UPDATE` Lock Produk Booth Lain di `createHelperOrder` (CR-035)
+
+**Date:** 2026-06-06  
+**Related CR:** CR-035
+
+**Symptom:**  
+Tidak ada symptom user-facing — validasi booth ownership sudah ada dan menolak request dengan 403. Namun analisis kode menemukan bahwa query `FOR UPDATE` dalam `createHelperOrder` me-lock baris produk milik booth lain sebelum validasi menolak transaksi.
+
+**Root Cause:**  
+Query awal di `createHelperOrder` hanya memfilter `product_id` dan `is_active`, tanpa filter `tenant_id`:
+
+```sql
+-- SEBELUM:
+SELECT ... FROM products
+WHERE product_id = ANY($1) AND is_active = TRUE
+FOR UPDATE
+-- params: [productIds]
+```
+
+Jika helper mengirim `product_id` milik booth lain (sengaja maupun tidak), PostgreSQL akan me-lock row tersebut (via `FOR UPDATE`) sebelum validasi per-item di baris berikutnya mendeteksi mismatch dan melempar 403. Pada production dengan traffic tinggi, lock ini dapat menyebabkan contention di tabel `products` untuk operasi yang akhirnya tidak pernah mengubah data.
+
+Validasi post-lock (baris berikutnya) memang sudah benar:
+```js
+if (p.tenant_id !== helperTenantId) throw new AppError(`...bukan milik booth ini...`, 403);
+```
+Namun validasi ini terjadi *setelah* lock sudah diperoleh.
+
+**Root Cause Classification:**  
+Bukan security bug (validasi ada sebelum stock decrement), tetapi **lock contention risk** — prinsip least-privilege juga berlaku untuk DB locks: hanya lock baris yang memang akan dimodifikasi.
+
+**Fix:**  
+Tambah `AND tenant_id = $2` ke query `FOR UPDATE`:
+
+```sql
+-- SESUDAH:
+SELECT ... FROM products
+WHERE product_id = ANY($1) AND tenant_id = $2 AND is_active = TRUE
+FOR UPDATE
+-- params: [productIds, helperTenantId]
+```
+
+Pesan error saat produk tidak ditemukan diperbarui:
+```
+"Satu atau lebih produk tidak ditemukan, tidak aktif, atau bukan milik booth Anda."
+```
+Pesan baru mencakup kasus booth mismatch tanpa mengekspos informasi apakah produk dari booth lain itu ada atau tidak.
+
+**Files Changed:**  
+- `backend/src/modules/helper/helper.service.js`
+
+**Recurrence Prevention:**  
+Query `FOR UPDATE` pada tabel `products` di endpoint HELPER harus selalu menyertakan `AND tenant_id = $tenantId` sehingga lock scope dibatasi pada produk yang memang dimiliki booth tersebut. Defense-in-depth per-item check tetap dipertahankan.
+
+---
+
+## BUG-018 — "Role tidak valid" saat Buat Akun HELPER di Admin → User & Role
+
+**Date:** 2026-06-06  
+**Related CR:** CR-035
+
+**Symptom:**  
+Admin membuka tab **Helper** di halaman `/admin` → User & Role, mengisi form "Tambah Helper Booth Baru", klik **Buat Akun** — mendapat error:
+```
+Role tidak valid. Gunakan CASHIER, TENANT, atau LEADER.
+```
+Akun HELPER tidak berhasil dibuat.
+
+**Root Cause:**  
+`createUser` di `backend/src/modules/admin/admin.service.js` memiliki whitelist role hardcoded yang dibuat sebelum CR-035:
+
+```js
+// SEBELUM (baris 53):
+if (!['CASHIER', 'TENANT', 'LEADER'].includes(role)) {
+  throw new AppError('Role tidak valid. Gunakan CASHIER, TENANT, atau LEADER.', 422);
+}
+if (role === 'TENANT' && !tenant_id) {
+  throw new AppError('tenant_id wajib diisi untuk role TENANT.', 422);
+}
+```
+
+CR-035 menambahkan `HELPER` ke `user_role_enum` di database dan menambahkan tab HELPER di frontend `UserRoleTab.jsx`, tetapi **lupa memperbarui whitelist validasi di service layer**. Dua gap sekaligus:
+1. `HELPER` tidak ada di whitelist → selalu 422
+2. Validasi `tenant_id` wajib hanya untuk `TENANT`, padahal HELPER juga wajib terikat ke satu booth
+
+**Fix:**
+
+```js
+// SESUDAH:
+if (!['CASHIER', 'TENANT', 'HELPER', 'LEADER'].includes(role)) {
+  throw new AppError('Role tidak valid. Gunakan CASHIER, TENANT, HELPER, atau LEADER.', 422);
+}
+if ((role === 'TENANT' || role === 'HELPER') && !tenant_id) {
+  throw new AppError(`tenant_id wajib diisi untuk role ${role}.`, 422);
+}
+```
+
+**Files Changed:**  
+- `backend/src/modules/admin/admin.service.js`
+
+**Recurrence Prevention:**  
+Setiap kali role baru ditambahkan ke `user_role_enum` (migration), wajib periksa dan perbarui tiga lokasi sekaligus:
+1. `admin.service.js` `createUser` — whitelist validasi role
+2. `admin.service.js` `createUser` — validasi `tenant_id` wajib jika role terikat booth
+3. `UserRoleTab.jsx` `ROLE_TABS` — UI tab manajemen
+
+Checklist ini sebaiknya masuk ke migration comment agar tidak terlewat.
+
+---
+
+## CR-036 — QR Delivery Architecture: Three-Layer System
+
+**Date:** 2026-06-07  
+**On top of:** CR-035 (Hybrid Model C — HELPER creates RESERVED orders)
+
+**Objective:**  
+Setelah Helper membuat order, customer harus menerima QR pembayaran via minimal satu dari tiga kanal:
+- **Layer 1 (Primary):** WhatsApp/SMS ke nomor HP customer berisi link publik `/pesanan/:txnId?token=...`
+- **Layer 2 (Bonus):** WebSocket push ke customer terdaftar (jika online)
+- **Layer 3 (Fallback):** QR selalu tampil di layar Helper (jaring pengaman pasti ada)
+
+Kegagalan Layer 1 atau 2 tidak boleh menggagalkan pembuatan order.
+
+---
+
+### LANGKAH 1 — Migration Database
+
+**File:** `backend/migrations/013_cr036_qr_delivery.sql`
+
+Tambah kolom ke tabel `transactions`:
+- `public_token VARCHAR(64) UNIQUE` — UUID publik untuk link tanpa login
+- `public_token_exp TIMESTAMPTZ` — waktu kedaluwarsa token
+- `wa_sent_at TIMESTAMPTZ` — timestamp pengiriman WA
+- `wa_delivery_status VARCHAR(20)` — `PENDING|SENT|DELIVERED|FAILED|SKIPPED`
+
+Seed `system_settings`:
+- `wa_gateway_provider`, `wa_gateway_api_key`, `wa_gateway_api_url`
+- `wa_message_template`, `public_token_ttl_minutes`, `order_base_url`
+
+---
+
+### LANGKAH 2 — WA Service
+
+**File:** `backend/src/modules/wa/wa.service.js` (baru)
+
+- `sendOrderQR(payload)` — fire-and-forget safe, never throws, returns `{status, messageId?, error?}`
+- Adapters: Wablas, Zenziva (userkey:passkey), Twilio WhatsApp (accountSid:authToken)
+- `getWaConfig()` — baca TTL dan baseUrl dari system_settings
+- `sendTestMessage(phone)` — untuk tombol uji di admin
+- **Security**: API key/credential tidak pernah di-log; hanya `provider` + `error.message`
+
+---
+
+### LANGKAH 3 — Helper Service + Router
+
+**Files:** `backend/src/modules/helper/helper.service.js`, `helper.router.js`
+
+- `createHelperOrder` diperluas: generate `publicToken = crypto.randomUUID()`, simpan ke DB, kirim Layer 1 (async/fire-and-forget), push Layer 2 (WebSocket)
+- `resendWa(transactionId, helperId, newPhone)` — kirim ulang WA dengan nomor baru (awaited)
+- Endpoint baru: `POST /helper/orders/:transactionId/resend-wa`
+
+---
+
+### LANGKAH 4 — Public Order Endpoint
+
+**File:** `backend/src/modules/orders/orders.router.js`
+
+- `GET /orders/:txnId/public?token=` (tanpa JWT)
+- Rate limit: 30 req/60s per IP
+- Validasi token via parameterized query + cek expiry
+- Return: items, booth info, `expiresAt`, `qrData`; tidak ekspos nama/HP customer
+
+---
+
+### LANGKAH 5 — WebSocket Event
+
+**File:** `backend/src/ws/websocket.js`
+
+- Event `ORDER_RESERVED_FOR_CUSTOMER` dikirim via `broadcastToCustomer(customerId, payload)`
+- Payload: `{txnId, boothName, totalAmount, publicLink, expiresAt}`
+
+---
+
+### LANGKAH 6 — Frontend: Halaman Sukses Helper
+
+**Files:** `frontend/src/pages/helper/HelperOrderSuccessPage.jsx` (baru), `HelperPage.jsx`, `App.jsx`
+
+- Route `/helper/order-success` menerima state dari `navigate()` setelah order berhasil
+- Tampilkan QR (220×220, `QRCodeSVG`), countdown, layer status chips
+- Resend WA dengan input nomor baru
+- Guard: redirect ke `/helper` jika tidak ada state (direct URL access)
+
+---
+
+### LANGKAH 7 — Frontend: Public Order Tracking
+
+**File:** `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+- Halaman yang sama (`/pesanan/:transactionId`) mendeteksi `?token=` di URL
+- Mode publik (`PublicOrderView`): QR 240×240px, nama+lokasi booth, daftar item, total inklusif PPN, countdown, instruksi "Tunjukkan QR ini ke kasir → kembali ke booth untuk ambil barang"
+- Setelah PAID: ganti ke confirmation screen, QR disembunyikan
+- Poll setiap 30 detik untuk update status
+- **Routing**: `/pesanan/:transactionId` dipindah ke luar `RequireRole` guard — bisa diakses tanpa login
+
+---
+
+### LANGKAH 8 — Admin WA Gateway Tab
+
+**Files:** `frontend/src/pages/admin/tabs/WaGatewayTab.jsx` (baru), `AdminPage.jsx`, `admin.router.js`, `admin.service.js`, `frontend/src/api/admin.js`
+
+- Tab baru "WA Gateway" di Admin Panel
+- Provider selector (disabled, wablas, zenziva, twilio), API key masked, API URL, base URL, TTL, template textarea
+- Tombol "Kirim Tes" untuk uji coba gateway
+- Endpoints: `GET /admin/wa-gateway`, `PUT /admin/wa-gateway`, `POST /admin/wa-gateway/test`
+- apiKey disimpan hanya jika diisi ulang (bukan `***` placeholder)
+
+---
+
+### Files Changed
+
+| File | Perubahan |
+|---|---|
+| `backend/migrations/013_cr036_qr_delivery.sql` | Baru — migrasi kolom + seed |
+| `backend/src/modules/wa/wa.service.js` | Baru — WA gateway module |
+| `backend/src/modules/helper/helper.service.js` | Diperluas — token, WA, WS |
+| `backend/src/modules/helper/helper.router.js` | Tambah endpoint resend-wa |
+| `backend/src/modules/orders/orders.router.js` | Tambah public endpoint |
+| `backend/src/modules/admin/admin.service.js` | Tambah getWaGatewayConfig, saveWaGatewayConfig |
+| `backend/src/modules/admin/admin.router.js` | Tambah 3 route wa-gateway |
+| `frontend/src/pages/helper/HelperOrderSuccessPage.jsx` | Baru — halaman sukses |
+| `frontend/src/pages/helper/HelperPage.jsx` | Navigate ke order-success |
+| `frontend/src/pages/customer/OrderTrackingPage.jsx` | Tambah public mode |
+| `frontend/src/pages/admin/tabs/WaGatewayTab.jsx` | Baru — admin WA config |
+| `frontend/src/pages/admin/AdminPage.jsx` | Tambah tab WA Gateway |
+| `frontend/src/api/helper.js` | Tambah resendWa, getPublicOrder |
+| `frontend/src/api/admin.js` | Tambah getWaGatewayConfig, saveWaGatewayConfig, testWaSend |
+| `frontend/src/App.jsx` | Route order-success + public tracking |
+
+---
+
+### Design Decisions
+
+| # | Pilihan | Alasan |
+|---|---|---|
+| WA config storage | `system_settings` DB table | Sama dengan tax_config — bisa diubah runtime tanpa restart |
+| Halaman sukses | Halaman terpisah `/helper/order-success` via `navigate(state)` | Lebih clean, state tidak hilang di refresh (guard redirect) |
+| Layer 1/2 failure | Fire-and-forget — tidak block order creation | Order harus selalu berhasil; WA adalah bonus, bukan blocker |
+| public_token | UUID, UNIQUE, per-order, expire 2 jam | Sekali pakai per link; expired = QR tidak bisa dibuka lagi via link |
+
+---
+
+### Security Constraints (dipenuhi)
+
+- Semua perubahan DB additive (tidak ada drop/rename)
+- Odoo integration dan payment processing tidak disentuh
+- State machine CR-035 tidak diubah
+- public endpoint tidak mengekspos nama/HP customer
+- API key tidak pernah di-log
+- Semua query parameterized
+
+---
+
+## BUG-019 — Tombol "+ Cart" Masih Bisa Diakses saat `order_mode = HELPER_INPUT`
+
+**Date:** 2026-06-06  
+**Related CR:** CR-035
+
+**Symptom:**  
+QC mengubah konfigurasi **Mode Penjualan → Helper Input** di `/admin` → Konfigurasi, tetapi customer masih dapat menekan tombol **+ Cart** pada katalog produk, membuka halaman detail produk dan menambahkan item ke keranjang, serta menekan tombol **Checkout** di halaman Cart.
+
+**Root Cause:**  
+CR-035 menambahkan konfigurasi `order_mode` dan meng-expose-nya melalui public config endpoint (`app.js` baris 101), namun **tidak ada enforcement di layer manapun**:
+
+1. **Frontend `ProductCard.jsx`** — `handleAddToCart` berjalan tanpa cek `order_mode`. Meskipun `usePublicConfig()` dan `config` sudah ada di komponen, hanya `ppn_rate` yang dibaca.
+2. **Frontend `ProductDetailPage.jsx`** — tidak mengimpor `usePublicConfig` sama sekali; tombol "Tambah ke Keranjang" selalu tampil.
+3. **Frontend `MockProductDetailPage.jsx`** — `config` tersedia tapi tidak dipakai untuk guard cart button.
+4. **Frontend `CartPage.jsx`** — tombol **Checkout** selalu aktif; tidak ada banner peringatan mode.
+5. **Backend `orders.service.js` `createOrder`** — tidak ada pengecekan `order_mode`; request checkout dari customer selalu diproses. Komentar di `App.jsx` yang menyatakan "backend enforces mode" tidak benar — enforcement tidak pernah diimplementasikan.
+
+**Fix (two-layer enforcement):**
+
+**Layer 1 — Frontend (UX):**
+
+| File | Perubahan |
+|---|---|
+| `frontend/src/components/catalogue/ProductCard.jsx` | Tambah `isHelperMode = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT'`. Ketika aktif: tampilkan label "🙋 Pesan via petugas booth" (violet) sebagai pengganti tombol "+ Cart". |
+| `frontend/src/pages/customer/ProductDetailPage.jsx` | Import `usePublicConfig`. Tambah `isHelperMode`. Ketika aktif: section CTA diganti banner "Pemesanan dilakukan melalui petugas booth". |
+| `frontend/src/pages/customer/MockProductDetailPage.jsx` | Tambah `isHelperMode`. Ketika aktif: sticky CTA diganti panel violet "Pemesanan dilakukan melalui petugas booth". |
+| `frontend/src/pages/customer/CartPage.jsx` | Tambah `isHelperMode`. Ketika aktif: tampilkan banner peringatan violet di atas ringkasan; tombol **Checkout** disabled dengan label "Hubungi petugas booth". |
+
+**Layer 2 — Backend (guard):**
+
+Tambah helper `_getOrderMode()` di `orders.service.js` (mengikuti pola `_getCheckoutTimeoutMinutes`):
+```js
+function _getOrderMode() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(_SYSTEM_CONFIG_PATH, 'utf8'));
+    return cfg.order_mode || 'HELPER_INPUT';
+  } catch {
+    return 'HELPER_INPUT';
+  }
+}
+```
+
+Di awal `createOrder`:
+```js
+if (_getOrderMode() === 'HELPER_INPUT') {
+  throw new AppError(
+    'Pemesanan mandiri tidak tersedia. Hubungi petugas booth untuk melakukan pesanan.',
+    403
+  );
+}
+```
+
+**Files Changed:**  
+- `frontend/src/components/catalogue/ProductCard.jsx`
+- `frontend/src/pages/customer/ProductDetailPage.jsx`
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+- `backend/src/modules/orders/orders.service.js`
+
+**Recurrence Prevention:**  
+Setiap kali fitur konfigurasi mode ditambahkan, wajib enforce di dua lapisan: semua titik UI yang menampilkan aksi dan semua endpoint backend yang melakukan operasi tersebut. Frontend enforcement menyembunyikan aksi; backend enforcement memblokir manipulasi langsung via API.
+
+---
+
+## BUG-020 — WebSocket In-App Notification Tidak Terkirim ke Customer (CR-036 Layer 2)
+
+**Date:** 2026-06-07  
+**Related CR:** CR-036 (Three-Layer QR Delivery)
+
+**Symptom:**  
+Customer yang sedang login tidak menerima notifikasi in-app saat Helper membuat order untuk mereka. Halaman `/pesanan/:txnId` tidak otomatis terbuka. Layer 2 (WS push) selalu dilewati — dua bug terpisah menyebabkan ini.
+
+---
+
+### Root Cause 1 (PRIMARY) — `helper.service.js`: Tidak ada reverse lookup `phone → customerId`
+
+**Chain of evidence:**
+
+1. `HelperPage.jsx` hanya mengirim `customer_phone` dalam POST body — tidak pernah mengirim `customer_id`.
+2. `helper.router.js` line 87: `customerId: req.body.customer_id || null` — selalu `null`.
+3. `helper.service.js` line 145 (sebelum fix): `if (customerId)` — dengan `customerId === null`, blok ini tidak pernah dieksekusi.
+4. Tidak ada reverse lookup `SELECT customer_id FROM customers WHERE phone_number = $1`.
+5. `txResult.customerId` selalu `null` (line 226: `customerId,` adalah parameter input yang masih null).
+6. Line 282: `if (txResult.customerId)` — selalu `false`. `broadcastToCustomer()` tidak pernah dipanggil.
+7. **Layer 2 adalah dead code dalam praktik** — tidak pernah berjalan untuk order apapun.
+
+**Fix:**
+
+Tambah Step A (reverse lookup) SEBELUM Step B (forward lookup) di `createHelperOrder`:
+
+```js
+// Step A — jika hanya phone diberikan, cari customer terdaftar berdasarkan phone
+if (!customerId && effectivePhone) {
+  const custRow = await client.query(
+    'SELECT customer_id FROM customers WHERE phone_number = $1',
+    [effectivePhone],
+  );
+  if (custRow.rows[0]?.customer_id) {
+    customerId = custRow.rows[0].customer_id;
+  }
+}
+
+// Step B — jika customerId diketahui, prefer registered phone
+if (customerId) {
+  const custRow = await client.query(
+    'SELECT phone_number FROM customers WHERE customer_id = $1',
+    [customerId],
+  );
+  if (custRow.rows[0]?.phone_number) {
+    effectivePhone = custRow.rows[0].phone_number;
+  }
+}
+```
+
+Setelah fix: `customerId` terisi dari reverse lookup → `txResult.customerId` tidak null → WS push berjalan.
+
+---
+
+### Root Cause 2 (SECONDARY) — `websocket.js`: HELPER close tidak membersihkan `tenantClients`
+
+**Chain of evidence:**
+
+Saat AUTH, HELPER ditambahkan ke `tenantClients` (line 45):
+```js
+} else if ((payload.role === 'TENANT' || payload.role === 'HELPER') && payload.tenantId) {
+  tenantClients.get(payload.tenantId).add(ws);
+```
+
+Saat close, hanya TENANT yang dibersihkan (line 65 sebelum fix):
+```js
+if (role === 'TENANT' && tenantClients.has(tenantId)) {
+  tenantClients.get(tenantId).delete(ws);
+}
+```
+
+HELPER disconnect → socket tidak dihapus dari `tenantClients` → memory leak (Set tumbuh tanpa batas dengan dead WebSocket objects). Heartbeat meng-`terminate` socket dari `wss.clients` tetapi tidak dari `tenantClients` (struktur data terpisah).
+
+**Fix:**
+```js
+// SEBELUM:
+if (role === 'TENANT' && tenantClients.has(tenantId)) {
+// SESUDAH:
+if ((role === 'TENANT' || role === 'HELPER') && tenantClients.has(tenantId)) {
+```
+
+---
+
+### Root Cause 3 (MINOR) — `CustomerShell.jsx`: Progress bar tidak punya `width` base style
+
+Progress bar notification card menggunakan CSS animation `notifProgress` (from: 100% → to: 0%) tanpa menetapkan `width: '100%'` sebagai base style. Sebelum frame pertama animasi di-commit browser, elemen bisa flash sebagai zero-width pada device lambat.
+
+**Fix:** Tambah `width: '100%'` ke inline style progress bar div.
+
+---
+
+**Files Changed:**  
+- `backend/src/modules/helper/helper.service.js` — reverse phone→customerId lookup (Primary fix)
+- `backend/src/ws/websocket.js` — HELPER cleanup on close (Secondary fix)
+- `frontend/src/components/layout/CustomerShell.jsx` — progress bar width (Minor fix)
+
+**Recurrence Prevention:**
+
+| Rule | Context |
+|---|---|
+| Setiap fitur WS push berbasis `customerId` WAJIB menyertakan reverse lookup `phone → customerId` jika frontend tidak mengirim `customer_id` | Berlaku untuk semua endpoint yang diciptakan oleh non-customer (CASHIER, HELPER, ADMIN) |
+| Setiap role yang ditambahkan ke shared map (`tenantClients`, `customerClients`) WAJIB ikut dibersihkan di `ws.on('close')` | Cek simetri: AUTH add → close delete, untuk setiap role |
+| CSS animation yang menjadi satu-satunya sumber lebar/dimensi elemen harus dilengkapi base style sebagai fallback | Berlaku untuk semua komponen animasi UI |
+
+---
+
+
+## BUG-023 — Halaman POS Langsung (/cashier/pos) Tidak Ada / Hilang
+
+**Date:** 2026-06-07
+**Related CR:** CR-023
+
+**Symptom:**
+- Route `/cashier/pos` menampilkan halaman 404 / redirect ke halaman lain
+- Tidak ada nav item "🛒 POS Langsung" di sidebar kasir
+- Tidak ada banner shortcut POS di `CashierDashboardPage`
+- Kasir tidak bisa membuat order walk-in tanpa kiosk customer
+
+**Root Cause:**
+`CashierPOSPage.jsx` hilang dari filesystem (kemungkinan akibat git reset / file deletion / rebuild tanpa file tersebut). Backend dan API layer tetap intact:
+- `backend/src/modules/cashier/cashier.router.js` → `POST /cashier/orders` ✓
+- `backend/src/modules/orders/orders.service.js` → `createOrderByCashier()` ✓  
+- `frontend/src/api/cashier.js` → `createCashierOrder()` ✓
+
+Yang hilang seluruhnya adalah layer frontend:
+1. `CashierPOSPage.jsx` — file tidak ada
+2. Import + route `/cashier/pos` di `App.jsx` — tidak ada
+3. Nav item `🛒 POS Langsung` di `CASHIER_NAV` — tidak ada
+4. Banner shortcut di `CashierDashboardPage.jsx` — tidak ada
+
+**Fix:**
+
+| File | Perubahan |
+|---|---|
+| `frontend/src/pages/cashier/CashierPOSPage.jsx` | Dibuat ulang — 2-panel POS: product browser (kiri) + cart + Bayar (kanan) |
+| `frontend/src/App.jsx` | Import `CashierPOSPage`, tambah nav item `🛒 POS Langsung`, tambah route `/cashier/pos` |
+| `frontend/src/pages/cashier/CashierDashboardPage.jsx` | Tambah banner shortcut biru ke `/cashier/pos` |
+
+**Files Changed:**
+- `frontend/src/pages/cashier/CashierPOSPage.jsx` — recreated
+- `frontend/src/App.jsx` — import + nav + route
+- `frontend/src/pages/cashier/CashierDashboardPage.jsx` — POS shortcut banner
+
+**Recurrence Prevention:**
+
+| Rule | Context |
+|---|---|
+| `CashierPOSPage.jsx` merupakan file frontend inti CR-023 — jangan delete tanpa memeriksa dependensinya di `App.jsx` | Perlu ditrack bersama backend endpoint-nya |
+| Backend endpoint + service function intact TIDAK berarti fitur frontend berjalan — selalu verifikasi bahwa page component-nya ada | Periksa: file ada di disk, import di App.jsx, route terdaftar |
+
+---
+
+## BUG-024 — POS Langsung Diblokir di Mode HELPER_INPUT + Tidak Ada Input Barcode/Phone
+
+**Date:** 2026-06-07
+**Related CR:** CR-023, CR-035
+
+**Symptom:**
+Kasir membuka `/cashier/pos`, mengisi keranjang, klik "Bayar" → error 403:
+```
+Sistem dalam mode HELPER_INPUT — kasir tidak bisa membuat order. Order dibuat oleh Helper di booth.
+```
+Selain itu, halaman tidak punya input nomor HP customer dan scan barcode.
+
+**Root Cause:**
+
+**Bug 1 — Blokir HELPER_INPUT terlalu agresif:**
+`cashier.router.js:70` memblokir semua `CASHIER` role saat `order_mode === 'HELPER_INPUT'`:
+```js
+// BEFORE (salah — terlalu agresif)
+if (_getOrderMode() === 'HELPER_INPUT' && req.user.role === 'CASHIER') {
+  throw new AppError('Sistem dalam mode HELPER_INPUT ...');
+}
+```
+Ini salah karena konsep HELPER_INPUT hanya mengatur alur order dari booth (HELPER buat order → kasir proses bayar). Walk-in customer yang langsung datang ke kasir (`/cashier/pos`) adalah flow yang berbeda dan HARUS tetap bisa jalan di mode apapun.
+
+**Bug 2 — Missing features (phone + barcode):**
+`CashierPOSPage.jsx` tidak memiliki:
+- Input nomor HP customer (untuk identifikasi customer, default Walk-in)
+- Input barcode untuk scan produk cepat
+
+**Fix:**
+
+| Layer | File | Perubahan |
+|---|---|---|
+| Backend | `cashier.router.js` | Hapus blokir HELPER_INPUT; accept optional `customerPhone` & `voucherCode` di body |
+| Backend | `orders.service.js` | `createOrderByCashier(cashierId, items, voucherCode, customerPhone)` — jika phone diberikan, lookup/create customer dengan phone tersebut; jika tidak, gunakan Walk-in (0000000000) |
+| Frontend | `cashier.js` | `createCashierOrder(items, customerPhone)` — kirim customerPhone ke backend |
+| Frontend | `CashierPOSPage.jsx` | Tambah input No. HP customer (opsional) + input scan barcode menggunakan `getProductByBarcode()` |
+
+**Customer Phone Logic (orders.service.js):**
+```
+customerPhone ada   → cari di DB; jika tidak ada → INSERT (name='Customer 08xx...', gender='PREFER_NOT_TO_SAY')
+customerPhone kosong → gunakan Walk-in sentinel (0000000000)
+```
+
+**Files Changed:**
+- `backend/src/modules/cashier/cashier.router.js`
+- `backend/src/modules/orders/orders.service.js`
+- `frontend/src/api/cashier.js`
+- `frontend/src/pages/cashier/CashierPOSPage.jsx`
+
+**Recurrence Prevention:**
+
+| Rule | Context |
+|---|---|
+| `order_mode` mengatur alur default, BUKAN memblokir semua cara pembuatan order | POS Langsung (walk-in di kasir) selalu valid di mode apapun |
+| Jika ada role-based restriction di router, tambahkan komentar WHY — restriction tanpa komentar jelas rentan dianggap bug | Semua endpoint cashier di `cashier.router.js` |
+
+---
+
+## BUG-025 — Gambar Produk Tidak Tampil di /katalog (Broken Image Icon)
+
+**Date:** 2026-06-07
+
+**Symptom:**
+Halaman `/katalog` menampilkan ikon gambar rusak (broken image) pada kartu produk, alih-alih menampilkan emoji fallback 🧸.
+
+**Root Cause:**
+Semua komponen yang merender gambar produk menggunakan pola:
+```jsx
+{product.image_url
+  ? <img src={product.image_url} ... />
+  : <span>🧸</span>
+}
+```
+Kondisi ini hanya memeriksa apakah `image_url` adalah string yang tidak kosong — bukan apakah gambar berhasil dimuat. Ketika URL valid secara format tetapi file tidak dapat diakses (404, Docker volume reset, URL eksternal tidak aktif, dsb.), browser menampilkan ikon broken image karena tidak ada `onError` handler untuk fallback ke emoji.
+
+**Skenario penyebab file tidak dapat diakses:**
+1. Docker container di-rebuild dengan `docker compose down -v` → named volume `hybrid_uploads_data` dihapus → file hilang, tapi `image_url` di DB masih ada
+2. Dev mode lokal (Vite + backend lokal) tapi gambar disimpan di Docker volume yang tidak ter-mount
+3. Bulk upload menggunakan URL eksternal (CDN/hosting) yang sudah kadaluarsa atau butuh autentikasi
+4. Odoo sync tidak menyinkronkan gambar, tapi admin pernah memasukkan URL Odoo secara manual
+
+**Fix:**
+Tambahkan `onError` handler + state `imgError` ke semua komponen yang merender gambar produk:
+
+```jsx
+const [imgError, setImgError] = useState(false);
+
+{product.image_url && !imgError
+  ? <img src={product.image_url} ... onError={() => setImgError(true)} />
+  : <span>🧸</span>
+}
+```
+
+**Files Changed:**
+- `frontend/src/components/catalogue/ProductCard.jsx` — state `imgError` + onError
+- `frontend/src/components/catalogue/ProductBottomSheet.jsx` — state `imgError` + onError
+- `frontend/src/pages/cashier/PaymentPage.jsx` — `AddProductCard`: state `imgError` + onError
+- `frontend/src/pages/cashier/CashierPOSPage.jsx` — `ProductCard`: state `imgError` + onError
+- `frontend/src/pages/customer/MockProductDetailPage.jsx` — state `imgError` + onError
+- `frontend/src/pages/admin/tabs/MasterDataTab.jsx` — inline `onError` hide broken thumbnail
+
+**Recurrence Prevention:**
+
+| Rule | Context |
+|---|---|
+| Semua `<img>` yang src-nya berasal dari data eksternal (DB/API) WAJIB punya `onError` fallback | Jangan berasumsi URL valid = file ada |
+| Pada saat image upload, selalu validasi file dapat diakses setelah disimpan | Khususnya saat Docker volume berbeda antara dev dan prod |
+
+---
+
+## BUG-026 — Fitur Voucher Kasir Hilang dari `/cashier/pos` dan `/cashier/bayar/:txnId`
+
+**Date:** 2026-06-07
+
+**Symptom:**
+Halaman `/cashier/pos` dan `/cashier/bayar/:txnId` tidak memiliki input voucher. Kasir tidak bisa menerapkan diskon voucher ke transaksi walk-in maupun transaksi yang sedang dalam antrian pembayaran.
+
+**Root Cause:**
+Fitur voucher untuk kasir diimplementasikan pertama kali di CR-029/CR-030. Saat BUG-023 dan BUG-024 diperbaiki, `CashierPOSPage.jsx` ditulis ulang dari awal (karena file hilang), tapi `VoucherInput` tidak dimasukkan kembali. `PaymentPage.jsx` tidak pernah mendapatkan VoucherInput sejak awal.
+
+Detail gap:
+1. `CashierPOSPage.jsx` — ditulis ulang saat BUG-023/024, `VoucherInput` tidak di-restore
+2. `frontend/src/api/cashier.js` — `createCashierOrder` tidak meneruskan `voucherCode` ke backend (meski backend sudah siap menerimanya)
+3. `PaymentPage.jsx` — tidak pernah ada VoucherInput; transaksi PENDING yang sudah dibuat tidak bisa mendapatkan diskon
+4. `backend/src/modules/payments/payments.service.js` — `lookupTransaction` tidak mengambil `voucher_code` dan `discount_amount` dari DB, sehingga PaymentPage tidak bisa menampilkan diskon yang sudah ada
+
+**Fix:**
+
+**Backend:**
+- `backend/src/modules/orders/orders.service.js` — Tambah fungsi `applyVoucherToTransaction(transactionId, cashierId, voucherCode)`: validasi voucher terhadap customer transaksi, hitung ulang `tax_amount` dan `total_amount`, update kolom `voucher_code` + `discount_amount` pada transaksi, catat pemakaian via `voucherSvc.applyVoucher`, tulis audit log. Diekspor ke `module.exports`.
+- `backend/src/modules/cashier/cashier.router.js` — Tambah endpoint `POST /orders/:transactionId/voucher` (auth: CASHIER, LEADER) yang memanggil `applyVoucherToTransaction`.
+- `backend/src/modules/payments/payments.service.js` — Tambah `t.voucher_code, t.discount_amount` ke SELECT query `lookupTransaction` agar PaymentPage bisa menampilkan diskon yang sudah diterapkan.
+
+**Frontend:**
+- `frontend/src/api/cashier.js` — Update `createCashierOrder(items, customerPhone, voucherCode)` untuk meneruskan `voucherCode`. Tambah `applyVoucherToOrder(transactionId, voucherCode)` yang memanggil endpoint baru.
+- `frontend/src/pages/cashier/CashierPOSPage.jsx`:
+  - Tambah `tenant_id` ke `normalizeProduct` dan item cart (diperlukan untuk scoping diskon tenant-restricted)
+  - Tambah state `appliedVoucher`; reset saat cart berubah (add/remove/qty)
+  - Tambah `<VoucherInput>` di footer cart panel — hanya tampil saat cart tidak kosong
+  - Tampilkan baris "Diskon voucher" di atas tombol Bayar jika voucher diterapkan
+  - Pass `appliedVoucher.code` ke `createCashierOrder` saat checkout
+- `frontend/src/pages/cashier/PaymentPage.jsx`:
+  - Import `VoucherInput` dan `applyVoucherToOrder`
+  - Tambah state `voucherApplying`
+  - Tambah handler `handleApplyVoucher(voucher)`: panggil `applyVoucherToOrder`, refresh transaksi, tampilkan toast
+  - Tambah card `<VoucherInput>` di antara transaction detail dan payment form — hanya tampil saat `isPending && !txn.voucher_code`
+  - Tampilkan baris "Diskon (KODE)" dan "Subtotal" secara kondisional di ringkasan transaksi
+
+**Files Changed:**
+- `backend/src/modules/orders/orders.service.js` — tambah `applyVoucherToTransaction`, export
+- `backend/src/modules/cashier/cashier.router.js` — tambah `POST /orders/:transactionId/voucher`
+- `backend/src/modules/payments/payments.service.js` — tambah kolom voucher di SELECT
+- `frontend/src/api/cashier.js` — tambah param voucherCode + fungsi applyVoucherToOrder
+- `frontend/src/pages/cashier/CashierPOSPage.jsx` — VoucherInput + tenant_id + state appliedVoucher
+- `frontend/src/pages/cashier/PaymentPage.jsx` — VoucherInput card + handleApplyVoucher + tampilan diskon
+
+**Design Notes:**
+- Voucher di PaymentPage menggunakan double-validation: VoucherInput frontend call ke `/vouchers/validate` untuk UI feedback, lalu `applyVoucherToOrder` backend call untuk apply atomik dengan customer context yang benar (dari transaksi, bukan dari JWT kasir)
+- Sekali voucher diterapkan ke transaksi PENDING, endpoint menolak apply kedua (`409 Conflict`) — cashier hanya bisa apply satu voucher per transaksi
+- Jika voucher sudah ada di transaksi (dari POS Langsung), PaymentPage menyembunyikan VoucherInput dan menampilkan diskon yang sudah diterapkan
+
+---
+
+## CR-IMG-001 — Upload Gambar Master Data: Kompresi Otomatis dengan sharp
+
+**Date:** 2026-06-08
+
+**Objective:**
+Gambar produk yang di-upload via Admin → Master Data → Foto sebelumnya disimpan as-is tanpa resize/kompresi. Gambar besar (>1 MB) memperlambat halaman katalog dan boros bandwidth. Selain itu batas 2 MB backend tidak akurat karena base64 menambah ~33% overhead.
+
+**Changes:**
+
+| Layer | File | Perubahan |
+|---|---|---|
+| Backend | `backend/package.json` | Tambah dependency `sharp ^0.33.5` |
+| Backend | `backend/Dockerfile` | Tambah `apk add libc6-compat` — diperlukan untuk sharp prebuilt binary di Alpine (musl libc) |
+| Backend | `backend/src/modules/admin/admin.service.js` | `saveProductImage`: validasi MIME whitelist (JPG/PNG/WEBP saja), naikkan batas raw ke 5 MB, resize ke max 800×800 (fit inside, tanpa enlarge), output JPEG 80% progressive, log ukuran sebelum/sesudah |
+| Frontend | `frontend/src/pages/admin/tabs/MasterDataTab.jsx` | `onFileChange`: validasi MIME type aktual (bukan hanya ekstensi) dan ukuran file ≤ 5 MB sebelum encode base64; error toast jika tidak valid; reset input agar file bisa dipilih ulang; update teks hint di modal |
+
+**Behavior Setelah Fix:**
+- File JPG/PNG/WEBP hingga 5 MB dapat di-upload
+- Backend secara otomatis mengubah semua output menjadi JPEG progressive, max 800×800 px, quality 80%
+- Gambar 2 MB raw biasanya turun ke 30–150 KB setelah kompresi (pengurangan 90–98%)
+- GIF dan format lain ditolak dengan pesan error yang jelas
+- File yang tidak valid di-reset di input sehingga pengguna bisa langsung memilih ulang
+
+**Deploy:**
+Karena ada perubahan `package.json` dan `Dockerfile` backend, perlu rebuild image:
+```bash
+docker compose build backend
+docker compose up -d backend
+```
+
+---
+
+## BUG-016 — `approveOrder` selalu gagal dengan "Internal Server Error" (CR-040)
+
+**Date:** 2026-06-08  
+**Resolved by:** clavis Development  
+**Affected:** `POST /api/v1/helper/orders/:txnId/approve`
+
+### Symptom
+
+Setiap klik tombol "Setujui" di halaman Helper (mode HELPER_APPROVE) mengembalikan **500 Internal Server Error**. Tidak ada perubahan status pada pesanan.
+
+### Log Error
+
+```
+FOR UPDATE cannot be applied to the nullable side of an outer join
+at helper.service.js:661
+```
+
+### Root Cause
+
+Di fungsi `approveOrder` (`helper.service.js`), query pertama untuk mengunci baris transaksi menggunakan:
+
+```sql
+SELECT t.*, c.full_name, c.phone_number
+FROM transactions t
+LEFT JOIN customers c ON c.customer_id = t.customer_id
+WHERE t.transaction_id = $1
+FOR UPDATE   -- ← SALAH
+```
+
+PostgreSQL melarang `FOR UPDATE` ketika query mengandung `LEFT JOIN` (outer join), karena lock tidak bisa diaplikasikan ke sisi nullable dari join. Error ini dilempar **sebelum** business logic apapun dijalankan, sehingga **setiap** percobaan approve selalu gagal 500.
+
+### Fix
+
+Ubah `FOR UPDATE` menjadi `FOR UPDATE OF t` — sintaks ini mengunci **hanya baris dari tabel `transactions`**, mengabaikan tabel `customers` yang di-outer-join:
+
+```sql
+-- Before (crash):
+FOR UPDATE
+
+-- After (benar):
+FOR UPDATE OF t
+```
+
+**File:** `backend/src/modules/helper/helper.service.js`, fungsi `approveOrder`.
+
+### Mengapa Tidak Terdeteksi Saat Development?
+
+Query ini baru dijalankan pertama kali saat tombol "Setujui" diklik — tidak ada unit test maupun smoke test yang mencakup path ini sebelum deploy.
+
+### Pencegahan
+
+Pattern yang aman untuk locking dengan JOIN: selalu gunakan `FOR UPDATE OF <alias_tabel_utama>` ketika query mengandung `LEFT JOIN` atau outer join apapun. Inner join (`JOIN`) tidak bermasalah karena semua baris terjamin ada.
+
+### Deploy
+
+```bash
+docker compose build backend
+docker compose up -d backend
+```
+
+---
+
+## BUG-017 — Tab "Antrian Approval" Tidak Muncul di Halaman Helper
+
+**Date:** 2026-06-08  
+**Resolved by:** clavis Development  
+**Affected:** `frontend/src/pages/helper/HelperPage.jsx`, `frontend/src/hooks/useAppLogo.js`
+
+### Symptom
+
+Setelah backend di-restart (pasca BUG-016 fix), halaman `/helper` hanya menampilkan tiga tab: **Buat Order**, **Riwayat Hari Ini**, **Serah Terima** — tab **Antrian Approval** tidak muncul, padahal ada dua pesanan berstatus `PENDING_APPROVAL` yang terlihat di tab Riwayat.
+
+### Root Cause
+
+**Dua defect berjalan bersamaan:**
+
+#### Defect 1 — Cache keracunan pada `usePublicConfig` (primer)
+
+Fungsi `fetchCached()` di `useAppLogo.js` memiliki handler:
+
+```js
+.catch(() => { cached = {}; })
+```
+
+Jika fetch `/api/v1/config/public` pernah **gagal sekali** (misalnya karena backend belum siap saat container pertama kali naik), `cached` di-set ke `{}` — sebuah **empty object yang truthy**. Pada pemanggilan berikutnya:
+
+```js
+if (cached) return Promise.resolve(cached);  // {} adalah truthy → return langsung
+```
+
+Hook mengembalikan `{}` secara permanen tanpa pernah retry ke backend. Akibatnya `config?.order_mode` selalu `undefined`, bukan `'HELPER_APPROVE'`.
+
+#### Defect 2 — Tab bersifat conditional (sekunder)
+
+Tab "Antrian Approval" hanya di-render jika `config?.order_mode === 'HELPER_APPROVE'`:
+
+```js
+...(isApproveMode ? [{ id: 'approval', label: 'Antrian Approval' }] : [])
+```
+
+Kombinasi kedua defect: cache yang keracunan → `isApproveMode = false` → tab tidak pernah muncul, bahkan setelah page reload.
+
+### Fix
+
+**File 1 — `frontend/src/hooks/useAppLogo.js`**
+
+Ubah catch handler agar tidak meng-cache error (biarkan `cached = null` sehingga mount berikutnya bisa retry):
+
+```js
+// Before:
+.catch(() => { cached = {}; })
+
+// After:
+.catch(() => { /* leave cached=null so next mount retries */ })
+```
+
+**File 2 — `frontend/src/pages/helper/HelperPage.jsx`**
+
+Tab "Antrian Approval" selalu ditampilkan tanpa kondisi — antrian hanya akan kosong jika tidak ada pesanan PENDING_APPROVAL:
+
+```js
+// Before:
+...(isApproveMode ? [{ id: 'approval', label: 'Antrian Approval', badge: approvalCount }] : [])
+
+// After:
+{ id: 'approval', label: 'Antrian Approval', badge: approvalCount }
+```
+
+WS subscription untuk `PENDING_APPROVAL_CREATED` juga dijadikan tanpa kondisi agar badge selalu terupdate.
+
+### Pencegahan
+
+1. **Cache error = null, bukan `{}`** — sebuah empty object adalah truthy. Handler `.catch` yang men-set nilai non-null ke cache akan memblokir semua retry selamanya.
+2. **Fitur navigasi (tab, menu) jangan di-hide berbasis config async** — jika config lambat atau gagal, user kehilangan akses ke fitur yang harusnya tersedia. Tampilkan selalu, kosongkan kontennya jika tidak relevan.
+
+### Deploy
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d frontend
+```
+
+---
+
+## BUG-028 — Barang `is_on_hold` Tidak Masuk "Disimpan untuk Nanti" saat Checkout
+
+**Date:** 2026-06-08  
+**Resolved by:** clavis Development  
+**Affected:** `CartPage.jsx`, `useCatalogueState.js`, `CartContext.jsx`, `orders.service.js`, `error.middleware.js`
+
+### Symptom
+
+Ketika customer memiliki keranjang campuran — sebagian barang tersedia (tidak on-hold) dan sebagian masih menunggu konfirmasi stok (on-hold) — saat klik **Checkout**:
+- Popup pemisahan barang tidak muncul
+- Checkout langsung gagal dengan error generik 422 dari backend
+- Barang yang on-hold tetap di keranjang sebagai item biasa, **tidak** dipindahkan ke "Disimpan untuk Nanti"
+- Customer bingung: "Loh kok barang saya hilang?" (setelah checkout berhasil untuk item approved)
+
+### Root Cause (3 titik)
+
+| # | File | Defect |
+|---|---|---|
+| 1 | `frontend/src/hooks/useCatalogueState.js` `normalizeProduct()` | **PRIMER** — Field `is_on_hold` dari backend **tidak disertakan** dalam object produk yang dinormalisasi. Akibatnya semua item di cart selalu mendapat `is_on_hold: false`. Variabel `waitingItems` selalu kosong → `StockApprovalModal` tidak pernah muncul. |
+| 2 | `backend/src/middlewares/error.middleware.js` + `orders.service.js` | **SEKUNDER** — Saat backend menolak checkout karena produk on-hold (422), response hanya berisi pesan teks berisi nama produk. Frontend tidak dapat mengetahui `product_id` mana yang on-hold untuk mengupdate state cart. |
+| 3 | `frontend/src/context/CartContext.jsx` + `CartPage.jsx` | **SEKUNDER** — Tidak ada mekanisme untuk menandai item cart tertentu sebagai `is_on_hold: true` setelah menerima respons 422 dari backend (fallback untuk barang yang sudah ada di cart sebelum fix). |
+
+### Skenario Konkret
+
+```
+Cart: Barang A (is_on_hold: false) + Barang B (is_on_hold: true, tapi di cart = false karena normalizeProduct tidak menyertakan field ini)
+
+SEBELUM fix:
+  waitingItems = [] (kosong karena semua is_on_hold = false)
+  Modal TIDAK muncul
+  doCheckout(items) → backend 422 "Barang B belum tersedia"
+  Error ditampilkan sebagai teks biasa
+  Cart tidak berubah → Barang B TETAP di cart sebagai item biasa
+
+SETELAH fix:
+  normalizeProduct menyertakan is_on_hold → Barang B mendapat is_on_hold: true di cart
+  waitingItems = [Barang B]
+  Modal MUNCUL dengan dua kolom: "Siap Diproses" dan "Menunggu Konfirmasi"
+  User klik "Ya, Lanjutkan Checkout"
+  Barang B → Disimpan untuk Nanti (sessionStorage + wishlist API)
+  Barang B dihapus dari cart
+  doCheckout([Barang A]) → berhasil
+```
+
+### Fixes
+
+**1. `frontend/src/hooks/useCatalogueState.js`** — Tambah `is_on_hold` ke `normalizeProduct`:
+```js
+// Sebelum: is_on_hold tidak ada di object
+// Sesudah:
+is_on_hold: p.is_on_hold || false,
+```
+
+**2. `backend/src/middlewares/error.middleware.js`** — Extend `AppError` untuk menerima `meta` dan expose di response:
+```js
+class AppError extends Error {
+  constructor(message, statusCode = 400, meta = null) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true;
+    if (meta) this.meta = meta;
+  }
+}
+// errorHandler: response ditambah ...(err.meta ? { meta: err.meta } : {})
+```
+
+**3. `backend/src/modules/orders/orders.service.js`** — Pass `onHoldProductIds` di meta 422:
+```js
+throw new AppError(
+  `Beberapa produk belum tersedia...`,
+  422,
+  { onHoldProductIds: onHoldCheck.rows.map(r => r.product_id) },
+);
+```
+
+**4. `frontend/src/context/CartContext.jsx`** — Tambah method `markOnHold(productIds)`:
+```js
+const markOnHold = useCallback((productIds) => {
+  const idSet = new Set(productIds);
+  setItems((prev) => {
+    const next = prev.map((i) => idSet.has(i.product_id) ? { ...i, is_on_hold: true } : i);
+    saveCart(next);
+    return next;
+  });
+}, []);
+```
+
+**5. `frontend/src/pages/customer/CartPage.jsx`** — Handle 422 dengan `onHoldProductIds` di `doCheckout`:
+```js
+} catch (err) {
+  const onHoldIds = err.response?.data?.meta?.onHoldProductIds;
+  if (onHoldIds?.length > 0) {
+    markOnHold(onHoldIds);      // tandai item di cart sebagai on-hold
+    setShowApprovalModal(true); // tampilkan modal pemisahan
+    return;
+  }
+  // error biasa
+}
+```
+
+### Alur Setelah Fix
+
+```
+Scenario A: Barang on-hold saat ditambahkan ke cart
+  → normalizeProduct fix → is_on_hold: true di cart
+  → waitingItems.length > 0 → modal muncul otomatis saat klik Checkout
+
+Scenario B: Barang sudah di cart, lalu booth men-hold produk (race condition)
+  → Cart masih is_on_hold: false (stale)
+  → Checkout → backend 422 + onHoldProductIds
+  → markOnHold() → is_on_hold: true di cart
+  → modal muncul
+  → user konfirmasi → waiting items → Disimpan untuk Nanti
+```
+
+### Files Changed
+
+- `frontend/src/hooks/useCatalogueState.js`
+- `backend/src/middlewares/error.middleware.js`
+- `backend/src/modules/orders/orders.service.js`
+- `frontend/src/context/CartContext.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setiap field dari backend product API yang digunakan di cart/UI **wajib** disertakan di `normalizeProduct()` | `is_on_hold`, `is_display_only`, `max_per_customer` — semua harus ada |
+| Error 422 yang merujuk entity spesifik harus return ID, bukan hanya nama | Gunakan `meta: { entityIds: [...] }` pattern via `AppError(msg, 422, meta)` |
+| Setiap fitur UX yang bergantung pada status produk harus handle stale-cart scenario (produk berubah setelah ditambahkan ke cart) | Kombinasi: fetch terbaru saat buka cart + 422 handler sebagai fallback |
+
+### Deploy
+
+```bash
+docker compose build --no-cache frontend backend
+docker compose up -d frontend backend
+```
+
+---
+

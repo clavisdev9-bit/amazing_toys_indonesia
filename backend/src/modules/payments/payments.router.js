@@ -23,6 +23,28 @@ router.get('/lookup/:transactionId',
 );
 
 /**
+ * POST /api/v1/payments/scan
+ * Cashier scans QR: RESERVED → WAITING_PAYMENT (Model C).
+ * For legacy PENDING, returns immediately with status PENDING.
+ */
+router.post('/scan',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [
+    body('transaction_id').trim().notEmpty().withMessage('Transaction ID wajib diisi.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await paymentsSvc.scanReservedOrder(
+        req.body.transaction_id,
+        req.user.userId,
+      );
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
  * POST /api/v1/payments/process
  * Cashier processes payment for a transaction
  */

@@ -9,3 +9,5 @@ export const updateOrderItem = (transactionId, productId, quantity) =>
   client.patch(`/orders/${transactionId}/items/${productId}`, { quantity });
 export const deleteOrderItem = (transactionId, productId) =>
   client.delete(`/orders/${transactionId}/items/${productId}`);
+export const partialProcessOrder = (transactionId) =>
+  client.post(`/orders/${transactionId}/partial-process`);

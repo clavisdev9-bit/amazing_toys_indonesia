@@ -1,6 +1,9 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 
+# sharp prebuilt binary for linux-musl requires libc6-compat on Alpine
+RUN apk add --no-cache libc6-compat
+
 COPY package*.json ./
 RUN npm ci --omit=dev
 

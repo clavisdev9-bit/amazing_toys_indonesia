@@ -21,8 +21,9 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
   const response = {
     success: false,
     message,
+    ...(err.meta ? { meta: err.meta } : {}),
   };
-  
+
   if (process.env.NODE_ENV === 'development') {
     response.stack = err.stack;
     response.error = err.toString();
@@ -33,10 +34,11 @@ function errorHandler(err, req, res, next) { // eslint-disable-line no-unused-va
 
 /** Throw this for business-logic errors that should surface to the client. */
 class AppError extends Error {
-  constructor(message, statusCode = 400) {
+  constructor(message, statusCode = 400, meta = null) {
     super(message);
-    this.statusCode   = statusCode;
+    this.statusCode    = statusCode;
     this.isOperational = true;
+    if (meta) this.meta = meta;
   }
 }
 

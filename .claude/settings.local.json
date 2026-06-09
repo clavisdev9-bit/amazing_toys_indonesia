@@ -46,7 +46,14 @@
       "Bash(npx --yes vite build --mode development)",
       "PowerShell(Stop-Process -Id 29076 -Force -ErrorAction SilentlyContinue)",
       "PowerShell(Stop-Process -Id 26284 -Force -ErrorAction SilentlyContinue)",
-      "PowerShell($env:PGPASSWORD='localdev123'; & \"C:\\\\Program Files\\\\PostgreSQL\\\\16\\\\bin\\\\psql.exe\" -U postgres -d amazing_toys_sos -c \"SELECT t.transaction_id, t.status, t.total_amount, t.payment_method, t.paid_at, t.expires_at, t.created_at, t.customer_id, c.phone_number, c.full_name, c.gender FROM transactions t JOIN customers c ON c.customer_id = t.customer_id WHERE t.transaction_id = 'TXN-20260526-00040';\" 2>&1)"
+      "PowerShell($env:PGPASSWORD='localdev123'; & \"C:\\\\Program Files\\\\PostgreSQL\\\\16\\\\bin\\\\psql.exe\" -U postgres -d amazing_toys_sos -c \"SELECT t.transaction_id, t.status, t.total_amount, t.payment_method, t.paid_at, t.expires_at, t.created_at, t.customer_id, c.phone_number, c.full_name, c.gender FROM transactions t JOIN customers c ON c.customer_id = t.customer_id WHERE t.transaction_id = 'TXN-20260526-00040';\" 2>&1)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\src\\\\modules\" -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\frontend\\\\src\" -type f -name \"*.jsx\" -o -name \"*.js\" | grep -iE \"\\(helper|pesanan\\)\" | head -20)",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"*ApprovalQueue*\")",
+      "Bash(xargs grep -l \"approve\\\\|approval\")",
+      "Bash(dir frontend\\\\src\\\\pages /B /S)",
+      "Bash(findstr /i \"order\\\\|pesanan\\\\|transaction\")"
     ]
   }
 }

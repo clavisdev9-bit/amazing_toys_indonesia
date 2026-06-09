@@ -3,14 +3,14 @@ services:
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
-    container_name: sos_postgres
+    container_name: hybrid_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: amazing_toys_sos
+      POSTGRES_DB: amazing_toys_hybrid
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - hybrid_postgres_data:/var/lib/postgresql/data
       # Init scripts run once, in alphabetical order, on first startup
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
@@ -24,27 +24,36 @@ services:
       - ./backend/migrations/006_add_odoo_categ_name.sql:/docker-entrypoint-initdb.d/10_add_odoo_categ_name.sql:ro
       - ./backend/migrations/007_sample_stock_and_categories.sql:/docker-entrypoint-initdb.d/11_sample_stock_and_categories.sql:ro
       - ./backend/migrations/008_wishlists.sql:/docker-entrypoint-initdb.d/12_wishlists.sql:ro
+      - ./backend/migrations/009_stock_sync_log.sql:/docker-entrypoint-initdb.d/13_stock_sync_log.sql:ro
+      - ./backend/migrations/009_payment_voucher_xref.sql:/docker-entrypoint-initdb.d/14_payment_voucher_xref.sql:ro
+      - ./backend/migrations/010_voucher_tables.sql:/docker-entrypoint-initdb.d/15_voucher_tables.sql:ro
+      - ./backend/migrations/011_cr035_hybrid_model_c.sql:/docker-entrypoint-initdb.d/16_cr035_hybrid_model_c.sql:ro
+      - ./backend/migrations/012_cr035_seed_helper.sql:/docker-entrypoint-initdb.d/17_cr035_seed_helper.sql:ro
+      - ./backend/migrations/013_cr036_qr_delivery.sql:/docker-entrypoint-initdb.d/18_cr036_qr_delivery.sql:ro
+      - ./backend/migrations/014_cr036_waha_session.sql:/docker-entrypoint-initdb.d/19_cr036_waha_session.sql:ro
+      - ./backend/migrations/015_cr040_helper_approve.sql:/docker-entrypoint-initdb.d/20_cr040_helper_approve.sql:ro
+      - ./backend/migrations/016_drop_expires_at_not_null.sql:/docker-entrypoint-initdb.d/21_drop_expires_at_not_null.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_sos"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_hybrid"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
-      - sos-net
+      - hybrid-net
 
   # ── Backend (Node.js / Express) ─────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: sos_backend
+    container_name: hybrid_backend
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 3001
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: amazing_toys_sos
+      DB_NAME: amazing_toys_hybrid
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD}
       DB_SSL: "false"
@@ -54,7 +63,7 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       CUSTOMER_TOKEN_EXPIRES_IN: ${CUSTOMER_TOKEN_EXPIRES_IN:-24h}
       TXN_PENDING_TIMEOUT_MINUTES: ${TXN_PENDING_TIMEOUT_MINUTES:-30}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -66,8 +75,10 @@ services:
       PRINTER_PORT: ${PRINTER_PORT:-9100}
       INTEGRATION_WEBHOOK_URL: http://integration:4000
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    ports:
+      - "${BACKEND_DEV_PORT:-3002}:3001"
     volumes:
-      - uploads_data:/app/public/uploads
+      - hybrid_uploads_data:/app/public/uploads
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 10s
@@ -78,14 +89,14 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - sos-net
+      - hybrid-net
 
   # ── Integration Service (Odoo sync) ─────────────────────────────────────────
   integration:
     build:
       context: ./integration
       dockerfile: Dockerfile
-    container_name: sos_integration
+    container_name: hybrid_integration
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -100,7 +111,7 @@ services:
       ODOO_PASSWORD: ${ODOO_PASSWORD}
       ODOO_WALKIN_PARTNER_ID: ${ODOO_WALKIN_PARTNER_ID}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
-      XREF_DB_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/amazing_toys_sos
+      XREF_DB_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/amazing_toys_hybrid
       LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-10}
       PRODUCT_SYNC_INTERVAL_MIN: ${PRODUCT_SYNC_INTERVAL_MIN:-30}
       STOCK_SYNC_INTERVAL_MIN: ${STOCK_SYNC_INTERVAL_MIN:-30}
@@ -117,26 +128,41 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - sos-net
+      - hybrid-net
+
+  # ── WAHA (Self-hosted WhatsApp HTTP API) ────────────────────────────────────
+  sos_waha:
+    image: devlikeapro/waha
+    container_name: hybrid_waha
+    restart: unless-stopped
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY:-}
+    volumes:
+      - waha_data:/app/.sessions
+    networks:
+      - hybrid-net
+    ports:
+      - "3010:3000"
 
   # ── Frontend (React → Nginx) ─────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: sos_frontend
+    container_name: hybrid_frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       - backend
     networks:
-      - sos-net
+      - hybrid-net
 
 volumes:
-  postgres_data:
-  uploads_data:
+  hybrid_postgres_data:
+  hybrid_uploads_data:
+  waha_data:
 
 networks:
-  sos-net:
+  hybrid-net:
     driver: bridge

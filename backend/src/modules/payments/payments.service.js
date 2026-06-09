@@ -4,23 +4,26 @@ const { withTransaction, query } = require('../../config/database');
 const { AppError }               = require('../../middlewares/error.middleware');
 const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
-const { broadcastToCustomer }    = require('../../ws/websocket');
+const { broadcastToCustomer, broadcastToTenant } = require('../../ws/websocket');
 const { fireWebhook }            = require('../../utils/webhook');
+const { isCashierProcessable }   = require('../orders/status.machine');
+const logger                     = require('../../config/logger');
 
 /**
  * Cashier scans / searches transaction to review before payment.
- * Only PENDING transactions can be processed.
+ * Accepts PENDING (legacy self-order), RESERVED, and WAITING_PAYMENT statuses.
  */
 async function lookupTransaction(transactionId) {
   const result = await query(
     `SELECT t.transaction_id, t.status, t.total_amount,
             t.subtotal_amount, t.tax_rate, t.tax_amount,
-            t.expires_at,
+            t.voucher_code, t.discount_amount,
+            t.expires_at, t.customer_phone AS walk_in_phone,
             c.full_name AS customer_name, c.phone_number AS customer_phone,
             c.email AS customer_email,
-            t.created_at AS checkout_time
+            t.created_at AS checkout_time, t.created_by_role
      FROM transactions t
-     JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN customers c ON c.customer_id = t.customer_id
      WHERE t.transaction_id = $1`,
     [transactionId]
   );
@@ -29,8 +32,12 @@ async function lookupTransaction(transactionId) {
 
   if (txn.status === 'PAID') throw new AppError('Transaksi sudah diproses.', 409);
   if (txn.status === 'CANCELLED') throw new AppError('Transaksi sudah dibatalkan.', 422);
-  if (txn.status === 'EXPIRED' || new Date(txn.expires_at) < new Date()) {
-    throw new AppError('Transaksi sudah kadaluarsa.', 410);
+  if (txn.status === 'EXPIRED') throw new AppError('Transaksi sudah kadaluarsa.', 410);
+  if (txn.status === 'COMPLETED' || txn.status === 'HANDED_OVER') {
+    throw new AppError('Transaksi sudah selesai.', 409);
+  }
+  if (!isCashierProcessable(txn.status)) {
+    throw new AppError(`Transaksi tidak bisa diproses (status: ${txn.status}).`, 409);
   }
 
   const itemsResult = await query(
@@ -45,6 +52,48 @@ async function lookupTransaction(transactionId) {
   );
 
   return { ...txn, items: itemsResult.rows };
+}
+
+/**
+ * Cashier scans QR to advance RESERVED → WAITING_PAYMENT.
+ * For legacy PENDING orders, this is a no-op (stays PENDING, handled in processPayment).
+ */
+async function scanReservedOrder(transactionId, cashierId) {
+  return withTransaction(async (client) => {
+    const txResult = await client.query(
+      `SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId]
+    );
+    const txn = txResult.rows[0];
+    if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
+
+    // Legacy PENDING: skip the scan step, go straight to payment screen
+    if (txn.status === 'PENDING') {
+      return { transactionId, status: 'PENDING', skipped: true };
+    }
+
+    if (txn.status === 'WAITING_PAYMENT') {
+      return { transactionId, status: 'WAITING_PAYMENT', alreadyScanned: true };
+    }
+
+    if (txn.status !== 'RESERVED') {
+      throw new AppError(`Tidak bisa scan order dengan status '${txn.status}'.`, 409);
+    }
+
+    await client.query(
+      `UPDATE transactions SET status = 'WAITING_PAYMENT' WHERE transaction_id = $1`,
+      [transactionId]
+    );
+
+    await writeAuditLog({
+      action: 'TXN_SCANNED', actorId: cashierId, actorRole: 'CASHIER',
+      entityType: 'TRANSACTION', entityId: transactionId,
+      oldValue: { status: 'RESERVED' },
+      newValue: { status: 'WAITING_PAYMENT' },
+    });
+
+    return { transactionId, status: 'WAITING_PAYMENT' };
+  });
 }
 
 /**
@@ -66,8 +115,13 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
     );
     const txn = txResult.rows[0];
     if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
-    if (txn.status !== 'PENDING') throw new AppError('Transaksi tidak dalam status PENDING.', 409);
-    if (new Date(txn.expires_at) < new Date()) throw new AppError('Transaksi sudah kadaluarsa.', 410);
+    // Accept PENDING (legacy), WAITING_PAYMENT (Model C), RESERVED (helper skipped scan)
+    if (!isCashierProcessable(txn.status)) {
+      throw new AppError(`Transaksi tidak bisa dibayar (status: ${txn.status}).`, 409);
+    }
+    if (txn.expires_at && new Date(txn.expires_at) < new Date()) {
+      throw new AppError('Transaksi sudah kadaluarsa.', 410);
+    }
 
     // Validate cash
     if (paymentMethod === 'CASH') {
@@ -109,11 +163,11 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
     await writeAuditLog({
       action: 'PAYMENT_PROCESSED', actorId: cashierId, actorRole: 'CASHIER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      oldValue: { status: 'PENDING' },
+      oldValue: { status: txn.status },
       newValue: { status: 'PAID', paymentMethod, cashChange },
     });
 
-    // Retrieve affected tenants for push notification
+    // Retrieve affected tenants for push notification + WS broadcast
     const tenantResult = await client.query(
       `SELECT DISTINCT ten.tenant_id, ten.tenant_name, ten.notification_device_token
        FROM transaction_items ti
@@ -122,11 +176,21 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       [transactionId]
     );
 
-    // Notify the customer's browser to redirect to the order detail page
-    broadcastToCustomer(txn.customer_id, { event: 'ORDER_PAID', transactionId });
+    // Notify registered customer's browser
+    if (txn.customer_id) {
+      try { broadcastToCustomer(txn.customer_id, { event: 'ORDER_PAID', transactionId }); }
+      catch (e) { logger.warn('WS customer ORDER_PAID failed', { error: e.message }); }
+    }
 
-    // Fire-and-forget notifications (non-blocking)
+    // Notify HELPER/TENANT booth that order is ready for handover (Model C)
     for (const tenant of tenantResult.rows) {
+      try {
+        broadcastToTenant(tenant.tenant_id, {
+          event: 'ORDER_PAID',
+          transactionId,
+          message: `Order ${transactionId} sudah dibayar — siapkan barang!`,
+        });
+      } catch (e) { logger.warn('WS tenant ORDER_PAID failed', { error: e.message }); }
       notificationsSvc.sendOrderNotification(tenant, transactionId).catch(() => {});
     }
 
@@ -154,4 +218,4 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
   });
 }
 
-module.exports = { lookupTransaction, processPayment };
+module.exports = { lookupTransaction, scanReservedOrder, processPayment };

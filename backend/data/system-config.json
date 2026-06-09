@@ -1,4 +1,5 @@
 {
+  "app_env": "hybrid",
   "event_name": "Amazing Toys Test",
   "venue": "Mall Gandaria City",
   "event_date_start": "2026-04-01",
@@ -6,6 +7,7 @@
   "pending_timeout_minutes": 8,
   "max_items_per_order": 20,
   "maintenance_mode": false,
+  "order_mode": "HELPER_INPUT",
   "contact_email": "amazing@admin.com",
   "logo_url": "/uploads/1779274282396-uxzm7j.jpg",
   "primary_color": "#2563eb",
@@ -26,7 +28,7 @@
     },
     {
       "user_id": "99a6e17d-f743-45a0-8900-f6e388e2a62a",
-      "printer_ip": "192.168.0.107",
+      "printer_ip": "192.168.110.39",
       "printer_port": 9100
     }
   ]

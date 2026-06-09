@@ -152,6 +152,7 @@ const T = {
     'register.errEmail':     'Format email tidak valid.',
 
     // Badge status labels
+    'badge.PENDING_APPROVAL': 'Menunggu Approval',
     'badge.PENDING':      'Menunggu',
     'badge.PAID':         'Dibayar',
     'badge.DONE':         'Selesai',

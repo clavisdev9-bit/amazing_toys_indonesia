@@ -11,7 +11,7 @@ function fetchCached() {
   if (!pending) {
     pending = getPublicConfig()
       .then((r) => { cached = r.data.data; })
-      .catch(() => { cached = {}; })
+      .catch(() => { /* leave cached=null so next mount retries */ })
       .finally(() => { pending = null; });
   }
   return pending.then(() => cached ?? {});

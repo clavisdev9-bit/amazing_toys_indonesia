@@ -46,8 +46,10 @@ export default function ProductCard({ product, tourAttr }) {
   const { isWished, toggleWish } = useWishlist();
   const [added, setAdded]       = useState(false);
   const [bouncing, setBouncing] = useState(false);
-  const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
+  const [imgError, setImgError] = useState(false);
+  const config       = usePublicConfig();
+  const ppnRate      = parseFloat(config?.ppn_rate) || 0;
+  const isHelperMode = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
 
   const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
@@ -66,6 +68,7 @@ export default function ProductCard({ product, tourAttr }) {
       tenant_id:    product.tenant_id,
       tenant_name:  product.tenant_name,
       image_url:    product.image_url || null,
+      is_on_hold:   product.is_on_hold || false,
     }, 1);
     setAdded(true);
     setTimeout(() => setAdded(false), 1500);
@@ -93,8 +96,8 @@ export default function ProductCard({ product, tourAttr }) {
     >
       {/* Image area */}
       <button onClick={goToDetail} className="text-left w-full relative" style={{ aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', background: product.colorHex || '#EEF2FF' }}>
-        {product.image_url
-          ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" />
+        {product.image_url && !imgError
+          ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" onError={() => setImgError(true)} />
           : <span className="text-5xl">🧸</span>
         }
 
@@ -141,7 +144,18 @@ export default function ProductCard({ product, tourAttr }) {
         </div>
 
         {/* Add to cart button */}
-        {addable ? (
+        {isHelperMode ? (
+          <div
+            className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-[11px] font-semibold mt-1"
+            style={{
+              background: 'rgba(124,58,237,0.08)',
+              color: 'rgba(109,40,217,0.85)',
+              border: '1px solid rgba(124,58,237,0.18)',
+            }}
+          >
+            🙋 Pesan via petugas booth
+          </div>
+        ) : addable ? (
           <button
             onClick={handleAddToCart}
             disabled={added}

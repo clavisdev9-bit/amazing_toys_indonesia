@@ -61,6 +61,15 @@ export const getTaxConfig    = ()     => client.get('/admin/tax-config');
 export const saveTaxConfig   = (data) => client.put('/admin/tax-config', data);
 export const getOdooTaxes    = ()     => client.get('/admin/odoo/taxes');
 
+// ── WA API Configuration ───────────────────────────────────────────────────
+export const getWaGatewayConfig  = ()        => client.get('/admin/wa-gateway');
+export const saveWaGatewayConfig = (data)    => client.put('/admin/wa-gateway', data);
+export const testWaSend          = (phone)   => client.post('/admin/wa-gateway/test', { phone });
+// WAHA session management (proxied through backend)
+export const getWahaStatus       = ()        => client.get('/admin/wa-gateway/waha/status');
+export const startWahaSession    = ()        => client.post('/admin/wa-gateway/waha/start');
+export const getWahaQr           = ()        => client.get('/admin/wa-gateway/waha/qr');
+
 // ── BCA QRIS Credential Configuration ──────────────────────────────────────
 export const getBcaQrisConfig       = ()     => client.get('/admin/bca-qris/config');
 export const saveBcaQrisConfig      = (data) => client.put('/admin/bca-qris/config', data);

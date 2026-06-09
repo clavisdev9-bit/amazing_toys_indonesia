@@ -188,6 +188,7 @@ export default function MasterDataTab() {
   const [uploading, setUploading]     = useState(false);
   const [previewUrl, setPreviewUrl]   = useState(null);
 
+  const [holdingId, setHoldingId]         = useState(null); // productId being toggled
   const [syncingToOdoo, setSyncingToOdoo] = useState(false);
   const [bulkCatModal, setBulkCatModal]   = useState(false);
   const [bulkCatValue, setBulkCatValue]   = useState('');
@@ -429,10 +430,42 @@ export default function MasterDataTab() {
     }
   }
 
+  async function handleToggleHold(p) {
+    setHoldingId(p.product_id);
+    const nextHold = !p.is_on_hold;
+    try {
+      await adminUpdateProduct(p.product_id, { is_on_hold: nextHold });
+      addToast(
+        nextHold
+          ? `"${p.product_name}" ditahan — customer tidak dapat checkout barang ini.`
+          : `"${p.product_name}" tersedia kembali — notifikasi WS terkirim ke customer.`,
+        nextHold ? 'error' : 'success',
+      );
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal mengubah status hold.', 'error');
+    } finally {
+      setHoldingId(null);
+    }
+  }
+
   function onFileChange(e) {
     const f = e.target.files[0];
+    if (!f) return;
+    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!ALLOWED.includes(f.type)) {
+      addToast('Format tidak didukung. Gunakan JPG, PNG, atau WEBP.', 'error');
+      e.target.value = '';
+      return;
+    }
+    // Raw limit 5 MB (backend akan resize; base64 encoding +33% jadi ~6.5 MB payload)
+    if (f.size > 5 * 1024 * 1024) {
+      addToast('Ukuran file maksimal 5 MB.', 'error');
+      e.target.value = '';
+      return;
+    }
     setUploadFile(f);
-    setPreviewUrl(f ? URL.createObjectURL(f) : null);
+    setPreviewUrl(URL.createObjectURL(f));
   }
 
   async function handleImageUpload(e) {
@@ -461,6 +494,7 @@ export default function MasterDataTab() {
 
   const statusBadge = (p) => {
     if (!p.is_active)                        return 'bg-red-100 text-red-600';
+    if (p.is_on_hold)                        return 'bg-orange-100 text-orange-700';
     if (p.stock_status === 'OUT_OF_STOCK')   return 'bg-gray-100 text-gray-500';
     if (p.stock_status === 'LOW_STOCK')      return 'bg-amber-100 text-amber-700';
     return 'bg-green-100 text-green-700';
@@ -468,6 +502,7 @@ export default function MasterDataTab() {
 
   const statusLabel = (p) => {
     if (!p.is_active)                        return 'Nonaktif';
+    if (p.is_on_hold)                        return '⏳ Ditahan';
     if (p.stock_status === 'OUT_OF_STOCK')   return 'Habis';
     if (p.stock_status === 'LOW_STOCK')      return 'Sedikit';
     return 'Tersedia';
@@ -532,6 +567,14 @@ export default function MasterDataTab() {
           <input type="checkbox" checked={includeInactive} onChange={(e) => setInclude(e.target.checked)} className="rounded" />
           Tampilkan nonaktif
         </label>
+        {products.some((p) => p.is_on_hold) && (
+          <span
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={{ background: 'rgba(234,88,12,0.1)', color: '#C2410C', border: '1px solid rgba(234,88,12,0.25)' }}
+          >
+            ⏸ {products.filter((p) => p.is_on_hold).length} produk ditahan
+          </span>
+        )}
       </div>
 
       {/* Table */}
@@ -574,7 +617,7 @@ export default function MasterDataTab() {
                     </td>
                     <td className="px-3 py-2.5">
                       {p.image_url
-                        ? <img src={p.image_url} alt="" className="w-9 h-9 object-cover rounded border" />
+                        ? <img src={p.image_url} alt="" className="w-9 h-9 object-cover rounded border" onError={e => { e.currentTarget.style.display='none'; }} />
                         : <span className="text-gray-300 text-xs">—</span>}
                     </td>
                     <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">{formatDate(p.updated_at)}</td>
@@ -584,6 +627,20 @@ export default function MasterDataTab() {
                           className="px-2 py-1 text-xs rounded border border-gray-300 text-gray-600 hover:bg-gray-100">Edit</button>
                         <button onClick={() => { setImageModal(p); setUploadFile(null); setPreviewUrl(null); }}
                           className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-600 hover:bg-blue-50">Foto</button>
+                        {p.is_active && (
+                          <button
+                            onClick={() => handleToggleHold(p)}
+                            disabled={holdingId === p.product_id}
+                            className={`px-2 py-1 text-xs rounded border transition-colors disabled:opacity-50 ${
+                              p.is_on_hold
+                                ? 'border-green-300 text-green-700 hover:bg-green-50'
+                                : 'border-orange-300 text-orange-700 hover:bg-orange-50'
+                            }`}>
+                            {holdingId === p.product_id
+                              ? '…'
+                              : p.is_on_hold ? '✓ Unhold' : '⏸ Hold'}
+                          </button>
+                        )}
                         {p.is_active
                           ? <button onClick={() => setDeleteModal(p)}
                               className="px-2 py-1 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50">Nonaktif</button>
@@ -684,7 +741,7 @@ export default function MasterDataTab() {
             <input type="file" accept="image/jpeg,image/png,image/webp"
               onChange={onFileChange}
               className="text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-            <p className="text-xs text-gray-400">Format: JPG, PNG, WEBP &bull; Maks 2 MB</p>
+            <p className="text-xs text-gray-400">Format: JPG, PNG, WEBP &bull; Maks 5 MB &bull; Otomatis dikompres ke max 800×800 px</p>
           </div>
           <div className="flex gap-2 pt-1">
             <Button type="button" variant="secondary" className="flex-1"

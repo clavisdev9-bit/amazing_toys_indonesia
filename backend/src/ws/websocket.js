@@ -42,7 +42,8 @@ function setupWebSocket(server) {
           if (payload.role === 'CUSTOMER') {
             if (!customerClients.has(payload.customerId)) customerClients.set(payload.customerId, new Set());
             customerClients.get(payload.customerId).add(ws);
-          } else if (payload.role === 'TENANT' && payload.tenantId) {
+          } else if ((payload.role === 'TENANT' || payload.role === 'HELPER') && payload.tenantId) {
+            // HELPER shares the tenantClients channel with TENANT for the same booth
             if (!tenantClients.has(payload.tenantId)) tenantClients.set(payload.tenantId, new Set());
             tenantClients.get(payload.tenantId).add(ws);
           }
@@ -61,7 +62,8 @@ function setupWebSocket(server) {
       if (role === 'CUSTOMER' && customerClients.has(customerId)) {
         customerClients.get(customerId).delete(ws);
       }
-      if (role === 'TENANT' && tenantClients.has(tenantId)) {
+      // HELPER shares tenantClients with TENANT — must clean up both roles on close
+      if ((role === 'TENANT' || role === 'HELPER') && tenantClients.has(tenantId)) {
         tenantClients.get(tenantId).delete(ws);
       }
     });
@@ -128,4 +130,17 @@ function broadcastToAll(payload) {
   });
 }
 
-module.exports = { setupWebSocket, broadcastToTenant, broadcastToCustomer, wsBroadcast, broadcastToAll };
+/**
+ * Broadcast PRODUCT_AVAILABLE to every connected client (customers + staff).
+ * Triggered when admin un-holds a product (is_on_hold: true → false).
+ * Customers who saved the product for later will receive a toast notification.
+ */
+function broadcastProductAvailable(productId, productName) {
+  broadcastToAll({
+    event: 'PRODUCT_AVAILABLE',
+    data:  { productId, productName },
+  });
+  logger.info(`[WebSocket] PRODUCT_AVAILABLE broadcast — ${productId} "${productName}"`);
+}
+
+module.exports = { setupWebSocket, broadcastToTenant, broadcastToCustomer, wsBroadcast, broadcastToAll, broadcastProductAvailable };

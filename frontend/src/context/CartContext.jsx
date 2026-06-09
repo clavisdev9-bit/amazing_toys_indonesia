@@ -51,13 +51,14 @@ export function CartProvider({ children }) {
         );
       } else {
         next = [...prev, {
-          product_id: product.product_id,
+          product_id:   product.product_id,
           product_name: product.product_name,
-          price: product.price,
-          tenant_id: product.tenant_id,
-          tenant_name: product.tenant_name,
-          image_url: product.image_url,
-          quantity: qty,
+          price:        product.price,
+          tenant_id:    product.tenant_id,
+          tenant_name:  product.tenant_name,
+          image_url:    product.image_url,
+          is_on_hold:   product.is_on_hold || false,
+          quantity:     qty,
         }];
       }
       saveCart(next);
@@ -90,12 +91,24 @@ export function CartProvider({ children }) {
     setDiscountAmount(0);
   }, []);
 
+  const markOnHold = useCallback((productIds) => {
+    const idSet = new Set(productIds);
+    setItems((prev) => {
+      const next = prev.map((i) =>
+        idSet.has(i.product_id) ? { ...i, is_on_hold: true } : i,
+      );
+      saveCart(next);
+      return next;
+    });
+  }, []);
+
   const totalAmount = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
   const totalItems  = items.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
     <CartContext.Provider value={{
       items, addItem, updateQty, removeItem, clearCart, totalAmount, totalItems,
+      markOnHold,
       appliedVoucher, discountAmount, applyVoucher, removeVoucher,
     }}>
       {children}

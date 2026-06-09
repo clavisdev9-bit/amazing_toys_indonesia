@@ -15,7 +15,14 @@ const EMPTY_FORM = {
   contact_name: '',
   contact_phone: '',
   contact_email: '',
+  order_mode: '',
 };
+
+const ORDER_MODE_OPTIONS = [
+  { value: '',             label: 'Ikuti pengaturan global' },
+  { value: 'HELPER_INPUT', label: 'Helper Input (petugas input pesanan)' },
+  { value: 'SELF_ORDER',   label: 'Self Order (customer input sendiri)' },
+];
 
 // Defined at module scope to avoid re-mount on re-render
 function FormFields({ form, setForm }) {
@@ -48,6 +55,23 @@ function FormFields({ form, setForm }) {
           value={form.contact_email}
           onChange={(e) => set('contact_email', e.target.value)} />
       </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Override Mode Penjualan
+        </label>
+        <select
+          value={form.order_mode ?? ''}
+          onChange={(e) => set('order_mode', e.target.value || null)}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          {ORDER_MODE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-1">
+          NULL = ikuti mode global dari Konfigurasi → Mode Penjualan.
+        </p>
+      </div>
     </div>
   );
 }
@@ -73,6 +97,16 @@ function BoothRow({ tenant, onEdit, onToggle }) {
           ${tenant.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
           {tenant.is_active ? 'Aktif' : 'Nonaktif'}
         </span>
+      </td>
+      <td className="px-4 py-3">
+        {tenant.order_mode ? (
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium
+            ${tenant.order_mode === 'HELPER_INPUT' ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`}>
+            {tenant.order_mode === 'HELPER_INPUT' ? 'Helper' : 'Self Order'}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-400">—</span>
+        )}
       </td>
       <td className="px-4 py-3">
         <div className="flex gap-1.5 flex-wrap">
@@ -144,6 +178,7 @@ export default function BoothTab() {
       contact_name:   tenant.contact_name,
       contact_phone:  tenant.contact_phone,
       contact_email:  tenant.contact_email  ?? '',
+      order_mode:     tenant.order_mode     ?? '',
     });
   }
 
@@ -214,6 +249,7 @@ export default function BoothTab() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Lokasi</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Kontak PIC</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Status</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Mode</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Aksi</th>
                 </tr>
               </thead>

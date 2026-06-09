@@ -41,6 +41,7 @@ import PickupStatusPage from './pages/customer/PickupStatusPage';
 
 // Cashier pages
 import CashierDashboardPage from './pages/cashier/CashierDashboardPage';
+import CashierPOSPage from './pages/cashier/CashierPOSPage';
 import PaymentPage from './pages/cashier/PaymentPage';
 import RecapPage from './pages/cashier/RecapPage';
 
@@ -49,6 +50,10 @@ import TenantOrdersPage from './pages/tenant/TenantOrdersPage';
 import TenantDashboardPage from './pages/tenant/TenantDashboardPage';
 import LaporanHarianPage from './pages/tenant/LaporanHarianPage';
 import StockReportPage from './pages/tenant/StockReportPage';
+
+// Helper pages
+import HelperPage             from './pages/helper/HelperPage';
+import HelperOrderSuccessPage from './pages/helper/HelperOrderSuccessPage';
 
 // Admin page
 import AdminPage from './pages/admin/AdminPage';
@@ -59,8 +64,13 @@ import SalesReportPage from './pages/leader/SalesReportPage';
 import VisitorStatsPage from './pages/leader/VisitorStatsPage';
 import ReturnsPage from './pages/leader/ReturnsPage';
 
+const HELPER_NAV = [
+  { to: '/helper', icon: '🏪', label: 'Booth Order' },
+];
+
 const CASHIER_NAV = [
   { to: '/cashier', icon: '💳', label: 'Pembayaran' },
+  { to: '/cashier/pos', icon: '🛒', label: 'POS Langsung' },
   { to: '/cashier/rekap', icon: '📋', label: 'Rekap Harian' },
 ];
 
@@ -91,6 +101,7 @@ function RootRedirect() {
   if (role === 'TENANT') return <Navigate to="/tenant" replace />;
   if (role === 'LEADER') return <Navigate to="/leader" replace />;
   if (role === 'ADMIN')  return <Navigate to="/admin"  replace />;
+  if (role === 'HELPER') return <Navigate to="/helper" replace />;
   return <Navigate to="/masuk" replace />;
 }
 
@@ -128,18 +139,30 @@ function AppRoutes() {
             <Route path="/pesanan/:transactionId/receipt" element={<ReceiptPickupPage />} />
           </Route>
 
-          {/* Customer routes */}
+          {/* CR-036: public order tracking — accessible without login via ?token= */}
+          <Route path="/pesanan/:transactionId" element={<OrderTrackingPage />} />
+
+          {/* Customer routes — gated behind order_mode in HELPER_INPUT mode */}
           <Route element={<RequireRole allowedRoles={['CUSTOMER']} />}>
             <Route element={<CustomerShell />}>
+              {/* Read-only tracking always accessible */}
+              <Route path="/pesanan" element={<OrderHistoryPage />} />
+              <Route path="/pesanan/:transactionId/confirmed" element={<PaymentConfirmedPage />} />
+              <Route path="/pesanan/:transactionId/pickup" element={<PickupStatusPage />} />
+              {/* Self-order routes: still present for rollback; backend enforces mode */}
               <Route path="/katalog" element={<BrowsePage />} />
               <Route path="/katalog/:productId" element={<ProductDetailPage />} />
               <Route path="/product/:id" element={<MockProductDetailPage />} />
               <Route path="/keranjang" element={<CartPage />} />
               <Route path="/checkout/sukses" element={<CheckoutSuccessPage />} />
-              <Route path="/pesanan" element={<OrderHistoryPage />} />
-              <Route path="/pesanan/:transactionId" element={<OrderTrackingPage />} />
-              <Route path="/pesanan/:transactionId/confirmed" element={<PaymentConfirmedPage />} />
-              <Route path="/pesanan/:transactionId/pickup" element={<PickupStatusPage />} />
+            </Route>
+          </Route>
+
+          {/* Helper routes */}
+          <Route element={<RequireRole allowedRoles={['HELPER']} />}>
+            <Route element={<StaffShell navItems={HELPER_NAV} title="Helper" />}>
+              <Route path="/helper"               element={<HelperPage />} />
+              <Route path="/helper/order-success" element={<HelperOrderSuccessPage />} />
             </Route>
           </Route>
 
@@ -147,6 +170,7 @@ function AppRoutes() {
           <Route element={<RequireRole allowedRoles={['CASHIER', 'LEADER']} />}>
             <Route element={<StaffShell navItems={CASHIER_NAV} title="Kasir" />}>
               <Route path="/cashier" element={<CashierDashboardPage />} />
+              <Route path="/cashier/pos" element={<CashierPOSPage />} />
               <Route path="/cashier/bayar/:transactionId" element={<PaymentPage />} />
               <Route path="/cashier/rekap" element={<RecapPage />} />
             </Route>

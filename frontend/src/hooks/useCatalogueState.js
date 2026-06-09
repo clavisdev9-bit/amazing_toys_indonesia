@@ -34,6 +34,7 @@ function normalizeProduct(p) {
     stock_status:   p.stock_status,
     colorHex:       '#F3F4F6',
     image_url:      p.image_url || null,
+    is_on_hold:     p.is_on_hold || false,
     tenant_id:      p.tenant_id,
     tenant_name:    p.tenant_name,
     booth_location: p.booth_location,

@@ -7,12 +7,15 @@ import { useLang } from '../../context/LangContext';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 
 export default function ProductDetailPage() {
   const { productId } = useParams();
   const navigate = useNavigate();
   const { addItem } = useCart();
   const { t } = useLang();
+  const config       = usePublicConfig();
+  const isHelperMode = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [qty, setQty] = useState(1);
@@ -69,7 +72,12 @@ export default function ProductDetailPage() {
       </div>
 
       {/* Add to cart */}
-      {product.stock_status !== 'OUT_OF_STOCK' && (
+      {isHelperMode ? (
+        <div className="p-4 bg-violet-50 border-t flex items-center gap-2 text-sm text-violet-700">
+          <span className="text-base">🙋</span>
+          <span>Pemesanan dilakukan melalui petugas booth. Silakan temui staf di lokasi.</span>
+        </div>
+      ) : product.stock_status !== 'OUT_OF_STOCK' && (
         <div className="p-4 bg-white border-t flex items-center gap-3">
           <div className="flex items-center gap-2 border rounded-lg">
             <button

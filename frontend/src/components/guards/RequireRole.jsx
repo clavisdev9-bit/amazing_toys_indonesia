@@ -8,6 +8,7 @@ const roleHome = {
   TENANT:   '/tenant',
   LEADER:   '/leader',
   ADMIN:    '/admin',
+  HELPER:   '/helper',
 };
 
 export default function RequireRole({ allowedRoles }) {

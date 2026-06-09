@@ -312,6 +312,90 @@ export default function ConfigTab() {
             </div>
           </section>
 
+          {/* ── Mode Penjualan (CR-035) ──────────────────────────────────── */}
+          <section>
+            <SectionHeader color="violet" icon="🏪" title="Mode Penjualan" />
+            <div className="bg-white rounded-xl border p-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Menentukan cara customer melakukan pemesanan secara global. Setiap booth dapat override mode ini secara individual di tab <strong>Booth</strong>.
+              </p>
+              <div className="grid grid-cols-1 gap-3">
+                {/* HELPER_INPUT card */}
+                <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
+                  ${(config.order_mode || 'HELPER_INPUT') === 'HELPER_INPUT'
+                    ? 'border-violet-500 bg-violet-50'
+                    : 'border-gray-200 hover:border-violet-300'}`}>
+                  <input
+                    type="radio"
+                    name="order_mode"
+                    value="HELPER_INPUT"
+                    checked={(config.order_mode || 'HELPER_INPUT') === 'HELPER_INPUT'}
+                    onChange={() => set('order_mode', 'HELPER_INPUT')}
+                    className="mt-0.5 accent-violet-600"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">Helper Input <span className="ml-1 text-xs bg-violet-100 text-violet-700 rounded-full px-2 py-0.5">Model C</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Petugas booth (HELPER) menginput pesanan atas nama customer. Stok dikurangi langsung, customer menerima QR dan bayar ke kasir.
+                    </p>
+                  </div>
+                </label>
+                {/* HELPER_APPROVE card — CR-040 */}
+                <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
+                  ${config.order_mode === 'HELPER_APPROVE'
+                    ? 'border-emerald-500 bg-emerald-50'
+                    : 'border-gray-200 hover:border-emerald-300'}`}>
+                  <input
+                    type="radio"
+                    name="order_mode"
+                    value="HELPER_APPROVE"
+                    checked={config.order_mode === 'HELPER_APPROVE'}
+                    onChange={() => set('order_mode', 'HELPER_APPROVE')}
+                    className="mt-0.5 accent-emerald-600"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">Helper Approve <span className="ml-1 text-xs bg-emerald-100 text-emerald-700 rounded-full px-2 py-0.5">Model D — Baru</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Customer memesan sendiri, tetapi pesanan masuk ke antrian <em>PENDING_APPROVAL</em>. Petugas booth mereview dan menyetujui/menolak. Stok dikurangi dan timer mulai hanya setelah disetujui.
+                    </p>
+                  </div>
+                </label>
+                {/* SELF_ORDER card */}
+                <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
+                  ${config.order_mode === 'SELF_ORDER'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-blue-300'}`}>
+                  <input
+                    type="radio"
+                    name="order_mode"
+                    value="SELF_ORDER"
+                    checked={config.order_mode === 'SELF_ORDER'}
+                    onChange={() => set('order_mode', 'SELF_ORDER')}
+                    className="mt-0.5 accent-blue-600"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-gray-800">Self Order <span className="ml-1 text-xs bg-blue-100 text-blue-700 rounded-full px-2 py-0.5">Legacy</span></p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Customer memilih produk dan membuat pesanan sendiri. Stok dikurangi langsung. Mode sebelum CR-035.
+                    </p>
+                  </div>
+                </label>
+              </div>
+              {(config.order_mode || 'HELPER_INPUT') === 'HELPER_INPUT' && (
+                <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                  <span className="shrink-0 mt-0.5">⚠️</span>
+                  <span>Dalam mode <strong>Helper Input</strong>, halaman kiosk customer masih bisa diakses tetapi backend akan mengarahkan pembuatan order hanya melalui petugas booth. Pastikan semua booth sudah memiliki akun HELPER yang terdaftar.</span>
+                </div>
+              )}
+              {config.order_mode === 'HELPER_APPROVE' && (
+                <div className="flex items-start gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-xs text-emerald-800">
+                  <span className="shrink-0 mt-0.5">✅</span>
+                  <span>Dalam mode <strong>Helper Approve</strong>, customer memesan mandiri namun pesanan tidak akan memotong stok sampai petugas booth menyetujuinya. Tab <em>Antrian Approval</em> akan muncul di halaman Helper.</span>
+                </div>
+              )}
+            </div>
+          </section>
+
           {/* ── Printer Thermal ──────────────────────────────────────────── */}
           <section>
             <SectionHeader color="slate" icon="🖨️" title="Printer Thermal (ESC/POS)" />

@@ -1400,3 +1400,864 @@ docker compose up -d
 2. Buat field `x_voucher_code` (Char 50) di `sale.order` via Odoo Shell
 3. Panduan lengkap: `docs/voucher-implementation-prompts.md` → Prompt E
 
+---
+
+### CR-035 — Hybrid Booth Approval Model C (HELPER Role & HELPER-Input Flow)
+**Files:**
+- `backend/migrations/011_cr035_hybrid_model_c.sql` *(new)*
+- `backend/migrations/012_cr035_seed_helper.sql` *(new)*
+- `backend/src/modules/helper/helper.router.js` *(new)*
+- `backend/src/modules/helper/helper.service.js` *(new)*
+- `backend/src/modules/orders/status.machine.js` *(new)*
+- `frontend/src/api/helper.js` *(new)*
+- `frontend/src/pages/helper/HelperPage.jsx` *(new)*
+- `frontend/src/components/guards/RequireRole.jsx`
+- `frontend/src/components/layout/StaffShell.jsx`
+- `frontend/src/components/ui/Badge.jsx`
+- `frontend/src/pages/cashier/CashierDashboardPage.jsx`
+- `frontend/src/pages/staff/LoginStaffPage.jsx`
+- `frontend/src/App.jsx`
+- `backend/src/app.js`
+- `backend/src/modules/cashier/cashier.service.js`
+- `backend/src/modules/payments/payments.service.js`
+
+**Type:** Feature — Hybrid Order Model  
+**Date:** 2026-06-06  
+**Author:** clavis Development
+
+**Background:**  
+Sebelumnya sistem hanya mendukung model SELF_ORDER: customer membuat pesanan sendiri melalui kiosk. CR ini menambahkan **Model C (HELPER_INPUT)**: petugas booth (HELPER) membuat pesanan atas nama customer walk-in, mengunci stok, dan menghasilkan QR yang dibawa customer ke kasir untuk pembayaran.
+
+#### 1. Database — Migration `011_cr035_hybrid_model_c.sql` (Additive)
+
+| Perubahan | Detail |
+|---|---|
+| `txn_status_enum` + 4 nilai | `RESERVED`, `WAITING_PAYMENT`, `HANDED_OVER`, `COMPLETED` |
+| `user_role_enum` + 1 nilai | `HELPER` |
+| `actor_role_enum` + 1 nilai | `HELPER` (untuk audit log) |
+| `transactions.customer_id` | Drop NOT NULL — order helper tidak wajib punya customer terdaftar |
+| `transactions` + 6 kolom | `customer_phone`, `created_by_role`, `created_by_user`, `reserved_at`, `handover_at`, `handover_by` |
+| `products` + 4 kolom | `is_display_only`, `is_on_hold`, `max_per_customer`, `bundle_group` |
+| `tenants` + 1 kolom | `order_mode VARCHAR(20)` — NULL = inherit global, `HELPER_INPUT` / `SELF_ORDER` override per booth |
+| Index baru | `idx_txn_created_by`, `idx_txn_reserved_at`, `idx_products_display_hold` |
+
+**Migration `012_cr035_seed_helper.sql`**: Seed user `helper01` (password: `helper123`, role `HELPER`, tenant_id dari tenant pertama).
+
+#### 2. Status Machine — `status.machine.js` (new)
+
+Centralisasi aturan transisi status dan validasi actor role:
+
+```
+PENDING         → WAITING_PAYMENT | CANCELLED | EXPIRED | PAID     (legacy compat)
+RESERVED        → WAITING_PAYMENT | CANCELLED | EXPIRED
+WAITING_PAYMENT → PAID | CANCELLED | EXPIRED
+PAID            → HANDED_OVER
+HANDED_OVER     → COMPLETED
+```
+
+Tiap transisi dibatasi per role:
+- `RESERVED`: hanya HELPER
+- `WAITING_PAYMENT`: hanya CASHIER / LEADER / ADMIN
+- `PAID`: hanya CASHIER / LEADER / ADMIN
+- `HANDED_OVER` / `COMPLETED`: HELPER / TENANT / LEADER / ADMIN
+
+#### 3. Backend — Modul HELPER Baru
+
+**`helper.router.js`** — 6 endpoint, semua guard `authenticate + authorize('HELPER')`:
+
+| Endpoint | Fungsi |
+|---|---|
+| `GET /api/v1/helper/products` | Daftar produk booth (dari JWT `tenantId`) |
+| `GET /api/v1/helper/orders` | Riwayat order booth hari ini |
+| `GET /api/v1/helper/orders/:txnId` | Detail satu order (scoped ke booth) |
+| `POST /api/v1/helper/orders` | Buat order RESERVED — kunci stok, hasilkan QR |
+| `POST /api/v1/helper/orders/:txnId/cancel` | Batalkan RESERVED, kembalikan stok |
+| `POST /api/v1/helper/orders/:txnId/handover` | Konfirmasi serah terima → COMPLETED |
+
+**`helper.service.js`** — `createHelperOrder` melakukan 9 langkah atomik dalam satu DB transaction:
+1. Lock produk: `WHERE product_id = ANY($1) AND tenant_id = $2 AND is_active = TRUE FOR UPDATE`
+2. Validasi booth ownership per item (produk booth lain → 403)
+3. Cek `is_display_only` dan `is_on_hold`
+4. Cek `max_per_customer`
+5. Bundle group completeness check
+6. Stok check sebelum decrement
+7. Hitung subtotal + PPN (dari `system_settings`)
+8. INSERT transactions (`status='RESERVED'`) + generate QR
+9. INSERT transaction_items + decrement stok
+
+**Booth-scoping di `GET /helper/products`**: `WHERE tenant_id = $1` — `tenantId` selalu dari JWT, tidak pernah dari client.
+
+#### 4. Cashier & Payment — Update untuk Model C
+
+**`cashier.service.js`**:
+- Queue orders: tambah `RESERVED` dan `WAITING_PAYMENT` ke `IN ('RESERVED', 'PENDING', 'WAITING_PAYMENT')`
+- Tambah endpoint scan QR: `RESERVED → WAITING_PAYMENT` (cashier scan = konfirmasi pembayaran akan dilakukan)
+- `processPayment`: gunakan `isCashierProcessable()` dari status machine alih-alih hardcoded status check
+
+**`payments.service.js`**: Gunakan `isCashierProcessable()` untuk menerima `PENDING` (legacy), `RESERVED`, dan `WAITING_PAYMENT` saat kasir memproses pembayaran.
+
+#### 5. Frontend — HELPER Interface
+
+**`frontend/src/api/helper.js`** (new): 6 fungsi API (`getBoothProducts`, `getBoothOrders`, `getBoothOrder`, `createHelperOrder`, `cancelHelperOrder`, `handoverOrder`) — tidak ada `booth_id` yang dikirim dari client.
+
+**`frontend/src/pages/helper/HelperPage.jsx`** (new): 3-tab interface:
+- **Buat Order**: browse produk (search + filter), qty controls (+/−), cart summary, nomor HP opsional, tombol "Approve & Generate QR" → tampilkan QR hasil
+- **Riwayat Hari Ini**: daftar order booth hari ini dengan status badge
+- **Serah Terima**: daftar order PAID yang menunggu handover, tombol konfirmasi serah terima
+
+**`frontend/src/App.jsx`**: Tambah route `/helper` dengan guard `RequireRole(['HELPER'])`, navigasi HELPER di `StaffShell`.
+
+**`frontend/src/components/guards/RequireRole.jsx`**: Tambah mapping `HELPER → /helper` di `roleHome`.
+
+**`frontend/src/components/ui/Badge.jsx`**: Tambah style untuk status baru: `RESERVED` (orange), `WAITING_PAYMENT` (blue), `HANDED_OVER` (teal).
+
+**`frontend/src/pages/cashier/CashierDashboardPage.jsx`**: Tambah label untuk status `RESERVED` ("Reserved (booth)") dan `WAITING_PAYMENT` ("Menunggu Bayar") di antrian kasir.
+
+#### 6. Bug Fix Booth-Scoping Query (dalam sesi CR-035)
+
+**`helper.service.js` — `createHelperOrder` query awal**:
+
+Ditemukan bahwa query `FOR UPDATE` tidak menyertakan filter `tenant_id`, sehingga DB me-lock produk booth lain sebelum validasi menolak request:
+
+```sql
+-- SEBELUM (rentan lock contention):
+WHERE product_id = ANY($1) AND is_active = TRUE
+FOR UPDATE  -- params: [productIds]
+
+-- SESUDAH (lock hanya produk milik booth ini):
+WHERE product_id = ANY($1) AND tenant_id = $2 AND is_active = TRUE
+FOR UPDATE  -- params: [productIds, helperTenantId]
+```
+
+Pesan error diperbarui: `"Satu atau lebih produk tidak ditemukan, tidak aktif, atau bukan milik booth Anda."` — mencakup kasus booth mismatch.
+
+Validasi per-item (`p.tenant_id !== helperTenantId`) di baris berikutnya tetap ada sebagai defense-in-depth.
+
+**Flow transaksi lengkap Model C:**
+```
+Helper input order → status: RESERVED (stok terkunci, QR dibuat)
+  ↓  Customer bawa QR ke kasir
+Cashier scan QR → status: WAITING_PAYMENT
+  ↓  Kasir proses bayar
+Payment processed → status: PAID
+  ↓  Helper cek tab Serah Terima
+Helper konfirmasi serah terima → status: HANDED_OVER → COMPLETED
+```
+
+**Deployment:**
+```bash
+# Jalankan migrations (pisah session karena enum ADD VALUE)
+docker exec sos_postgres psql -U postgres -d amazing_toys_sos -f /tmp/011_cr035_hybrid_model_c.sql
+docker exec sos_postgres psql -U postgres -d amazing_toys_sos -f /tmp/012_cr035_seed_helper.sql
+
+# Deploy backend
+docker cp backend/src/modules/helper/ sos_backend:/app/src/modules/helper/
+docker cp backend/src/modules/orders/status.machine.js sos_backend:/app/src/modules/orders/
+docker cp backend/src/modules/cashier/cashier.service.js sos_backend:/app/src/modules/cashier/
+docker cp backend/src/modules/payments/payments.service.js sos_backend:/app/src/modules/payments/
+docker cp backend/src/app.js sos_backend:/app/src/
+docker restart sos_backend
+
+# Rebuild frontend
+docker compose build frontend && docker compose up -d frontend
+```
+
+**Catatan keamanan:**
+- `booth_id` (tenantId) selalu diambil dari JWT server-side — tidak pernah diterima dari request client
+- Semua DB query parameterized — tidak ada string interpolation
+- `FOR UPDATE` hanya lock produk milik booth helper (filter `tenant_id = $2`)
+- Validasi booth ownership terjadi sebelum stock decrement
+
+---
+
+## CR-037 — Fitur Voucher untuk Role Kasir (Dashboard & POS Langsung)
+
+**Date:** 2026-06-07  
+**Status:** Implemented  
+**Affects:** `frontend/src/pages/cashier/CashierDashboardPage.jsx`, `frontend/src/pages/cashier/CashierPOSPage.jsx`, `frontend/src/pages/cashier/PaymentPage.jsx`, `frontend/src/api/cashier.js`, `backend/src/modules/orders/orders.service.js`, `backend/src/modules/cashier/cashier.router.js`, `backend/src/modules/payments/payments.service.js`
+
+### Overview
+
+Menambahkan fitur input voucher untuk role kasir di dua titik utama:
+
+1. **`/cashier` (CashierDashboardPage)** — Kasir dapat memasukkan kode voucher di form pencarian transaksi. Kode diteruskan via React Router navigation state (`preVoucher`), lalu di PaymentPage diaplikasikan otomatis saat transaksi berhasil dimuat.
+
+2. **`/cashier/pos` (CashierPOSPage)** — Kasir dapat memasukkan kode voucher di panel keranjang sebelum checkout. Voucher divalidasi client-side (untuk preview diskon) lalu diteruskan ke `createOrderByCashier` untuk validasi + apply atomik di backend.
+
+3. **`/cashier/bayar/:txnId` (PaymentPage)** — Kasir dapat memasukkan kode voucher untuk transaksi PENDING yang belum memiliki voucher. Backend endpoint baru `POST /cashier/orders/:txnId/voucher` menerapkan diskon, recalculates total, dan mencatat penggunaan atomik.
+
+### Alur Voucher per Halaman
+
+```
+/cashier (Dashboard)
+  ├─ Kasir ketik TxnId + kode voucher opsional
+  ├─ Klik "Cari" → verifikasi transaksi via lookupPayment
+  └─ Navigate ke /cashier/bayar/:txnId dengan state { preVoucher: "KODE" }
+       ↓
+/cashier/bayar/:txnId (PaymentPage)
+  ├─ Load transaksi
+  ├─ Jika state.preVoucher ada + txn.status = PENDING + belum ada voucher
+  │    → auto-apply via POST /cashier/orders/:txnId/voucher
+  ├─ Jika kasir ingin input manual → VoucherInput card muncul
+  └─ Diskon tampil di ringkasan (Subtotal / Diskon (KODE) / PPN / Total)
+
+/cashier/pos (CashierPOSPage)
+  ├─ Kasir tambahkan produk ke keranjang
+  ├─ VoucherInput di cart panel → validasi client-side → preview diskon
+  ├─ Klik "Bayar" → createCashierOrder(items, phone, voucherCode)
+  └─ Navigate ke /cashier/bayar/:txnId (voucher sudah ada di transaksi)
+```
+
+### Bug Fixes yang Disertakan
+
+#### BUG: AddProductCard crash (React.useState tanpa import)
+
+`PaymentPage.jsx` menggunakan `React.useState` di `AddProductCard` inner component, tapi file hanya menggunakan named import `{ useState }` tanpa `import React`. Menyebabkan `ReferenceError: React is not defined` setiap kali PaymentPage dibuka dalam status PENDING.
+
+**Fix:** `React.useState(false)` → `useState(false)`, tambah `useRef` ke import.
+
+#### BUG: VoucherInput stale state saat backend gagal
+
+Ketika `handleApplyVoucher` gagal (mis. race condition — slot voucher habis), `VoucherInput` tetap menampilkan state "applied" (chip hijau + kode + nominal hemat) karena state internal `appliedVoucher` di dalam komponen tidak di-reset dari luar. Kasir mengira diskon sudah diterapkan padahal tidak.
+
+**Fix:** Tambah state `voucherKey` (integer) di PaymentPage. Saat backend gagal, `setVoucherKey(k => k + 1)` memaksa React unmount + remount `VoucherInput` (via `key={voucherKey}`) sehingga semua internal state-nya reset ke awal.
+
+#### BUG: Toast menampilkan discount_amount dari validasi client-side
+
+Toast sukses sebelumnya menampilkan `voucher.discount_amount` dari hasil validasi frontend (VoucherInput). Nilai ini bisa berbeda dengan nilai aktual yang dihitung backend (khususnya jika subtotal berubah antara validate dan apply — mis. produk ditambah via product browser di PaymentPage).
+
+**Fix:** `handleApplyVoucher` sekarang membaca `result.data.data.discountAmount` dari response backend endpoint, bukan dari objek validasi client-side.
+
+### Detail Implementasi
+
+#### Backend
+
+**`backend/src/modules/orders/orders.service.js`** — Tambah `applyVoucherToTransaction(transactionId, cashierId, voucherCode)`:
+- Lock transaksi `FOR UPDATE`
+- Validasi: status harus `PENDING`, belum ada `voucher_code`
+- Validasi voucher via `voucherSvc.validateVoucher` dengan `customerId` dari transaksi
+- Recalculate: `taxableAmt = subtotal - discount`, `taxAmount = taxableAmt * tax_rate / 100`, `total = taxableAmt + taxAmount`
+- UPDATE `transactions SET voucher_code, discount_amount, tax_amount, total_amount`
+- `voucherSvc.applyVoucher` (atomik — rollback jika race condition)
+- `writeAuditLog` dengan action `VOUCHER_APPLIED`
+- Return `{ transactionId, voucherCode, discountAmount, taxAmount, totalAmount }`
+
+**`backend/src/modules/cashier/cashier.router.js`** — Endpoint baru:
+```
+POST /api/v1/cashier/orders/:transactionId/voucher
+Auth: CASHIER | LEADER
+Body: { voucherCode: string (notEmpty) }
+→ ordersSvc.applyVoucherToTransaction(...)
+← 200 { success, message, data: { transactionId, voucherCode, discountAmount, taxAmount, totalAmount } }
+← 409 jika sudah ada voucher / race condition
+← 422 jika bukan status PENDING
+← 400 jika kode tidak valid / expired / habis
+```
+
+**`backend/src/modules/payments/payments.service.js`** — Tambah `t.voucher_code, t.discount_amount` ke SELECT `lookupTransaction` agar PaymentPage bisa menampilkan diskon dari transaksi yang sudah ada vouchernya.
+
+#### Frontend
+
+**`frontend/src/api/cashier.js`**:
+```js
+createCashierOrder(items, customerPhone = null, voucherCode = null)
+applyVoucherToOrder(transactionId, voucherCode)  // POST /cashier/orders/:id/voucher
+```
+
+**`frontend/src/pages/cashier/CashierDashboardPage.jsx`**:
+- State `voucherCode` + input field di lookup form (amber styling, `maxLength=50`)
+- `handleLookup` meneruskan `{ preVoucher: code }` via `navigate(..., { state })` jika kode diisi
+- Voucher field auto-uppercase, ada tombol ✕ untuk clear
+
+**`frontend/src/pages/cashier/PaymentPage.jsx`**:
+- Import `useLocation`, `useRef`
+- State `voucherKey` (reset VoucherInput via key prop) + ref `autoVoucherDone` (one-shot)
+- `preVoucher = location.state?.preVoucher`
+- `useEffect` pada `txn?.transaction_id`: jika `preVoucher` ada + PENDING + belum ada voucher → `handleApplyVoucher(preVoucher)` (hanya sekali)
+- `handleApplyVoucher(voucherOrCode)` menerima string atau `{ code }` object
+- Toast menggunakan backend `result.data.data.discountAmount` (bukan client-side amount)
+- `<VoucherInput key={voucherKey} ... />` — remount on failure
+- Card voucher muncul hanya saat `isPending && !txn.voucher_code`
+- Ringkasan transaksi: baris "Diskon (KODE)" muncul jika `discount_amount > 0`
+
+**`frontend/src/pages/cashier/CashierPOSPage.jsx`**:
+- State `appliedVoucher`; reset saat cart berubah (add/remove/setQty)
+- `tenant_id` ditambah ke `normalizeProduct` dan cart items (diperlukan untuk scoping diskon)
+- `<VoucherInput>` di cart panel footer — hanya saat cart tidak kosong
+- Baris "Diskon voucher" jika `appliedVoucher.discount_amount > 0`
+- `createCashierOrder(items, phone, appliedVoucher?.code)` saat checkout
+
+### Catatan Desain
+
+| Aspek | Keputusan |
+|---|---|
+| Double-validation | VoucherInput frontend (`/vouchers/validate`) untuk UX preview; backend endpoint re-validates atomically dengan customer context yang benar |
+| One voucher per txn | `applyVoucherToTransaction` menolak 409 jika `voucher_code` sudah ada — tidak ada flow ganti/remove voucher di backend (cashier hubungi supervisor) |
+| Walk-in customer | Tidak ada duplicate-use check untuk walk-in sentinel — cashier POS selalu bisa pakai voucher |
+| Tax-rate fallback | `parseFloat(txn.tax_rate) \|\| 0` — jika NULL, diskon tetap dihitung tapi tanpa PPN. Ini konsisten dengan row legacy yang memang tax_rate = 0 |
+| Auto-apply guard | `autoVoucherDone ref` mencegah re-apply jika txn refresh (mis. setelah add product) |
+
+---
+
+## CR-036 — QR Delivery Three-Layer System + WAHA Integration
+
+**Date:** 2026-06-06  
+**Status:** Implemented  
+**Affects:**
+- `backend/migrations/013_cr036_qr_delivery.sql` *(new)*
+- `backend/migrations/014_cr036_waha_session.sql` *(new)*
+- `backend/src/modules/wa/wa.service.js` *(new)*
+- `backend/src/modules/admin/admin.service.js` — `getWaGatewayConfig`, `saveWaGatewayConfig`
+- `backend/src/modules/admin/admin.router.js` — WA Gateway endpoints + WAHA proxy
+- `backend/src/modules/helper/helper.service.js` — Layer 1 trigger post-order
+- `docker-compose.yml` — tambah service `hybrid_waha`
+- `frontend/src/pages/admin/AdminPage.jsx` — tambah tab WA API
+- `frontend/src/pages/admin/tabs/WaGatewayTab.jsx` *(new)*
+
+### Overview
+
+Setelah Helper membuat order RESERVED (CR-035), sistem mengirimkan QR order ke customer melalui tiga layer:
+
+| Layer | Mekanisme | Kondisi |
+|---|---|---|
+| Layer 1 — WhatsApp | WA Gateway kirim link `{order_base_url}/t/{public_token}` ke nomor HP customer | HP tersedia + provider aktif |
+| Layer 2 — WebSocket | Broadcast `ORDER_RESERVED` ke dashboard/leader | Selalu |
+| Layer 3 — QR di layar | `qrPayload` + `publicToken` dikembalikan ke Helper untuk tampil di layar | Selalu (fallback) |
+
+Kegagalan Layer 1 **tidak memblokir** pembuatan order (fire-and-forget). Layer 3 selalu tersedia sebagai fallback.
+
+### 1. Database — Migration `013_cr036_qr_delivery.sql`
+
+Tambah 4 kolom ke `transactions`:
+
+| Kolom | Tipe | Keterangan |
+|---|---|---|
+| `public_token` | VARCHAR(64) UNIQUE | Token random 64-char hex untuk link QR publik |
+| `public_token_exp` | TIMESTAMPTZ | Expiry token (TTL dari `public_token_ttl_minutes`) |
+| `wa_sent_at` | TIMESTAMPTZ | Waktu WA berhasil terkirim |
+| `wa_delivery_status` | VARCHAR(20) | `PENDING` / `SENT` / `DELIVERED` / `FAILED` / `SKIPPED` |
+
+Partial index `idx_transactions_public_token` untuk lookup token cepat.
+
+Seed 6 key baru ke `system_settings`: `wa_gateway_provider`, `wa_gateway_api_key`, `wa_gateway_api_url`, `wa_message_template`, `public_token_ttl_minutes`, `order_base_url`.
+
+Migration `014_cr036_waha_session.sql`: seed `wa_waha_session = "default"`.
+
+### 2. Backend — `wa.service.js` (new)
+
+Fire-and-forget WA sending module. Providers yang didukung: `WABLAS`, `ZENZIVA`, `TWILIO`, `DISABLED`.
+
+- `sendOrderQR(phone, opts)` — format pesan dari template, kirim ke provider, update `wa_delivery_status` di DB. Selalu return `{ status, messageId?, error? }` — tidak pernah throw.
+- `sendTestMessage(phone)` — dipakai endpoint admin test WA.
+- `getWaConfig()` — baca semua konfigurasi WA dari `system_settings`.
+
+Template pesan menggunakan placeholder: `{{booth_name}}`, `{{item_summary}}`, `{{total_amount}}`, `{{order_link}}`, `{{expiry_minutes}}`.
+
+### 3. Backend — WA Gateway Admin Endpoints
+
+**`admin.service.js`** — dua fungsi baru:
+- `getWaGatewayConfig(masked)` — baca config dari `system_settings`; jika `masked=true`, `apiKey` diganti `***`.
+- `saveWaGatewayConfig(data)` — upsert tiap key ke `system_settings`; `apiKey` hanya di-update jika dikirim dan bukan `***`.
+
+**`admin.router.js`** — 6 endpoint baru (semua guard ADMIN):
+
+| Method | Path | Fungsi |
+|---|---|---|
+| `GET` | `/api/v1/admin/wa-gateway` | Baca config WA (apiKey masked) |
+| `PUT` | `/api/v1/admin/wa-gateway` | Simpan config WA |
+| `POST` | `/api/v1/admin/wa-gateway/test` | Kirim pesan tes ke nomor HP |
+| `GET` | `/api/v1/admin/wa-gateway/waha/status` | Cek status sesi WAHA |
+| `POST` | `/api/v1/admin/wa-gateway/waha/start` | Mulai/restart sesi WAHA |
+| `GET` | `/api/v1/admin/wa-gateway/waha/qr` | Ambil QR pairing WAHA (base64 PNG) |
+
+Endpoint WAHA adalah proxy ke container `hybrid_waha` — browser tidak perlu akses langsung ke Docker internal.
+
+### 4. Docker — `hybrid_waha` Container
+
+Service `sos_waha` (`devlikeapro/waha`) ditambahkan ke `docker-compose.yml`:
+- Port host: **3010** → internal: 3000
+- Volume: `waha_data:/app/.sessions`
+- Env: `WHATSAPP_API_KEY=${WAHA_API_KEY:-}`
+
+### 5. Frontend — WA Gateway Tab
+
+`AdminPage.jsx`: tambah tab **"WA API"** (icon 📲) di antara Voucher dan Integrasi.
+
+`WaGatewayTab.jsx` (new): form konfigurasi provider/API key/URL/session + tombol Test WA + tombol Scan QR WAHA (tampilkan QR pairing inline).
+
+### Deployment (CR-036)
+
+```bash
+# Rebuild docker-compose dengan service WAHA baru
+docker compose up -d sos_waha
+
+# Deploy backend changes
+docker cp backend/src/modules/wa/ hybrid_backend:/app/src/modules/wa/
+docker cp backend/src/modules/admin/admin.service.js hybrid_backend:/app/src/modules/admin/
+docker cp backend/src/modules/admin/admin.router.js  hybrid_backend:/app/src/modules/admin/
+docker cp backend/src/modules/helper/helper.service.js hybrid_backend:/app/src/modules/helper/
+docker restart hybrid_backend
+
+# Rebuild frontend (tab baru)
+docker compose build frontend && docker compose up -d frontend
+```
+
+**Setup wajib sebelum live:**
+1. Pilih provider di Admin → WA API → Provider (DISABLED jika tidak pakai WA)
+2. Jika pakai WAHA: isi API URL = `http://hybrid_waha:3000`, klik "Start Session", scan QR pairing
+3. Jika pakai Wablas/Zenziva/Twilio: isi API Key + URL provider
+4. Set `order_base_url` ke URL publik sistem (misal: `http://192.168.1.100:8080`)
+5. Test kirim pesan ke nomor HP sendiri sebelum event
+
+---
+
+## CR-038 — Model C Backend Completion
+
+**Date:** 2026-06-08  
+**Status:** Implemented (uncommitted)  
+**Affects:**
+- `backend/src/modules/payments/payments.router.js` — POST /payments/scan
+- `backend/src/modules/payments/payments.service.js` — scan, lookup walk-in, processPayment update
+- `backend/src/modules/cashier/cashier.router.js` — GET /cashier/queue, HELPER_INPUT guard, customerPhone
+- `backend/src/modules/cashier/cashier.service.js` — getPaymentQueue
+- `backend/src/ws/websocket.js` — HELPER channel + broadcastProductAvailable
+- `backend/src/modules/admin/admin.service.js` — HELPER role, order_mode config, product flags
+- `frontend/src/pages/admin/tabs/ConfigTab.jsx` — Mode Penjualan section
+- `frontend/src/pages/admin/tabs/UserRoleTab.jsx` — HELPER role management
+- `frontend/src/pages/staff/LoginStaffPage.jsx` — subtitle update
+
+### Overview
+
+Kompletasi alur Model C (CR-035) di sisi backend dan admin UI. CR-035 mendefinisikan status machine dan modul HELPER, namun integrasi ke alur kasir dan admin masih perlu dilengkapi.
+
+### 1. Endpoint Baru — `POST /api/v1/payments/scan`
+
+Kasir scan QR order RESERVED → advance ke `WAITING_PAYMENT`.
+
+```
+Auth: CASHIER | LEADER | ADMIN
+Body: { transaction_id }
+
+Status RESERVED → UPDATE status = WAITING_PAYMENT + audit log TXN_SCANNED
+Status PENDING  → no-op, return { status: PENDING, skipped: true }  (legacy compat)
+Status WAITING_PAYMENT → return { alreadyScanned: true }
+```
+
+Dipakai oleh PaymentPage saat kasir pertama kali scan QR dari Helper.
+
+### 2. Endpoint Baru — `GET /api/v1/cashier/queue`
+
+List semua order yang menunggu pembayaran di kasir, termasuk Model C.
+
+```
+Auth: CASHIER | LEADER | ADMIN
+Query: ?date=YYYY-MM-DD (default: hari ini WIB)
+
+Response: [{ transaction_id, status, total_amount, created_at, reserved_at,
+             walk_in_phone, created_by_role, customer_name, customer_phone,
+             tenant_name, booth_location, item_count }]
+
+WHERE status IN ('RESERVED', 'PENDING', 'WAITING_PAYMENT')
+ORDER BY created_at ASC
+```
+
+### 3. Pembaruan `payments.service.js`
+
+**`lookupTransaction`:**
+- `JOIN customers` → `LEFT JOIN customers` (order RESERVED tidak wajib punya customer terdaftar)
+- Tambah field di response: `walk_in_phone`, `created_by_role`, `voucher_code`, `discount_amount`
+- Status check diperluas: tolak `COMPLETED` dan `HANDED_OVER` (409), gunakan `isCashierProcessable()` sebagai gate
+
+**`scanReservedOrder` (fungsi baru):**
+- Lock `FOR UPDATE`, validasi status RESERVED
+- UPDATE ke `WAITING_PAYMENT` + `writeAuditLog('TXN_SCANNED')`
+
+**`processPayment`:**
+- Ganti hardcoded `status !== 'PENDING'` → `!isCashierProcessable(txn.status)` — menerima `PENDING`, `RESERVED`, `WAITING_PAYMENT`
+- `expires_at` check dibuat opsional (`txn.expires_at && ...`) karena RESERVED tidak selalu punya `expires_at`
+- `broadcastToCustomer` dibungkus try-catch + hanya dipanggil jika `txn.customer_id` ada
+- Setelah PAID: `broadcastToTenant(tenant_id, { event: 'ORDER_PAID' })` — notifikasi booth bahwa barang perlu disiapkan (Model C handover)
+
+### 4. Pembaruan `cashier.router.js`
+
+- `POST /cashier/orders` — tambah field `customerPhone` opsional (POS walk-in dengan nomor HP), teruskan ke `createOrderByCashier`
+- `POST /cashier/orders/:txnId/items` — tambah guard: jika `order_mode = HELPER_INPUT` dan role `CASHIER` → 403 (kasir tidak bisa tambah item saat mode Helper)
+
+### 5. Pembaruan `websocket.js`
+
+**HELPER shares `tenantClients` channel:**
+```js
+// BEFORE: hanya TENANT
+} else if (payload.role === 'TENANT' && payload.tenantId) {
+
+// AFTER: TENANT dan HELPER berbagi channel yang sama
+} else if ((payload.role === 'TENANT' || payload.role === 'HELPER') && payload.tenantId) {
+```
+HELPER yang terhubung ke booth T001 menerima semua event yang di-broadcast ke `tenant:T001`, termasuk `ORDER_PAID` setelah kasir proses bayar. Cleanup on disconnect juga diperbarui untuk kedua role.
+
+**`broadcastProductAvailable` (fungsi baru):**
+Dipanggil dari `adminUpdateProduct` ketika `is_on_hold` berubah `true → false`. Broadcast `PRODUCT_AVAILABLE` ke semua client (customer + staff) — customer yang menyimpan produk tersebut di wishlist bisa menerima notifikasi toast.
+
+### 6. Pembaruan `admin.service.js`
+
+**`createUser`:**
+- Tambah `HELPER` ke daftar role valid: `['CASHIER', 'TENANT', 'HELPER', 'LEADER']`
+- `tenant_id` wajib untuk role `HELPER` (sama seperti `TENANT`)
+
+**`adminUpdateProduct`:**
+- Tambah field yang boleh diupdate: `is_on_hold`, `is_display_only`, `max_per_customer`
+- Saat `is_on_hold` berubah `true → false`: otomatis broadcast `PRODUCT_AVAILABLE` via `broadcastProductAvailable`
+
+**`adminUpdateTenant`:**
+- Tambah `order_mode` ke daftar field yang boleh diupdate
+
+**`DEFAULT_SYSTEM_CONFIG`:**
+- Tambah `order_mode: 'HELPER_INPUT'` — nilai default global mode penjualan
+
+### 7. Frontend — ConfigTab: Mode Penjualan
+
+Tambah section "Mode Penjualan" (warna violet) di tab Konfigurasi Admin:
+- Radio button: **Helper Input** (default, violet) vs **Self Order** (legacy, biru)
+- Peringatan amber jika mode HELPER_INPUT dipilih: "Pastikan semua booth sudah memiliki akun HELPER"
+- Tersimpan ke `system_settings → order_mode` via endpoint konfigurasi yang sudah ada
+
+### 8. Frontend — UserRoleTab: HELPER Role
+
+- Tab role baru **"Helper"** (icon 🙋) di halaman Users Admin
+- Form create user: tampilkan dropdown Booth saat role `HELPER` (wajib) atau `TENANT`
+- Label booth disesuaikan: "Booth yang Dikelola" untuk HELPER, "Booth Tenant" untuk TENANT
+- Form edit user: sama, booth required untuk HELPER
+
+### Catatan Desain
+
+| Aspek | Keputusan |
+|---|---|
+| RESERVED scan | `POST /payments/scan` terpisah dari `POST /payments/process` agar PaymentPage bisa menampilkan detail transaksi sebelum kasir memilih metode bayar |
+| HELPER WS channel | HELPER berbagi channel `tenant:{tenantId}` — tidak membuat channel baru. Ini memastikan satu broadcast sudah menjangkau HELPER dan TENANT yang mengelola booth yang sama |
+| `createOrderByCashier` + phone | `customerPhone` disimpan ke `transactions.customer_phone` (kolom CR-035). Dipakai untuk WA delivery jika kasir input nomor HP walk-in saat POS Langsung |
+| HELPER_INPUT guard di addItem | Mencegah kasir mengubah item order yang dibuat Helper — integri stok order tetap di tangan Helper |
+
+---
+
+## CR-039 — Image Processing Enhancement
+
+**Date:** 2026-06-08  
+**Status:** Implemented (uncommitted)  
+**Affects:**
+- `backend/src/modules/admin/admin.service.js` — `saveProductImage`
+
+### Overview
+
+`saveProductImage` sebelumnya hanya validasi size (2 MB) dan simpan file as-is. Gambar beresolusi tinggi dari kamera (DSLR/HP) berukuran 3–8 MB sering ditolak atau memperlambat halaman katalog.
+
+### Perubahan — `saveProductImage`
+
+**Before:**
+```js
+const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+const ext = extMap[mimeType] || 'jpg';
+const buffer = Buffer.from(matches[2], 'base64');
+if (buffer.length > 2 * 1024 * 1024) throw new AppError('Ukuran gambar maksimal 2MB.', 422);
+fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+```
+
+**After:**
+```js
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+if (!ALLOWED_MIME.includes(mimeType)) throw new AppError('Format gambar tidak didukung. Gunakan JPG, PNG, atau WEBP.', 422);
+const rawBuffer = Buffer.from(matches[2], 'base64');
+if (rawBuffer.length > 5 * 1024 * 1024) throw new AppError('Ukuran file gambar maksimal 5 MB.', 422);
+
+// Resize ke max 800×800 (pertahankan aspek rasio), output JPEG 80%
+const processed = await sharp(rawBuffer)
+  .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+  .jpeg({ quality: 80, progressive: true })
+  .toBuffer();
+
+const filename = `${Date.now()}-${...}.jpg`;
+fs.writeFileSync(path.join(uploadsDir, filename), processed);
+logger.info(`Image saved: ${filename} (${processed.length/1024} KB, dari ${rawBuffer.length/1024} KB raw)`);
+```
+
+**Perubahan:**
+- Batas upload raw dinaikkan **2 MB → 5 MB** (memudahkan upload dari HP)
+- Output selalu **JPEG 80%** progressive (hapus ambiguitas format)
+- Resize otomatis **max 800×800 px** (aspect ratio dipertahankan, tidak enlarge jika sudah kecil)
+- Format `gif` dihapus dari whitelist (tidak perlu untuk produk)
+- Nama file selalu berekstensi `.jpg` (konsisten)
+- Logging size sebelum dan sesudah kompresi
+
+**Contoh hasil:**
+| Input | Output |
+|---|---|
+| DSLR 4000×3000 px, 4.2 MB JPEG | 800×600 px, ~120 KB |
+| HP 3024×4032 px, 3.8 MB PNG | 600×800 px, ~95 KB |
+| Produk 400×400 px, 80 KB PNG | 400×400 px, ~22 KB (tidak dienlarge) |
+
+`sharp` sudah ada di `backend/package.json` sebagai dependency sejak awal proyek — tidak perlu install baru.
+
+---
+
+## CR-040 — Mode HELPER_APPROVE (Model D)
+
+**Date:** 2026-06-08  
+**Author:** clavis Development  
+**Status:** Implemented
+
+### Latar Belakang
+
+Model C (`HELPER_INPUT`) mengharuskan petugas booth untuk menginput setiap pesanan secara manual. Model D (`HELPER_APPROVE`) memberikan kebebasan customer untuk memesan sendiri melalui kiosk, tetapi pesanan **tidak memotong stok** dan **tidak memulai timer** sampai petugas booth menyetujuinya secara eksplisit. Hal ini mencegah pemesanan ghost/fraud dan tetap mempertahankan kontrol booth atas stok.
+
+### Alur HELPER_APPROVE (Model D)
+
+```
+Customer → pilih produk → checkout → PENDING_APPROVAL
+                                        │
+                                  WS notif ke Helper booth
+                                        │
+                         ┌──── Helper review antrian ────┐
+                         │                               │
+                       APPROVE                         REJECT
+                         │                               │
+              Deduct stock + generate QR          CANCELLED
+              + set timer (expires_at)             (no stock to restore)
+              + WS notif ke Customer              + WS notif ke Customer
+                         │
+                      PENDING
+                         │
+                    [Bayar ke Kasir]
+                         │
+                       PAID → HANDED_OVER → COMPLETED
+```
+
+### Database (Migration 015)
+
+**File:** `backend/migrations/015_cr040_helper_approve.sql`
+**Mount:** `docker-compose.yml` → `20_cr040_helper_approve.sql`
+
+```sql
+ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'PENDING_APPROVAL';
+ALTER TABLE transactions
+  ADD COLUMN IF NOT EXISTS approved_at        TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS approved_by        UUID REFERENCES users(user_id),
+  ADD COLUMN IF NOT EXISTS timer_locked_until TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS approval_note      TEXT;
+ALTER TABLE transaction_items
+  ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) NOT NULL DEFAULT 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_transactions_pending_approval
+  ON transactions (booth_id, created_at) WHERE status = 'PENDING_APPROVAL';
+```
+
+### Backend
+
+#### `status.machine.js`
+- Tambah transisi `PENDING_APPROVAL → { PENDING, CANCELLED }`
+- `ALLOWED_ACTORS[PENDING]` = `['HELPER']` — hanya helper yang bisa approve (transition PENDING_APPROVAL → PENDING)
+
+#### `orders.service.js`
+- `createOrder()`:
+  - Guard `HELPER_INPUT` tetap ada (403)
+  - Mode `HELPER_APPROVE`: status = `'PENDING_APPROVAL'`, skip stock deduction, skip voucher apply, `approval_status = 'PENDING'` di transaction_items, tidak generate QR, broadcast WS `PENDING_APPROVAL_CREATED` ke tenant channel
+  - Mode `SELF_ORDER`: status = `'PENDING'`, deduct stock langsung, generate QR (perilaku existing)
+- `cancelOrder()`: izinkan cancel untuk status `PENDING_APPROVAL` (tidak perlu restore stok karena belum dikurangi)
+
+#### `helper.service.js` — 3 fungsi baru
+- **`getApprovalQueue(tenantId)`**: query semua `PENDING_APPROVAL` orders untuk booth ini, include items per transaksi
+- **`approveOrder(txnId, helperId, tenantId, note)`**:
+  - Lock produk → validasi stok → deduct stok
+  - Mark items `approval_status = 'APPROVED'`
+  - Generate QR payload
+  - Set `expires_at = NOW() + checkout_timeout`
+  - Transition `PENDING_APPROVAL → PENDING`
+  - Broadcast WS `ORDER_APPROVED` ke customer
+  - Broadcast WS `APPROVAL_QUEUE_UPDATE { action: 'APPROVED' }` ke tenant
+- **`rejectOrder(txnId, helperId, tenantId, reason)`**:
+  - Mark items `approval_status = 'REJECTED'`
+  - Transition `PENDING_APPROVAL → CANCELLED` (tidak ada stok yang dikembalikan)
+  - Broadcast WS `ORDER_REJECTED` ke customer
+  - Broadcast WS `APPROVAL_QUEUE_UPDATE { action: 'REJECTED' }` ke tenant
+
+#### `helper.router.js` — 3 endpoint baru
+| Method | Endpoint | Fungsi |
+|--------|----------|--------|
+| GET | `/api/v1/helper/approval-queue` | Daftar antrian PENDING_APPROVAL |
+| POST | `/api/v1/helper/orders/:txnId/approve` | Setujui pesanan |
+| POST | `/api/v1/helper/orders/:txnId/reject` | Tolak pesanan |
+
+### Frontend
+
+#### `frontend/src/api/helper.js`
+Tambah 3 fungsi baru:
+- `getApprovalQueue()`
+- `approveOrder(txnId, note?)`
+- `rejectOrder(txnId, reason?)`
+
+#### `frontend/src/pages/admin/tabs/ConfigTab.jsx`
+Mode Penjualan sekarang memiliki 3 opsi (grid 1 kolom):
+- **Helper Input** (Model C) — ungu
+- **Helper Approve** (Model D) — hijau (baru)
+- **Self Order** (Legacy) — biru
+
+#### `frontend/src/pages/customer/CartPage.jsx`
+- Detect `order_mode === 'HELPER_APPROVE'`
+- Tampilkan info banner: "Pesanan Anda akan menunggu persetujuan petugas booth"
+- Tombol checkout: "Kirim ke Antrian Persetujuan"
+- Setelah checkout berhasil, jika `data.status === 'PENDING_APPROVAL'` → redirect ke `/pesanan/:txnId` (bukan `/checkout/sukses`)
+
+#### `frontend/src/pages/customer/OrderTrackingPage.jsx`
+- WS listeners baru: `ORDER_APPROVED`, `ORDER_REJECTED`
+- Panel `PENDING_APPROVAL`:
+  - Animasi loading dengan ikon jam, teks "Menunggu Persetujuan Petugas"
+  - Sub-teks berbeda jika `fromApprovalSubmit` (baru dikirim dari cart)
+  - Saat WS `ORDER_APPROVED` tiba → show inline "✅ Pesanan Disetujui!" → re-fetch order → QR & timer muncul
+  - Saat WS `ORDER_REJECTED` tiba → show "❌ Pesanan Ditolak" + alasan
+- Tombol Batalkan pesanan tampil untuk `PENDING` dan `PENDING_APPROVAL`
+- Edit item hanya tersedia di `PENDING` yang belum di-approve (`!order.approved_at`)
+
+#### `frontend/src/components/helper/ApprovalQueueTab.jsx` *(file baru)*
+- Komponen dedicated untuk antrian approval Helper
+- List approval cards dengan: info customer, item list, total
+- Tombol **Setujui** (hijau) dan **Tolak** (merah)
+- Reject modal: input alasan penolakan
+- Auto-refresh setiap 20 detik sebagai fallback jika WS miss
+
+#### `frontend/src/pages/helper/HelperPage.jsx`
+- Import `ApprovalQueueTab`, `useWebSocket`, `usePublicConfig`
+- Tab **"Antrian Approval"** muncul secara kondisional hanya jika `order_mode === 'HELPER_APPROVE'`
+- Badge merah di tab menunjukkan jumlah antrian belum direview
+- WS `PENDING_APPROVAL_CREATED` → increment badge + tampilkan toast "Pesanan baru menunggu approval!"
+
+#### `frontend/src/components/ui/Badge.jsx`
+- Tambah style `PENDING_APPROVAL`: `bg-amber-100 text-amber-800`
+
+#### `frontend/src/context/LangContext.jsx`
+- Tambah terjemahan `'badge.PENDING_APPROVAL'` untuk ketiga bahasa (ID: "Menunggu Approval")
+
+### Keamanan
+- `booth_id` (tenantId) selalu dari JWT — tidak pernah dari request client
+- Semua query parameterized
+- `FOR UPDATE` lock pada produk saat approveOrder sebelum deduct stok
+- Validasi kepemilikan booth (`tenant_id = helperTenantId`) sebelum approve/reject
+- Status guard: `approveOrder` hanya jalan jika status = `PENDING_APPROVAL`
+
+---
+
+## CR-041 — Checkout Stock Gate + HELPER_APPROVE Hardening
+
+**Date:** 2026-06-08  
+**Author:** clavis Development  
+**Status:** Implemented  
+**Affects:**
+- `backend/src/modules/orders/orders.service.js` — GAP 1 + GAP 3
+- `backend/src/modules/helper/helper.service.js` — GAP 2 (`approveOrder` refactor)
+- `backend/src/modules/scheduler/jobs/TxnExpireJob.js` — GAP 3b (new file)
+- `backend/src/modules/scheduler/JobBootstrap.js` — register TxnExpireJob
+- `backend/migrations/016_drop_expires_at_not_null.sql` — new migration
+- `docker-compose.yml` — mount migration 016
+
+### Overview
+
+Menutup 4 gap yang tersisa dari CR-038 dan CR-040 agar alur checkout berjalan end-to-end dengan benar: validasi stok on-hold, timer yang tepat untuk PENDING_APPROVAL, sweep expiry yang aman, dan QR generation yang tidak bisa membatalkan approval yang sudah commit.
+
+---
+
+### GAP 1 — `is_on_hold` guard di `createOrder()` (SELF_ORDER safety net)
+
+**File:** `backend/src/modules/orders/orders.service.js`
+
+Frontend sudah memfilter produk `is_on_hold = true` dari tampilan keranjang. Namun tanpa validasi backend, race condition bisa lolos: produk masuk ke cart sebelum di-hold, lalu customer checkout setelah admin men-hold-nya.
+
+**Validasi ditambahkan** setelah `productRows` di-load dan sebelum stock check:
+
+```js
+// CR-038: In SELF_ORDER mode, reject on-hold items (safety net for race condition)
+if (!isHelperApproveMode) {
+  const onHoldCheck = await client.query(
+    `SELECT product_id, product_name FROM products
+     WHERE product_id = ANY($1) AND is_on_hold = TRUE`,
+    [productIds],
+  );
+  if (onHoldCheck.rows.length > 0) {
+    throw new AppError(`Beberapa produk belum tersedia untuk dipesan: ${names}. ...`, 422);
+  }
+}
+```
+
+**Alasan tidak memblokir HELPER_APPROVE:** Helper approval queue sudah punya validasi sendiri di `approveOrder()`; mem-blokir di createOrder akan mencegah customer memasukkan pesanan ke antrian.
+
+---
+
+### GAP 3 — `expires_at = null` untuk PENDING_APPROVAL
+
+**File:** `backend/src/modules/orders/orders.service.js`
+
+Sebelumnya `expires_at` selalu di-set ke `NOW() + timeout` termasuk untuk PENDING_APPROVAL, yang salah — timer seharusnya baru mulai saat helper menyetujui pesanan.
+
+```js
+// Before:
+const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
+
+// After:
+const expiresAt = isHelperApproveMode
+  ? null
+  : new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
+```
+
+**Migration 016** (`backend/migrations/016_drop_expires_at_not_null.sql`):
+```sql
+ALTER TABLE transactions ALTER COLUMN expires_at DROP NOT NULL;
+```
+Diapply manual ke volume DB yang sudah ada via `docker exec`. Kolom `expires_at` kini nullable.
+
+---
+
+### GAP 3b — Expiry sweep job: jangan expire PENDING_APPROVAL
+
+**File:** `backend/src/modules/scheduler/jobs/TxnExpireJob.js` (baru)
+
+Sebelum CR-041, backend tidak punya background job yang meng-expire PENDING transactions. Status EXPIRED hanya terjadi secara lazy (dicheck saat payment). CR-041 menambahkan job eksplisit yang berjalan setiap 5 menit:
+
+```sql
+UPDATE transactions
+   SET status = 'EXPIRED', updated_at = NOW()
+ WHERE status     = 'PENDING'
+   AND expires_at IS NOT NULL   -- PENDING_APPROVAL punya expires_at = NULL → tidak tersentuh
+   AND expires_at < NOW()
+RETURNING transaction_id
+```
+
+Dua kondisi kunci:
+- `status = 'PENDING'` — tidak menyentuh PENDING_APPROVAL, RESERVED, dsb
+- `AND expires_at IS NOT NULL` — guard eksplisit agar NULL comparison tidak memberikan false positive
+
+**Registrasi di `JobBootstrap.js`:** interval 5 menit (`DEFAULT_EXPIRE_INTERVAL = 5`).
+
+---
+
+### GAP 2 — QR generation dipindah keluar dari `withTransaction`
+
+**File:** `backend/src/modules/helper/helper.service.js`, fungsi `approveOrder()`
+
+Sebelumnya `generateTransactionQR()` dipanggil di dalam `withTransaction`. Jika QR generation gagal (error di library `qrcode`), seluruh transaksi di-rollback termasuk deduction stok dan perubahan status — padahal approval-nya sudah valid.
+
+**Refactor menjadi 3 fase:**
+
+| Fase | Isi | Atomik? |
+|---|---|---|
+| 1. `withTransaction` | Lock + validate stock + deduct + update status PENDING + audit | Ya (COMMIT/ROLLBACK) |
+| 2. QR generation | `generateTransactionQR` + `UPDATE transactions SET qr_payload` | Non-transactional, try/catch |
+| 3. WS broadcast | `broadcastToCustomer` + `broadcastToTenant` | Fire-and-forget |
+
+QR failure sekarang hanya di-log sebagai error tanpa membatalkan approval. Customer tetap menerima `ORDER_APPROVED` event, meski tanpa QR (QR bisa di-generate ulang di halaman pesanan).
+
+### Deployment
+
+```bash
+# Apply migration (postgres volume sudah ada — initdb tidak re-run)
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid \
+  -c "ALTER TABLE transactions ALTER COLUMN expires_at DROP NOT NULL;"
+
+# Rebuild + restart backend
+docker compose build backend
+docker compose up -d backend
+```

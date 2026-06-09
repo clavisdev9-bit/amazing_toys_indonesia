@@ -11,9 +11,10 @@ import ToastContainer from '../../../components/ui/Toast';
 import { useToast } from '../../../hooks/useToast';
 
 const ROLE_TABS = [
-  { key: 'CASHIER', label: 'Kasir',  icon: '💳' },
-  { key: 'TENANT',  label: 'Tenant', icon: '🏪' },
-  { key: 'LEADER',  label: 'Leader', icon: '📊' },
+  { key: 'CASHIER', label: 'Kasir',   icon: '💳' },
+  { key: 'TENANT',  label: 'Tenant',  icon: '🏪' },
+  { key: 'HELPER',  label: 'Helper',  icon: '🙋' },
+  { key: 'LEADER',  label: 'Leader',  icon: '📊' },
 ];
 
 const EMPTY_FORM = { username: '', password: '', display_name: '', tenant_id: '' };
@@ -26,7 +27,7 @@ function UserRow({ user, tenants, onEdit, onResetPw, onToggle }) {
         <p className="font-medium text-gray-900 text-sm">{user.display_name}</p>
         <p className="text-xs text-gray-400 font-mono">{user.username}</p>
       </td>
-      {user.role === 'TENANT' && (
+      {(user.role === 'TENANT' || user.role === 'HELPER') && (
         <td className="px-4 py-3 text-sm text-gray-600">
           {tenant
             ? <span>{tenant.tenant_name}<br /><span className="text-xs text-gray-400">{tenant.booth_location}</span></span>
@@ -158,7 +159,7 @@ export default function UserRoleTab() {
     }
   }
 
-  const roleLabel = { CASHIER: 'Kasir', TENANT: 'Tenant User', LEADER: 'Leader' };
+  const roleLabel = { CASHIER: 'Kasir', TENANT: 'Tenant User', HELPER: 'Helper Booth', LEADER: 'Leader' };
 
   return (
     <>
@@ -197,7 +198,7 @@ export default function UserRoleTab() {
               <thead className="bg-gray-50 border-b">
                 <tr>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Nama / Username</th>
-                  {tab === 'TENANT' && <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Booth</th>}
+                  {(tab === 'TENANT' || tab === 'HELPER') && <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Booth</th>}
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Login Terakhir</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Status</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Aksi</th>
@@ -232,9 +233,11 @@ export default function UserRoleTab() {
             value={form.password}
             onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
             required />
-          {tab === 'TENANT' && (
+          {(tab === 'TENANT' || tab === 'HELPER') && (
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-gray-700">Booth Tenant <span className="text-red-500">*</span></label>
+              <label className="text-sm font-medium text-gray-700">
+                Booth {tab === 'HELPER' ? 'yang Dikelola' : 'Tenant'} <span className="text-red-500">*</span>
+              </label>
               <select
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={form.tenant_id}
@@ -247,6 +250,9 @@ export default function UserRoleTab() {
                   </option>
                 ))}
               </select>
+              {tab === 'HELPER' && (
+                <p className="text-xs text-gray-400">Helper hanya bisa input pesanan untuk booth ini.</p>
+              )}
             </div>
           )}
           {formError && (
@@ -270,15 +276,19 @@ export default function UserRoleTab() {
             value={editForm.display_name}
             onChange={(e) => setEditForm((f) => ({ ...f, display_name: e.target.value }))}
             required />
-          {editModal?.role === 'TENANT' && (
+          {(editModal?.role === 'TENANT' || editModal?.role === 'HELPER') && (
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-gray-700">Booth Tenant</label>
+              <label className="text-sm font-medium text-gray-700">
+                {editModal?.role === 'HELPER' ? 'Booth yang Dikelola' : 'Booth Tenant'}
+                {editModal?.role === 'HELPER' && <span className="text-red-500"> *</span>}
+              </label>
               <select
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={editForm.tenant_id}
-                onChange={(e) => setEditForm((f) => ({ ...f, tenant_id: e.target.value }))}>
-                <option value="">-- Tidak ada --</option>
-                {tenants.map((t) => (
+                onChange={(e) => setEditForm((f) => ({ ...f, tenant_id: e.target.value }))}
+                required={editModal?.role === 'HELPER'}>
+                <option value="">{editModal?.role === 'HELPER' ? '-- Pilih booth --' : '-- Tidak ada --'}</option>
+                {tenants.filter((t) => editModal?.role === 'HELPER' ? t.is_active : true).map((t) => (
                   <option key={t.tenant_id} value={t.tenant_id}>
                     {t.tenant_name} ({t.booth_location})
                   </option>

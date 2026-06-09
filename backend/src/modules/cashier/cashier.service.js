@@ -56,4 +56,32 @@ async function getCashierTransactions(cashierId, date) {
   return result.rows;
 }
 
-module.exports = { getDailyRecap, getCashierTransactions };
+/**
+ * List orders waiting for payment (RESERVED + PENDING), sorted by created_at ASC.
+ * Used by cashier queue view in Model C flow.
+ */
+async function getPaymentQueue(date) {
+  const shiftDate = date || new Date().toLocaleString('sv', { timeZone: 'Asia/Jakarta' }).slice(0, 10);
+  const result = await query(
+    `SELECT t.transaction_id, t.status, t.total_amount, t.created_at, t.reserved_at,
+            t.customer_phone AS walk_in_phone, t.created_by_role,
+            c.full_name AS customer_name, c.phone_number AS customer_phone,
+            ten.tenant_name, ten.booth_location,
+            COUNT(ti.item_id) AS item_count
+     FROM transactions t
+     LEFT JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+     LEFT JOIN tenants ten ON ten.tenant_id = (
+       SELECT ti2.tenant_id FROM transaction_items ti2
+       WHERE ti2.transaction_id = t.transaction_id LIMIT 1
+     )
+     WHERE t.status IN ('RESERVED', 'PENDING', 'WAITING_PAYMENT')
+       AND DATE(t.created_at AT TIME ZONE 'Asia/Jakarta') = $1
+     GROUP BY t.transaction_id, c.full_name, c.phone_number, ten.tenant_name, ten.booth_location
+     ORDER BY t.created_at ASC`,
+    [shiftDate],
+  );
+  return result.rows;
+}
+
+module.exports = { getDailyRecap, getCashierTransactions, getPaymentQueue };

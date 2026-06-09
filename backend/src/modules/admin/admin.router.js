@@ -417,6 +417,107 @@ router.put('/integration', ...adminOnly, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── WA Gateway Configuration ──────────────────────────────────────────────────
+
+const waSvc = require('../wa/wa.service');
+
+router.get('/wa-gateway', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getWaGatewayConfig(true);
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.put('/wa-gateway', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await adminSvc.saveWaGatewayConfig(req.body);
+    res.json({ success: true, message: 'Konfigurasi WA Gateway disimpan.', data });
+  } catch (err) { next(err); }
+});
+
+router.post('/wa-gateway/test', ...adminOnly, async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: 'Nomor HP wajib diisi.' });
+    const result = await waSvc.sendTestMessage(phone);
+    if (result.status === 'SENT') {
+      res.json({ success: true, message: `Pesan tes berhasil dikirim ke ${phone}.`, data: result });
+    } else {
+      res.status(422).json({ success: false, message: result.error || 'Gagal mengirim pesan tes.', data: result });
+    }
+  } catch (err) { next(err); }
+});
+
+// ── WAHA Session Management (proxy to self-hosted WAHA) ──────────────────────
+//
+// All three routes read current config to get the WAHA base URL, session name,
+// and optional X-Api-Key so the browser never reaches internal Docker URLs.
+
+async function _wahaConfig() {
+  const cfg = await adminSvc.getWaGatewayConfig(false);
+  return { base: (cfg.apiUrl || '').replace(/\/$/, ''), session: cfg.wahaSession || 'default', apiKey: cfg.apiKey || '' };
+}
+
+function _wahaHeaders(apiKey) {
+  const h = { 'Content-Type': 'application/json' };
+  if (apiKey) h['X-Api-Key'] = apiKey;
+  return h;
+}
+
+router.get('/wa-gateway/waha/status', ...adminOnly, async (_req, res, next) => {
+  try {
+    const { base, session, apiKey } = await _wahaConfig();
+    if (!base) return res.status(422).json({ success: false, message: 'WAHA Base URL belum dikonfigurasi.' });
+    const upstream = await fetch(`${base}/api/sessions/${encodeURIComponent(session)}`, {
+      headers: _wahaHeaders(apiKey),
+    });
+    const json = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) return res.status(upstream.status).json({ success: false, message: json.message || `WAHA HTTP ${upstream.status}` });
+    res.json({ success: true, data: json });
+  } catch (err) { next(err); }
+});
+
+router.post('/wa-gateway/waha/start', ...adminOnly, async (_req, res, next) => {
+  try {
+    const { base, session, apiKey } = await _wahaConfig();
+    if (!base) return res.status(422).json({ success: false, message: 'WAHA Base URL belum dikonfigurasi.' });
+    // Upsert + start in one call
+    const upstream = await fetch(`${base}/api/sessions/start`, {
+      method:  'POST',
+      headers: _wahaHeaders(apiKey),
+      body:    JSON.stringify({ name: session, config: {} }),
+    });
+    const json = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) return res.status(upstream.status).json({ success: false, message: json.message || `WAHA HTTP ${upstream.status}` });
+    res.json({ success: true, data: json });
+  } catch (err) { next(err); }
+});
+
+router.get('/wa-gateway/waha/qr', ...adminOnly, async (_req, res, next) => {
+  try {
+    const { base, session, apiKey } = await _wahaConfig();
+    if (!base) return res.status(422).json({ success: false, message: 'WAHA Base URL belum dikonfigurasi.' });
+    const upstream = await fetch(
+      `${base}/api/${encodeURIComponent(session)}/auth/qr?format=image`,
+      { headers: { ..._wahaHeaders(apiKey), Accept: 'application/json' } },
+    );
+    if (!upstream.ok) {
+      const json = await upstream.json().catch(() => ({}));
+      return res.status(upstream.status).json({ success: false, message: json.message || `WAHA HTTP ${upstream.status}` });
+    }
+    const contentType = upstream.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      // WAHA returns { mimetype, data } JSON when Accept: application/json
+      const { mimetype = 'image/png', data } = await upstream.json();
+      res.json({ success: true, data: { qr: `data:${mimetype};base64,${data}` } });
+    } else {
+      // Fallback: binary PNG — convert to base64
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.json({ success: true, data: { qr: `data:image/png;base64,${buf.toString('base64')}` } });
+    }
+  } catch (err) { next(err); }
+});
+
 // ── BCA QRIS Credential Configuration ────────────────────────────────────────
 
 const bcaQrisSvc = require('../bca-qris/bca-qris.service');

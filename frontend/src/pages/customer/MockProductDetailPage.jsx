@@ -55,12 +55,14 @@ export default function MockProductDetailPage() {
   const { addItem } = useCart();
   const { t } = useLang();
   const { isWished, toggleWish } = useWishlist();
-  const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
+  const config       = usePublicConfig();
+  const ppnRate      = parseFloat(config?.ppn_rate) || 0;
+  const isHelperMode = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [qty, setQty] = useState(1);
   const [added, setAdded] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -114,16 +116,17 @@ export default function MockProductDetailPage() {
         className="relative w-full overflow-hidden flex items-center justify-center"
         style={{
           height: 288,
-          background: product.image_url
+          background: (product.image_url && !imgError)
             ? '#0F172A'
             : 'linear-gradient(145deg, #EEF2FF 0%, #E0E7FF 60%, #C7D2FE 100%)',
         }}
       >
-        {product.image_url ? (
+        {product.image_url && !imgError ? (
           <img
             src={product.image_url}
             alt={product.product_name}
             className="w-full h-full object-contain"
+            onError={() => setImgError(true)}
           />
         ) : (
           <span style={{ fontSize: 96, userSelect: 'none' }}>🧸</span>
@@ -301,7 +304,28 @@ export default function MockProductDetailPage() {
       </div>
 
       {/* ── Sticky CTA (qty pill + cart circle) ───────────────────────── */}
-      {inStock && (
+      {isHelperMode ? (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 120,
+            left: 0, right: 0, zIndex: 20,
+            padding: '12px 16px',
+            background: 'rgba(245,243,255,0.97)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            borderTop: '0.5px solid #DDD6FE',
+            boxShadow: '0 -4px 20px rgba(109,40,217,0.06)',
+          }}
+        >
+          <div style={{ maxWidth: 390, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20 }}>🙋</span>
+            <p style={{ fontSize: 13, color: '#6D28D9', fontWeight: 600, margin: 0 }}>
+              Pemesanan dilakukan melalui petugas booth
+            </p>
+          </div>
+        </div>
+      ) : inStock && (
         <div
           style={{
             position: 'fixed',

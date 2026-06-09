@@ -5,7 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
-const roleHome = { CASHIER: '/cashier', TENANT: '/tenant', LEADER: '/leader', ADMIN: '/leader' };
+const roleHome = { CASHIER: '/cashier', TENANT: '/tenant', LEADER: '/leader', ADMIN: '/admin', HELPER: '/helper' };
 
 export default function LoginStaffPage() {
   const { login } = useAuth();
@@ -41,7 +41,7 @@ export default function LoginStaffPage() {
         <div className="text-center mb-6">
           <div className="text-4xl mb-2">🔐</div>
           <h1 className="text-xl font-bold text-gray-900">Login Staff</h1>
-          <p className="text-sm text-gray-500">Kasir · Tenant · Leader</p>
+          <p className="text-sm text-gray-500">Kasir · Tenant · Leader · Helper</p>
         </div>
 
         {error && (

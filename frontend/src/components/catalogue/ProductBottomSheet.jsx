@@ -10,6 +10,7 @@ function formatPrice(price) {
 export default function ProductBottomSheet({ product, onClose }) {
   const { t } = useLang();
   const [visible, setVisible] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const config  = usePublicConfig();
   const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
@@ -52,8 +53,8 @@ export default function ProductBottomSheet({ product, onClose }) {
             className="w-full rounded-xl flex items-center justify-center text-5xl mb-4"
             style={{ aspectRatio: '16/9', background: product.colorHex || '#F3F4F6' }}
           >
-            {product.image_url
-              ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain rounded-xl" />
+            {product.image_url && !imgError
+              ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain rounded-xl" onError={() => setImgError(true)} />
               : '🧸'}
           </div>
 

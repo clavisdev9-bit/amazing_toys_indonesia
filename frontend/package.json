@@ -1,10 +1,10 @@
 {
-  "name": "amazing-toys-sos-frontend",
+  "name": "amazing-toys-sos-hybrid-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node -e \"const{execSync}=require('child_process');try{const r=execSync('docker inspect -f {{.State.Running}} sos_frontend 2>&1').toString().trim();if(r==='true'){console.error('\\n⛔  ERROR: sos_frontend Docker container is already running on port 80.\\n    Running local dev alongside Docker will cause transactions to go to the WRONG database.\\n    Stop Docker first:  docker compose down\\n    OR use Docker instead: http://localhost:80\\n');process.exit(1);}}catch(e){}\" && vite",
+    "dev": "node -e \"const{execSync}=require('child_process');try{const r=execSync('docker inspect -f {{.State.Running}} hybrid_frontend 2>&1').toString().trim();if(r==='true'){console.error('\\n⛔  ERROR: hybrid_frontend Docker container is already running on port 8080.\\n    Running local dev alongside Docker will cause transactions to go to the WRONG database.\\n    Stop Docker first:  docker compose down\\n    OR use Docker instead: http://localhost:8080\\n');process.exit(1);}}catch(e){}\" && vite",
     "build": "vite build",
     "preview": "vite preview"
   },

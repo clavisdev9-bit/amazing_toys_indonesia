@@ -3,20 +3,13 @@ import ReactDOM from 'react-dom';
 import ThermalReceipt from './ThermalReceipt';
 import { directPrintReceipt } from '../../api/print';
 
-// ── Browser print fallback ────────────────────────────────────────────────────
-function printReceiptFromHtml(innerHtml) {
-  const printWin = window.open(
-    '',
-    '_blank',
-    'width=420,height=700,toolbar=0,location=0,status=0,menubar=0,scrollbars=0',
-  );
-  if (!printWin) return;
-
-  printWin.document.open();
-  printWin.document.write(`<!DOCTYPE html>
+// ── Download receipt as HTML file ─────────────────────────────────────────────
+function downloadReceiptAsHtml(innerHtml, txnId) {
+  const html = `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8"/>
+  <title>Receipt ${txnId}</title>
   <style>
     *  { box-sizing: border-box; margin: 0; padding: 0; }
     @page { size: 80mm auto; margin: 0; }
@@ -36,14 +29,39 @@ function printReceiptFromHtml(innerHtml) {
       -moz-osx-font-smoothing: unset;
       text-rendering: optimizeSpeed;
     }
+    #print-btn {
+      display: block;
+      width: 100%;
+      margin-bottom: 10px;
+      padding: 8px 0;
+      background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+    }
+    #print-btn:hover { background: #333; }
+    @media print { #print-btn { display: none; } }
   </style>
 </head>
-<body>${innerHtml}</body>
-</html>`);
-  printWin.document.close();
+<body>
+  <button id="print-btn" onclick="window.print()">🖨️ Print Receipt</button>
+  ${innerHtml}
+</body>
+</html>`;
 
-  const doPrint = () => { printWin.focus(); printWin.print(); printWin.close(); };
-  printWin.onload = doPrint;
+  const blob = new Blob([html], { type: 'application/octet-stream' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `receipt-${txnId}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ── Status indicator ──────────────────────────────────────────────────────────
@@ -138,10 +156,10 @@ export default function PrintConfirmationModal({
     }
   }
 
-  // Browser print — uses rendered HTML preview
-  function handleBrowserPrint() {
+  // Download receipt as HTML file — uses rendered HTML preview
+  function handleDownloadHtml() {
     const html = receiptRef.current?.innerHTML;
-    if (html) printReceiptFromHtml(html);
+    if (html) downloadReceiptAsHtml(html, txn?.transaction_id ?? 'receipt');
     onConfirmPrint(sendEmail);
   }
 
@@ -237,15 +255,20 @@ export default function PrintConfirmationModal({
             {isPrinting ? 'Mencetak…' : printStatus === 'success' ? 'Dicetak' : 'Print Langsung (ESC/POS)'}
           </button>
 
-          {/* Secondary row: browser print + cancel */}
+          {/* Secondary row: download HTML + cancel */}
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={handleBrowserPrint}
+              onClick={handleDownloadHtml}
               disabled={isPrinting}
-              className="flex-1 border border-gray-300 text-gray-700 rounded-md px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 border border-gray-300 text-gray-700 rounded-md px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
             >
-              Browser Print
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Download HTML
             </button>
             <button
               type="button"
@@ -259,7 +282,7 @@ export default function PrintConfirmationModal({
           {/* Hint text */}
           <p className="text-center text-xs text-gray-400 pt-1">
             ESC/POS membutuhkan printer terhubung ke jaringan (IP dikonfigurasi admin).
-            <br/>Gunakan <em>Browser Print</em> jika printer belum terhubung.
+            <br/>Gunakan <em>Download HTML</em> jika printer belum terhubung.
           </p>
         </div>
       </div>

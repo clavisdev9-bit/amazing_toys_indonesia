@@ -20,6 +20,7 @@ async function listProducts({ tenantId, category, search, inStockOnly, page = 1,
     SELECT p.product_id, p.product_name, p.category, p.price,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.odoo_categ_name,
+           p.is_on_hold, p.is_display_only, p.max_per_customer,
            t.tenant_id, t.tenant_name, t.booth_location, t.floor_label
     FROM products p
     JOIN tenants t ON t.tenant_id = p.tenant_id
@@ -98,6 +99,31 @@ async function updateProduct(productId, data) {
   return result.rows[0];
 }
 
+/**
+ * Toggle is_on_hold on a product.
+ * Returns { product, wasOnHold } so the caller can decide whether to broadcast WS.
+ */
+async function toggleProductHold(productId, is_on_hold) {
+  // Fetch current value to detect the true→false transition
+  const current = await query(
+    `SELECT is_on_hold, product_name FROM products WHERE product_id = $1`,
+    [productId]
+  );
+  if (!current.rows[0]) throw new AppError('Produk tidak ditemukan.', 404);
+
+  const wasOnHold = current.rows[0].is_on_hold === true;
+
+  const result = await query(
+    `UPDATE products
+     SET is_on_hold = $1, updated_at = NOW()
+     WHERE product_id = $2
+     RETURNING *`,
+    [is_on_hold, productId]
+  );
+
+  return { product: result.rows[0], wasOnHold };
+}
+
 async function listCategories() {
   const result = await query(`
     SELECT name AS category FROM product_categories
@@ -108,4 +134,4 @@ async function listCategories() {
   return result.rows.map(r => r.category);
 }
 
-module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories };
+module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories, toggleProductHold };

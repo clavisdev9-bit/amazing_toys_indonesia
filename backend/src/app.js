@@ -30,6 +30,7 @@ const receiptsRouter     = require('./modules/receipts/receipts.router');
 const printRouter        = require('./modules/print/print.router');
 const { paymentsRouter: bcaQrisPaymentsRouter, webhookRouter: bcaQrisWebhookRouter } = require('./modules/bca-qris/bca-qris.router');
 const { voucherRouter, adminVoucherRouter } = require('./modules/vouchers/vouchers.routes');
+const helperRouter       = require('./modules/helper/helper.router');
 
 // WebSocket
 const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
@@ -97,6 +98,7 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
       contact_email:       config.contact_email || '',
       ppn_rate:            parseFloat(taxCfg.ppn_rate) || 0,
       max_items_per_order: parseInt(config.max_items_per_order, 10) || 20,
+      order_mode:          config.order_mode || 'HELPER_INPUT',
     } });
   } catch (err) { next(err); }
 });
@@ -106,6 +108,7 @@ app.use(`${API}/tenants`,       tenantsRouter);
 app.use(`${API}/orders`,        ordersRouter);
 app.use(`${API}/payments`,      paymentsRouter);
 app.use(`${API}/cashier`,       cashierRouter);
+app.use(`${API}/helper`,        helperRouter);
 app.use(`${API}/tenant-orders`, tenantOrdersRouter);
 app.use(`${API}/tenant-reports`, tenantReportsRouter);
 app.use(`${API}/leader`,        leaderRouter);

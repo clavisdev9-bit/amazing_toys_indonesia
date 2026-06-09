@@ -63,7 +63,10 @@ export default function StaffShell({ navItems = [], title = '' }) {
               : <span className="text-2xl">🧸</span>
             }
             <div>
-              <div className="font-bold text-blue-700 text-sm">Amazing Toys</div>
+              <div className="font-bold text-blue-700 text-sm flex items-center gap-1.5">
+                Amazing Toys
+                <span className="inline-block bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 rounded tracking-wide">HYBRID</span>
+              </div>
               <div className="text-xs text-gray-500">{title}</div>
             </div>
           </div>

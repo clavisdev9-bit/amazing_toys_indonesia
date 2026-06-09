@@ -3,6 +3,7 @@
 const fs     = require('fs');
 const path   = require('path');
 const bcrypt = require('bcrypt');
+const sharp  = require('sharp');
 const { query } = require('../../config/database');
 const { AppError } = require('../../middlewares/error.middleware');
 const logger = require('../../config/logger');
@@ -50,11 +51,11 @@ async function createUser({ username, password, role, display_name, tenant_id })
   if (!username || !password || !role || !display_name) {
     throw new AppError('username, password, role, dan display_name wajib diisi.', 422);
   }
-  if (!['CASHIER', 'TENANT', 'LEADER'].includes(role)) {
-    throw new AppError('Role tidak valid. Gunakan CASHIER, TENANT, atau LEADER.', 422);
+  if (!['CASHIER', 'TENANT', 'HELPER', 'LEADER'].includes(role)) {
+    throw new AppError('Role tidak valid. Gunakan CASHIER, TENANT, HELPER, atau LEADER.', 422);
   }
-  if (role === 'TENANT' && !tenant_id) {
-    throw new AppError('tenant_id wajib diisi untuk role TENANT.', 422);
+  if ((role === 'TENANT' || role === 'HELPER') && !tenant_id) {
+    throw new AppError(`tenant_id wajib diisi untuk role ${role}.`, 422);
   }
 
   const exists = await query('SELECT user_id FROM users WHERE username = $1', [username]);
@@ -179,11 +180,18 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
 }
 
 async function adminUpdateProduct(productId, data) {
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name'];
+  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer'];
   if (data.categ_id !== undefined) data = { ...data, odoo_categ_id: data.categ_id || null };
   if (data.categ_name !== undefined) data = { ...data, odoo_categ_name: data.categ_name || null };
   const fields = [];
   const params = [];
+
+  // Snapshot is_on_hold before update to detect true → false transition
+  let prevOnHold = null;
+  if (data.is_on_hold === false) {
+    const snap = await query(`SELECT is_on_hold FROM products WHERE product_id = $1`, [productId]);
+    prevOnHold = snap.rows[0]?.is_on_hold ?? null;
+  }
 
   for (const key of allowed) {
     if (data[key] !== undefined) {
@@ -199,6 +207,15 @@ async function adminUpdateProduct(productId, data) {
     params
   );
   if (!result.rows[0]) throw new AppError('Produk tidak ditemukan.', 404);
+
+  // Broadcast WS when product is un-held (fire-and-forget)
+  if (data.is_on_hold === false && prevOnHold === true) {
+    try {
+      const { broadcastProductAvailable } = require('../../ws/websocket');
+      broadcastProductAvailable(productId, result.rows[0].product_name);
+    } catch { /* non-critical */ }
+  }
+
   // Auto-sync updated product to Odoo (fire-and-forget — does not block response)
   _autoSyncProduct(productId);
   return result.rows[0];
@@ -248,18 +265,28 @@ async function saveProductImage(base64Data) {
   if (!matches) throw new AppError('Format gambar tidak valid (gunakan data URL base64).', 422);
 
   const mimeType = matches[1];
-  const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
-  const ext = extMap[mimeType] || 'jpg';
+  const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'];
+  if (!ALLOWED_MIME.includes(mimeType)) {
+    throw new AppError('Format gambar tidak didukung. Gunakan JPG, PNG, atau WEBP.', 422);
+  }
 
-  const buffer = Buffer.from(matches[2], 'base64');
-  if (buffer.length > 2 * 1024 * 1024) throw new AppError('Ukuran gambar maksimal 2MB.', 422);
+  const rawBuffer = Buffer.from(matches[2], 'base64');
+  // Batas 5 MB pada raw file sebelum kompresi; setelah sharp output akan jauh lebih kecil
+  if (rawBuffer.length > 5 * 1024 * 1024) throw new AppError('Ukuran file gambar maksimal 5 MB.', 422);
+
+  // Resize ke max 800×800 (pertahankan aspek rasio), output JPEG 80% — thumbnail-ready
+  const processed = await sharp(rawBuffer)
+    .resize(800, 800, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 80, progressive: true })
+    .toBuffer();
 
   const uploadsDir = path.join(__dirname, '../../../public/uploads');
   fs.mkdirSync(uploadsDir, { recursive: true });
 
-  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-  fs.writeFileSync(path.join(uploadsDir, filename), buffer);
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`;
+  fs.writeFileSync(path.join(uploadsDir, filename), processed);
 
+  logger.info(`Image saved: ${filename} (${Math.round(processed.length / 1024)} KB, dari ${Math.round(rawBuffer.length / 1024)} KB raw)`);
   return `/uploads/${filename}`;
 }
 
@@ -302,7 +329,7 @@ async function adminCreateTenant({ tenant_name, booth_location, floor_label, con
 }
 
 async function adminUpdateTenant(tenantId, data) {
-  const allowed = ['tenant_name', 'booth_location', 'floor_label', 'contact_name', 'contact_phone', 'contact_email', 'is_active'];
+  const allowed = ['tenant_name', 'booth_location', 'floor_label', 'contact_name', 'contact_phone', 'contact_email', 'is_active', 'order_mode'];
   const fields = [];
   const params = [];
 
@@ -428,6 +455,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   txn_timeout_checkout: parseInt(process.env.TXN_PENDING_TIMEOUT_MINUTES || '30', 10),
   max_items_per_order: 20,
   maintenance_mode: false,
+  order_mode: 'HELPER_INPUT',
   contact_email: 'admin@amazingtoys.local',
   logo_url: '',
   primary_color: '#2563eb',
@@ -1010,4 +1038,62 @@ module.exports = {
   resolveOdooStartupRefs,
   // Tax config
   getTaxConfig, saveTaxConfig, getOdooTaxList,
+  // WA Gateway config
+  getWaGatewayConfig, saveWaGatewayConfig,
 };
+
+// ── WA Gateway Config ─────────────────────────────────────────────────────────
+
+const DEFAULT_WA_CONFIG = {
+  provider:    'disabled',
+  apiKey:      '',
+  apiUrl:      '',
+  wahaSession: 'default',
+  template:    'Halo! Pesanan Anda di {boothName} berhasil dibuat.\nTotal: {totalAmount}\nTunjukkan QR ke kasir: {link}\nBerlaku {expiryMinutes} menit.',
+  ttlMinutes:  120,
+  baseUrl:     'http://localhost:3001',
+};
+
+async function getWaGatewayConfig(masked = true) {
+  const keys = [
+    'wa_gateway_provider', 'wa_gateway_api_key', 'wa_gateway_api_url',
+    'wa_waha_session', 'wa_message_template', 'public_token_ttl_minutes', 'order_base_url',
+  ];
+  const result = await query('SELECT key, value FROM system_settings WHERE key = ANY($1)', [keys]);
+  const map = {};
+  result.rows.forEach((r) => { map[r.key] = r.value; });
+  return {
+    provider:    map.wa_gateway_provider  || DEFAULT_WA_CONFIG.provider,
+    apiKey:      masked
+      ? (map.wa_gateway_api_key ? '***' : '')
+      : (map.wa_gateway_api_key || ''),
+    apiUrl:      map.wa_gateway_api_url   || DEFAULT_WA_CONFIG.apiUrl,
+    wahaSession: map.wa_waha_session      || DEFAULT_WA_CONFIG.wahaSession,
+    template:    map.wa_message_template  || DEFAULT_WA_CONFIG.template,
+    ttlMinutes:  parseInt(map.public_token_ttl_minutes || DEFAULT_WA_CONFIG.ttlMinutes, 10),
+    baseUrl:     map.order_base_url       || DEFAULT_WA_CONFIG.baseUrl,
+  };
+}
+
+async function saveWaGatewayConfig(data) {
+  const current = await getWaGatewayConfig(false);
+  const updates = {
+    wa_gateway_provider:      data.provider     !== undefined ? String(data.provider)                       : current.provider,
+    wa_gateway_api_url:       data.apiUrl       !== undefined ? String(data.apiUrl)                         : current.apiUrl,
+    wa_waha_session:          data.wahaSession  !== undefined ? String(data.wahaSession || 'default')        : current.wahaSession,
+    wa_message_template:      data.template     !== undefined ? String(data.template)                       : current.template,
+    public_token_ttl_minutes: data.ttlMinutes   !== undefined ? String(parseInt(data.ttlMinutes, 10) || 120) : String(current.ttlMinutes),
+    order_base_url:           data.baseUrl      !== undefined ? String(data.baseUrl)                        : current.baseUrl,
+  };
+  if (data.apiKey && data.apiKey !== '***') {
+    updates.wa_gateway_api_key = String(data.apiKey);
+  }
+  for (const [key, value] of Object.entries(updates)) {
+    await query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, value],
+    );
+  }
+  return getWaGatewayConfig(true);
+}

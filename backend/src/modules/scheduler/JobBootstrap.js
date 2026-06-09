@@ -4,9 +4,11 @@ const logger           = require('../../config/logger');
 const schedulerService = require('./SchedulerService');
 const productSyncJob   = require('./jobs/ProductSyncJob');
 const stockSyncJob     = require('./jobs/StockSyncJob');
+const txnExpireJob     = require('./jobs/TxnExpireJob');
 
 const DEFAULT_PRODUCT_INTERVAL = 60; // minutes
 const DEFAULT_STOCK_INTERVAL   = 60;
+const DEFAULT_EXPIRE_INTERVAL  = 5;  // minutes — check every 5 min for expired PENDING orders
 
 /**
  * Read config, validate intervals, clear stale jobs, register fresh ones.
@@ -27,6 +29,7 @@ async function initializeScheduledJobs(getConfigFn) {
     // Clear any stale instances from a previous hot-reload or restart
     schedulerService.removeJob(productSyncJob.JOB_NAME);
     schedulerService.removeJob(stockSyncJob.JOB_NAME);
+    schedulerService.removeJob(txnExpireJob.JOB_NAME);
 
     schedulerService.registerJob(
       productSyncJob.JOB_NAME,
@@ -44,6 +47,13 @@ async function initializeScheduledJobs(getConfigFn) {
         triggeredBy:    'scheduler',
         configSnapshot: { interval_minutes: stockMins },
       }),
+    );
+
+    // CR-041 GAP 3b: expire stale PENDING orders every 5 minutes
+    schedulerService.registerJob(
+      txnExpireJob.JOB_NAME,
+      DEFAULT_EXPIRE_INTERVAL,
+      () => txnExpireJob.execute(),
     );
 
     // CP-1 — confirm odoo.stock.sync is in the registry after registration
