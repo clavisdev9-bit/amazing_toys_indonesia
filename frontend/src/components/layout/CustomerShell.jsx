@@ -14,13 +14,76 @@ import QrScannerModal from '../ui/QrScannerModal';
 // ── In-app order notification card ───────────────────────────────────────────
 const NOTIF_TTL_MS = 10_000;
 
+// ── Compact language dropdown ─────────────────────────────────────────────────
+function LangDropdown({ lang, setLang }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const current = SUPPORTED_LANGS.find(l => l.code === lang) ?? SUPPORTED_LANGS[0];
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        title="Change language"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 4,
+          background: 'rgba(248,249,254,0.85)',
+          border: '1.5px solid #DEE2E6',
+          borderRadius: 20, padding: '4px 8px',
+          cursor: 'pointer', fontSize: 11, fontWeight: 700,
+          color: '#3B5BDB', lineHeight: 1,
+        }}
+      >
+        <span style={{ fontSize: 14, lineHeight: 1 }}>🌐</span>
+        <span>{current.code.toUpperCase()}</span>
+        <span style={{ fontSize: 9, color: '#868E96', marginLeft: 1 }}>▾</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: '50%',
+          transform: 'translateX(-50%)',
+          background: '#fff', border: '1.5px solid #DEE2E6',
+          borderRadius: 12, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+          overflow: 'hidden', zIndex: 200, minWidth: 90,
+        }}>
+          {SUPPORTED_LANGS.map(({ code, label }) => (
+            <button
+              key={code}
+              onClick={() => { setLang(code); setOpen(false); }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '8px 14px', border: 'none', cursor: 'pointer',
+                fontSize: 12, fontWeight: 600,
+                background: lang === code ? '#EEF2FF' : 'transparent',
+                color: lang === code ? '#3B5BDB' : '#495057',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OrderNotifCard({ notif, onDismiss, onOpen }) {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
+  const { t } = useLang();
 
   useEffect(() => {
-    const t = setTimeout(() => onDismissRef.current(), NOTIF_TTL_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => onDismissRef.current(), NOTIF_TTL_MS);
+    return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps — intentional mount-only
 
   return (
@@ -66,7 +129,7 @@ function OrderNotifCard({ notif, onDismiss, onOpen }) {
         {/* Text */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#3B5BDB', marginBottom: 2 }}>
-            Pesanan Siap Bayar!
+            {t('shell.readyToPay')}
           </div>
           <div style={{ fontSize: 13, fontWeight: 800, color: '#1A1B2E', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {notif.boothName}
@@ -95,7 +158,7 @@ function OrderNotifCard({ notif, onDismiss, onOpen }) {
             borderRadius: 8, padding: '5px 10px',
             fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap',
           }}>
-            Lihat QR →
+            {t('shell.viewQR')}
           </div>
         </div>
       </div>
@@ -195,7 +258,7 @@ export default function CustomerShell() {
 
   function handleQrResult(text) {
     setScanOpen(false);
-    navigate(`/product/${text}`);
+    navigate(`/product_cart/${text}`);
   }
 
   function handleWishlistToggle() {
@@ -244,28 +307,8 @@ export default function CustomerShell() {
           </div>
         </div>
 
-        {/* Centre — language switcher (hidden on /katalog) */}
-        {!isKatalog && (
-          <div
-            className="flex items-center gap-1 rounded-[20px] px-[10px] py-1"
-            style={{ background: 'rgba(248,249,254,0.80)' }}
-          >
-            {SUPPORTED_LANGS.map(({ code, label }) => (
-              <button
-                key={code}
-                onClick={() => setLang(code)}
-                className="px-2 py-[3px] rounded-xl text-xs font-semibold transition-all duration-200 border-none cursor-pointer"
-                style={
-                  lang === code
-                    ? { background: '#3B5BDB', color: '#fff' }
-                    : { background: 'transparent', color: '#868E96' }
-                }
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Centre — language switcher compact dropdown */}
+        <LangDropdown lang={lang} setLang={setLang} />
 
         {/* Right — wishlist + tour + logout */}
         <div className="flex items-center gap-2.5 shrink-0">
@@ -329,7 +372,7 @@ export default function CustomerShell() {
             onClick={handleLogout}
             className="text-xs font-semibold text-[#FF6B6B] hover:text-red-600 transition-colors"
           >
-            Keluar
+            {t('shell.logout')}
           </button>
         </div>
       </header>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getProduct, getProductByBarcode } from '../../api/products';
 import { getStockStatus } from '../../utils/stockUtils';
+import { useCart } from '../../hooks/useCart';
 import { useLang } from '../../context/LangContext';
 import { useWishlist } from '../../hooks/useWishlist';
 import { usePublicConfig } from '../../hooks/useAppLogo';
@@ -48,15 +49,19 @@ const STOCK_BADGE = {
   out:       { background: 'rgba(255,227,227,0.90)', color: '#C92A2A', border: '1px solid rgba(201,42,42,0.18)' },
 };
 
-export default function MockProductDetailPage() {
+// Product detail page with cart CTA — used for scan-to-cart flow via /product_cart/:id.
+export default function ProductCartPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { addItem } = useCart();
   const { t } = useLang();
   const { isWished, toggleWish } = useWishlist();
   const config  = usePublicConfig();
   const ppnRate = parseFloat(config?.ppn_rate) || 0;
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [qty, setQty] = useState(1);
+  const [added, setAdded] = useState(false);
   const [imgError, setImgError] = useState(false);
 
   useEffect(() => {
@@ -64,7 +69,6 @@ export default function MockProductDetailPage() {
     getProduct(id)
       .then((r) => setProduct(r.data.data))
       .catch(() =>
-        // Fallback: id might be a barcode value (from QR scan) instead of product_id
         getProductByBarcode(id)
           .then((r) => setProduct(r.data.data))
           .catch(() => setProduct(null))
@@ -92,10 +96,23 @@ export default function MockProductDetailPage() {
   const inStock = stock > 0;
   const categName = product.odoo_categ_name || product.category || '-';
 
+  function handleAddToCart() {
+    addItem({
+      product_id:   product.product_id,
+      product_name: product.product_name,
+      price:        product.price,
+      tenant_id:    product.tenant_id,
+      tenant_name:  product.tenant_name,
+      image_url:    product.image_url || null,
+    }, qty);
+    setAdded(true);
+    setTimeout(() => setAdded(false), 1500);
+  }
+
   return (
     <div
       className="max-w-[390px] mx-auto"
-      style={{ paddingBottom: 24 }}
+      style={{ paddingBottom: inStock ? 90 : 24 }}
     >
 
       {/* ── Hero ──────────────────────────────────────────────────────── */}
@@ -272,7 +289,7 @@ export default function MockProductDetailPage() {
           )}
         </div>
 
-        {/* Out of stock fallback CTA */}
+        {/* Out of stock */}
         {!inStock && (
           <div
             style={{
@@ -290,6 +307,94 @@ export default function MockProductDetailPage() {
         )}
       </div>
 
+      {/* ── Sticky CTA ────────────────────────────────────────────────── */}
+      {inStock && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 120,
+            left: 0, right: 0, zIndex: 20,
+            padding: '10px 16px',
+            background: 'rgba(255,255,255,0.97)',
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            borderTop: '0.5px solid #E2E8F0',
+            boxShadow: '0 -4px 20px rgba(99,102,241,0.06)',
+          }}
+        >
+          <div style={{ maxWidth: 390, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Qty pill */}
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                alignItems: 'center',
+                background: '#F1F5F9',
+                borderRadius: 40,
+                height: 48,
+                overflow: 'hidden',
+              }}
+            >
+              <button
+                onClick={() => setQty(q => Math.max(1, q - 1))}
+                style={{
+                  flex: 1, height: 48,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 24, fontWeight: 300, color: '#6366F1',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                }}
+                aria-label="Kurang"
+              >
+                −
+              </button>
+              <span style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', minWidth: 32, textAlign: 'center' }}>
+                {qty}
+              </span>
+              <button
+                onClick={() => setQty(q => Math.min(stock, q + 1))}
+                style={{
+                  flex: 1, height: 48,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 24, fontWeight: 300, color: '#6366F1',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                }}
+                aria-label="Tambah"
+              >
+                +
+              </button>
+            </div>
+
+            {/* Cart circle button */}
+            <button
+              onClick={handleAddToCart}
+              disabled={added}
+              aria-label={t('product.addToCartFull')}
+              style={{
+                width: 48, height: 48, flexShrink: 0,
+                borderRadius: '50%',
+                background: added ? '#22C55E' : '#6366F1',
+                border: 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: added ? 'default' : 'pointer',
+                boxShadow: added
+                  ? '0 4px 14px rgba(34,197,94,0.35)'
+                  : '0 4px 14px rgba(99,102,241,0.35)',
+                transition: 'background 0.2s, box-shadow 0.2s',
+              }}
+            >
+              {added ? (
+                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#fff" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

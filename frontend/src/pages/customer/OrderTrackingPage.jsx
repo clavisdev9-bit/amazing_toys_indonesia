@@ -38,6 +38,7 @@ function PublicOrderView({ txnId, token }) {
   const [order, setOrder]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
+  const { t } = useLang();
   const { remaining, hours, mins, secs } = useCountdownTo(order?.expiresAt);
 
   const fetchOrder = useCallback(() => {
@@ -64,7 +65,7 @@ function PublicOrderView({ txnId, token }) {
     return (
       <div className="max-w-sm mx-auto px-4 py-16 text-center">
         <div className="text-5xl mb-4">🔗</div>
-        <h2 className="font-bold text-gray-800 mb-2">Link Tidak Valid</h2>
+        <h2 className="font-bold text-gray-800 mb-2">{t('order.invalidLink')}</h2>
         <p className="text-sm text-gray-500">{error}</p>
       </div>
     );
@@ -79,10 +80,10 @@ function PublicOrderView({ txnId, token }) {
     return (
       <div className="max-w-sm mx-auto px-4 py-16 text-center">
         <div className="text-6xl mb-4">✅</div>
-        <h2 className="font-bold text-gray-800 text-xl mb-2">Pembayaran Selesai!</h2>
-        <p className="text-sm text-gray-500 mb-1">Pesanan <span className="font-mono font-semibold">{order.txnId}</span></p>
+        <h2 className="font-bold text-gray-800 text-xl mb-2">{t('order.paymentDone')}</h2>
+        <p className="text-sm text-gray-500 mb-1">{t('order.ordersFrom')} <span className="font-mono font-semibold">{order.txnId}</span></p>
         <p className="text-sm text-gray-500">
-          Kembali ke booth <strong>{order.boothName}</strong> untuk mengambil barang Anda.
+          {t('order.collectBooth', { name: order.boothName })}
         </p>
       </div>
     );
@@ -92,7 +93,7 @@ function PublicOrderView({ txnId, token }) {
     <div className="max-w-sm mx-auto px-4 py-6">
       {/* Header booth */}
       <div className="text-center mb-5">
-        <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Pesanan dari</p>
+        <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">{t('order.ordersFrom')}</p>
         <h2 className="font-bold text-gray-900 text-lg">{order.boothName}</h2>
         {order.boothLocation && (
           <p className="text-sm text-gray-500">{order.boothLocation}</p>
@@ -107,7 +108,7 @@ function PublicOrderView({ txnId, token }) {
           </div>
         ) : (
           <div className="w-64 h-64 bg-gray-100 rounded-2xl flex items-center justify-center">
-            <p className="text-gray-400 text-sm text-center px-4">QR tidak tersedia</p>
+            <p className="text-gray-400 text-sm text-center px-4">{t('order.qrNA')}</p>
           </div>
         )}
       </div>
@@ -115,7 +116,7 @@ function PublicOrderView({ txnId, token }) {
       {/* Instruksi */}
       <div className="bg-blue-50 rounded-xl border border-blue-200 px-4 py-3 mb-4 text-center">
         <p className="text-sm text-blue-800 font-medium">
-          Tunjukkan QR ini ke kasir → kembali ke booth untuk ambil barang
+          {t('order.showQRToCashier')}
         </p>
       </div>
 
@@ -130,8 +131,8 @@ function PublicOrderView({ txnId, token }) {
         }`}>
           <span>⏱</span>
           {expired
-            ? 'QR sudah kedaluwarsa'
-            : `Berlaku ${hours > 0 ? `${hours}j ` : ''}${mins}m ${String(secs).padStart(2,'0')}d`}
+            ? t('order.qrExpired')
+            : t('order.validFor', { time: `${hours > 0 ? `${hours}j ` : ''}${mins}m ${String(secs).padStart(2,'0')}d` })}
         </div>
       )}
 

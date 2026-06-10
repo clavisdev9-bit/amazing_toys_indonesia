@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Spinner from '../../components/ui/Spinner';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { useLang } from '../../context/LangContext';
 import ApprovalQueueTab from '../../components/helper/ApprovalQueueTab';
 import {
   getBoothProducts,
@@ -15,23 +16,14 @@ import {
   handoverOrder,
 } from '../../api/helper';
 
-// ── Status label map ──────────────────────────────────────────────────────────
-const STATUS_LABEL = {
-  PENDING_APPROVAL: 'Menunggu Approval',
-  RESERVED:        'Reserved',
-  WAITING_PAYMENT: 'Menunggu Bayar',
-  PAID:            'Sudah Dibayar',
-  HANDED_OVER:     'Diserahkan',
-  COMPLETED:       'Selesai',
-  CANCELLED:       'Dibatalkan',
-  EXPIRED:         'Kadaluarsa',
-};
+// STATUS_LABEL is built dynamically using t() inside each component.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TAB: BUAT ORDER
 // ─────────────────────────────────────────────────────────────────────────────
 function OrderTab() {
   const navigate = useNavigate();
+  const { t } = useLang();
   const [products, setProducts] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [cart, setCart]         = useState({});   // { productId: qty }
@@ -43,7 +35,7 @@ function OrderTab() {
   useEffect(() => {
     getBoothProducts()
       .then(r => setProducts(r.data.data || []))
-      .catch(() => setError('Gagal memuat produk booth.'))
+      .catch(() => setError(t('helper.loadError')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -75,7 +67,7 @@ function OrderTab() {
   const total    = subtotal + taxAmt;
 
   async function handleApprove() {
-    if (cartItems.length === 0) { setError('Pilih minimal satu produk.'); return; }
+    if (cartItems.length === 0) { setError(t('helper.minOneProduct')); return; }
     setError('');
     setSubmitting(true);
     try {
@@ -88,7 +80,7 @@ function OrderTab() {
       // CR-036: navigate ke halaman sukses dengan data order (Option B)
       navigate('/helper/order-success', { state: res.data.data });
     } catch (err) {
-      setError(err.response?.data?.message || 'Gagal membuat order.');
+      setError(err.response?.data?.message || t('helper.createOrderError'));
     } finally {
       setSubmitting(false);
     }
@@ -101,12 +93,12 @@ function OrderTab() {
       {/* Product list */}
       <div className="lg:col-span-2 space-y-3">
         <Input
-          placeholder="Cari nama produk atau scan barcode…"
+          placeholder={t('helper.searchBarcode')}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
         {filtered.length === 0 && (
-          <p className="text-gray-400 text-sm text-center py-8">Tidak ada produk.</p>
+          <p className="text-gray-400 text-sm text-center py-8">{t('helper.noProducts')}</p>
         )}
         <div className="space-y-2">
           {filtered.map(p => {
@@ -124,10 +116,10 @@ function OrderTab() {
                   <p className="font-medium text-sm text-gray-800 truncate">{p.product_name}</p>
                   <p className="text-xs text-gray-500">{formatRupiah(p.price)}</p>
                   <div className="flex gap-1 mt-0.5 flex-wrap">
-                    {p.is_display_only && <span className="text-xs text-red-600 bg-red-50 px-1.5 rounded">Display Only</span>}
-                    {p.is_on_hold && <span className="text-xs text-orange-600 bg-orange-50 px-1.5 rounded">On Hold</span>}
-                    {p.stock_quantity === 0 && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 rounded">Habis</span>}
-                    {p.max_per_customer && <span className="text-xs text-blue-600 bg-blue-50 px-1.5 rounded">Maks {p.max_per_customer}/orang</span>}
+                    {p.is_display_only && <span className="text-xs text-red-600 bg-red-50 px-1.5 rounded">{t('helper.displayOnly')}</span>}
+                    {p.is_on_hold && <span className="text-xs text-orange-600 bg-orange-50 px-1.5 rounded">{t('helper.onHold')}</span>}
+                    {p.stock_quantity === 0 && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 rounded">{t('badge.OUT_OF_STOCK')}</span>}
+                    {p.max_per_customer && <span className="text-xs text-blue-600 bg-blue-50 px-1.5 rounded">{t('helper.maxPerPerson', { n: p.max_per_customer })}</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -152,10 +144,10 @@ function OrderTab() {
       {/* Cart summary */}
       <div className="space-y-3">
         <div className="bg-white rounded-xl border p-4">
-          <h3 className="font-semibold text-gray-700 mb-3">Ringkasan Order</h3>
+          <h3 className="font-semibold text-gray-700 mb-3">{t('helper.orderSummary')}</h3>
 
           {cartItems.length === 0 ? (
-            <p className="text-gray-400 text-sm">Belum ada item dipilih.</p>
+            <p className="text-gray-400 text-sm">{t('helper.noItemSelected')}</p>
           ) : (
             <div className="space-y-1.5 text-sm mb-3">
               {cartItems.map(i => (
@@ -176,7 +168,7 @@ function OrderTab() {
           )}
 
           <Input
-            placeholder="No. HP customer (opsional)"
+            placeholder={t('helper.customerPhone')}
             value={phone}
             onChange={e => setPhone(e.target.value)}
             className="mb-3"
@@ -190,7 +182,7 @@ function OrderTab() {
             disabled={cartItems.length === 0}
             className="w-full"
           >
-            Approve & Generate QR
+            {t('helper.approveGenerateQR')}
           </Button>
         </div>
       </div>
@@ -202,6 +194,7 @@ function OrderTab() {
 // TAB: RIWAYAT
 // ─────────────────────────────────────────────────────────────────────────────
 function HistoryTab() {
+  const { t } = useLang();
   const [orders, setOrders]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState('');
@@ -211,7 +204,7 @@ function HistoryTab() {
     setLoading(true);
     getBoothOrders({ date: today })
       .then(r => setOrders(r.data.data || []))
-      .catch(() => setError('Gagal memuat riwayat.'))
+      .catch(() => setError(t('helper.loadError')))
       .finally(() => setLoading(false));
   }, [today]);
 
@@ -219,12 +212,12 @@ function HistoryTab() {
 
   if (loading) return <Spinner />;
   if (error)   return <p className="text-red-600 text-sm">{error}</p>;
-  if (orders.length === 0) return <p className="text-gray-400 text-sm text-center py-8">Belum ada order hari ini.</p>;
+  if (orders.length === 0) return <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noTransactions')}</p>;
 
   return (
     <div className="space-y-2">
       <div className="flex justify-end mb-2">
-        <button onClick={load} className="text-xs text-blue-600 hover:underline">Refresh</button>
+        <button onClick={load} className="text-xs text-blue-600 hover:underline">{t('helper.refresh')}</button>
       </div>
       {orders.map(o => (
         <div key={o.transaction_id} className="bg-white rounded-lg border p-3 flex items-center justify-between gap-2">
@@ -237,7 +230,7 @@ function HistoryTab() {
           </div>
           <div className="text-right shrink-0">
             <p className="font-semibold text-sm">{formatRupiah(o.total_amount)}</p>
-            <Badge status={o.status} label={STATUS_LABEL[o.status] || o.status} />
+            <Badge status={o.status} label={t(`badge.${o.status}`)} />
           </div>
         </div>
       ))}
@@ -249,6 +242,7 @@ function HistoryTab() {
 // TAB: HANDOVER
 // ─────────────────────────────────────────────────────────────────────────────
 function HandoverTab() {
+  const { t } = useLang();
   const [orders, setOrders]     = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState('');
@@ -258,7 +252,7 @@ function HandoverTab() {
     setLoading(true);
     getBoothOrders({ status: 'PAID' })
       .then(r => setOrders(r.data.data || []))
-      .catch(() => setError('Gagal memuat data handover.'))
+      .catch(() => setError(t('helper.loadError')))
       .finally(() => setLoading(false));
   }, []);
 
@@ -270,7 +264,7 @@ function HandoverTab() {
       await handoverOrder(txnId);
       load();
     } catch (err) {
-      alert(err.response?.data?.message || 'Gagal konfirmasi serah terima.');
+      alert(err.response?.data?.message || t('helper.handoverError'));
     } finally {
       setConfirming(null);
     }
@@ -282,8 +276,8 @@ function HandoverTab() {
   if (orders.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-400 text-sm">Tidak ada order PAID yang menunggu serah terima.</p>
-        <button onClick={load} className="text-xs text-blue-600 mt-2 hover:underline">Refresh</button>
+        <p className="text-gray-400 text-sm">{t('helper.noPaidOrders')}</p>
+        <button onClick={load} className="text-xs text-blue-600 mt-2 hover:underline">{t('helper.refresh')}</button>
       </div>
     );
   }
@@ -291,8 +285,8 @@ function HandoverTab() {
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center mb-1">
-        <p className="text-sm text-gray-600">{orders.length} order menunggu serah terima</p>
-        <button onClick={load} className="text-xs text-blue-600 hover:underline">Refresh</button>
+        <p className="text-sm text-gray-600">{t('helper.ordersWaitingHandover', { n: orders.length })}</p>
+        <button onClick={load} className="text-xs text-blue-600 hover:underline">{t('helper.refresh')}</button>
       </div>
       {orders.map(o => (
         <div key={o.transaction_id} className="bg-white rounded-xl border p-4">
@@ -306,7 +300,7 @@ function HandoverTab() {
             </div>
             <div className="text-right">
               <p className="font-semibold">{formatRupiah(o.total_amount)}</p>
-              <Badge status="PAID" label="Sudah Dibayar" />
+              <Badge status="PAID" label={t('badge.PAID')} />
             </div>
           </div>
           <Button
@@ -315,7 +309,7 @@ function HandoverTab() {
             className="w-full"
             variant="success"
           >
-            ✓ Konfirmasi Serah Terima
+            {t('helper.confirmHandover')}
           </Button>
         </div>
       ))}
@@ -328,6 +322,7 @@ function HandoverTab() {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function HelperPage() {
   const { subscribe }   = useWebSocket();
+  const { t }           = useLang();
 
   const [tab, setTab]               = useState('order');
   const [approvalCount, setApprovalCount] = useState(0);
@@ -343,15 +338,15 @@ export default function HelperPage() {
   }, [subscribe]);
 
   const TABS = [
-    { id: 'order',    label: 'Buat Order' },
-    { id: 'approval', label: 'Antrian Approval', badge: approvalCount },
-    { id: 'history',  label: 'Riwayat Hari Ini' },
-    { id: 'handover', label: 'Serah Terima' },
+    { id: 'order',    label: t('helper.tabOrder') },
+    { id: 'approval', label: t('helper.tabApproval'), badge: approvalCount },
+    { id: 'history',  label: t('helper.tabHistory') },
+    { id: 'handover', label: t('helper.tabHandover') },
   ];
 
   return (
     <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-xl font-bold text-gray-900 mb-4">Helper Booth</h1>
+      <h1 className="text-xl font-bold text-gray-900 mb-4">{t('helper.pageTitle')}</h1>
 
       {/* CR-040: new order toast */}
       {newApprovalToast && (
@@ -360,26 +355,26 @@ export default function HelperPage() {
           onClick={() => { setTab('approval'); setNewApprovalToast(false); }}
         >
           <span className="text-lg">🔔</span>
-          <span>Pesanan baru menunggu approval! Ketuk untuk review.</span>
+          <span>{t('helper.newOrderToast')}</span>
         </div>
       )}
 
       {/* Tab navigation */}
       <div className="flex border-b mb-4 overflow-x-auto">
-        {TABS.map(t => (
+        {TABS.map(tab_ => (
           <button
-            key={t.id}
-            onClick={() => { setTab(t.id); if (t.id === 'approval') setApprovalCount(0); }}
+            key={tab_.id}
+            onClick={() => { setTab(tab_.id); if (tab_.id === 'approval') setApprovalCount(0); }}
             className={`relative px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-              tab === t.id
+              tab === tab_.id
                 ? 'border-blue-600 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            {t.label}
-            {t.badge > 0 && (
+            {tab_.label}
+            {tab_.badge > 0 && (
               <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4.5 h-4.5 flex items-center justify-center min-w-[18px] px-1">
-                {t.badge}
+                {tab_.badge}
               </span>
             )}
           </button>

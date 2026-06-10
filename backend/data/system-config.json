@@ -1,6 +1,6 @@
 {
   "app_env": "hybrid",
-  "event_name": "Amazing ",
+  "event_name": "Amazing toy",
   "venue": "Mall",
   "event_date_start": "2026-04-01",
   "event_date_end": "2026-04-07",
@@ -12,7 +12,7 @@
   "logo_url": "/uploads/1779274282396-uxzm7j.jpg",
   "primary_color": "#2563eb",
   "map_embed_url": "",
-  "map_image_url": "",
+  "map_image_url": "https://i.postimg.cc/hGH72FSV/50b01c0d-849c-4bc1-b65d-97f5a427000c.jpg",
   "printer_ip": "",
   "printer_port": 9100,
   "printer_assignments": [

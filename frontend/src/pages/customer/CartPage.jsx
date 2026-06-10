@@ -25,6 +25,7 @@ function saveSFL(items) {
 function ProductAvailableToast({ product, onMoveToCart, onDismiss }) {
   const [visible, setVisible] = useState(true);
   const timer = useRef(null);
+  const { t } = useLang();
 
   useEffect(() => {
     timer.current = setTimeout(() => { setVisible(false); onDismiss(); }, 9000);
@@ -54,7 +55,7 @@ function ProductAvailableToast({ product, onMoveToCart, onDismiss }) {
             {product.product_name}
           </p>
           <p className="text-[11px] text-emerald-600 mt-0.5">
-            Stok sudah tersedia! Pindahkan ke keranjang?
+            {t('cart.stockAvailablePrompt')}
           </p>
           <div className="flex gap-2 mt-2">
             <button
@@ -62,14 +63,14 @@ function ProductAvailableToast({ product, onMoveToCart, onDismiss }) {
               className="text-[11px] font-bold text-white px-3 py-1.5 rounded-lg"
               style={{ background: 'linear-gradient(135deg,#087F5B,#2F9E44)' }}
             >
-              Pindahkan ke Keranjang
+              {t('cart.moveToCart')}
             </button>
             <button
               onClick={() => { setVisible(false); onDismiss(); }}
               className="text-[11px] font-semibold text-emerald-700 px-2 py-1.5 rounded-lg"
               style={{ background: 'rgba(8,127,91,0.08)' }}
             >
-              Nanti
+              {t('common.later')}
             </button>
           </div>
         </div>
@@ -83,7 +84,7 @@ function ProductAvailableToast({ product, onMoveToCart, onDismiss }) {
 }
 
 // ── Saved-for-later item row ────────────────────────────────────────────────
-function SavedForLaterRow({ item, onMoveToCart, onRemove, ppnRate, isAvailable }) {
+function SavedForLaterRow({ item, onMoveToCart, onRemove, ppnRate, isAvailable, t }) {
   return (
     <div
       className="px-4 py-3 flex gap-3 relative"
@@ -118,14 +119,14 @@ function SavedForLaterRow({ item, onMoveToCart, onRemove, ppnRate, isAvailable }
               className="text-[10px] font-bold px-2 py-0.5 rounded-full"
               style={{ background: 'rgba(8,127,91,0.1)', color: '#087F5B' }}
             >
-              ✓ Stok Tersedia
+              {t('cart.stockAvailable')}
             </span>
           ) : (
             <span
               className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
               style={{ background: 'rgba(255,183,0,0.12)', color: '#B45309' }}
             >
-              ⏳ Menunggu Stok
+              {t('cart.waitingForStock')}
             </span>
           )}
 
@@ -145,7 +146,7 @@ function SavedForLaterRow({ item, onMoveToCart, onRemove, ppnRate, isAvailable }
                   }
             }
           >
-            + Keranjang
+            {t('product.addToCart')}
           </button>
         </div>
       </div>
@@ -310,13 +311,13 @@ export default function CartPage() {
 
   // ── Checkout button label ──────────────────────────────────────────────────
   function checkoutBtnLabel() {
-    if (isHelperMode)     return 'Hubungi petugas booth';
+    if (isHelperMode)     return t('cart.contactBooth');
     if (loading)          return t('cart.checkout');
-    if (isApproveMode)    return 'Kirim ke Antrian Persetujuan';
+    if (isApproveMode)    return t('cart.submitForApproval');
     if (hasWaiting && approvedItems.length > 0)
-      return `Pesan Barang Tersedia (${approvedItems.length} barang)`;
+      return t('cart.orderAvailable', { count: approvedItems.length });
     if (hasWaiting && approvedItems.length === 0)
-      return 'Semua barang menunggu konfirmasi';
+      return t('cart.allItemsWaiting');
     return t('cart.checkout');
   }
 
@@ -405,7 +406,7 @@ export default function CartPage() {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      ⏳ Menunggu Stok
+                      {t('cart.waitingForStock')}
                     </span>
                   )}
                 </div>
@@ -414,7 +415,7 @@ export default function CartPage() {
 
                 {item.is_on_hold && (
                   <p className="text-[10px] text-amber-600 mb-1.5 leading-snug">
-                    Belum dikonfirmasi booth · tanyakan langsung atau hapus
+                    {t('cart.unconfirmedNote')}
                   </p>
                 )}
 
@@ -454,14 +455,14 @@ export default function CartPage() {
               <div className="flex items-center gap-2">
                 <span className="text-base">📌</span>
                 <span className="text-[12px] font-bold text-gray-600 uppercase tracking-wide">
-                  Disimpan untuk Nanti
+                  {t('cart.savedForLater')}
                 </span>
               </div>
               <span
                 className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
                 style={{ background: 'rgba(59,91,219,0.08)', color: '#3B5BDB' }}
               >
-                {savedForLater.length} barang
+                {t('cart.itemCount', { count: savedForLater.length })}
               </span>
             </div>
 
@@ -474,6 +475,7 @@ export default function CartPage() {
                   isAvailable={!!availableProducts[item.product_id]}
                   onMoveToCart={handleMoveToCart}
                   onRemove={handleRemoveSFL}
+                  t={t}
                 />
               ))}
             </div>
@@ -486,7 +488,7 @@ export default function CartPage() {
             {/* ── Voucher ───────────────────────────────────────────────── */}
             <div className="px-4 py-3 bg-white border-t mt-2">
               <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">
-                Voucher Diskon
+                {t('cart.voucherSection')}
               </p>
               <VoucherInput
                 cartTotal={subtotalRaw}
@@ -509,12 +511,10 @@ export default function CartPage() {
                 <span className="text-amber-500 shrink-0 mt-0.5">⚠️</span>
                 <div>
                   <p className="text-[12px] font-bold text-amber-800">
-                    {waitingItems.length} barang menunggu konfirmasi stok
+                    {t('cart.waitingWarningTitle', { count: waitingItems.length })}
                   </p>
                   <p className="text-[11px] text-amber-600 mt-0.5 leading-relaxed">
-                    Kunjungi booth untuk konfirmasi, atau lanjutkan checkout
-                    hanya untuk barang yang tersedia.
-                    Barang yang menunggu akan disimpan ke Wishlist secara otomatis.
+                    {t('cart.waitingWarningBody')}
                   </p>
                 </div>
               </div>
@@ -525,18 +525,18 @@ export default function CartPage() {
               {isHelperMode && (
                 <div className="bg-violet-50 border border-violet-200 text-violet-700 text-sm rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
                   <span>🙋</span>
-                  <span>Mode Helper Input aktif. Pemesanan hanya dapat dilakukan melalui petugas booth.</span>
+                  <span>{t('cart.helperModeWarning')}</span>
                 </div>
               )}
               {isApproveMode && (
                 <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm rounded-lg px-3 py-2 mb-3 flex items-start gap-2">
                   <span className="shrink-0">✅</span>
-                  <span>Pesanan Anda akan menunggu persetujuan dari petugas booth. Stok dan timer mulai berjalan setelah disetujui.</span>
+                  <span>{t('cart.approveModeWarning')}</span>
                 </div>
               )}
               {isOverLimit && (
                 <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-3">
-                  Maksimal <strong>{maxItemsPerOrder} item</strong> per order. Saat ini <strong>{totalQty} item</strong> — kurangi sebelum checkout.
+                  {t('cart.itemLimitWarning', { max: maxItemsPerOrder, current: totalQty })}
                 </div>
               )}
               {error && (
@@ -547,20 +547,20 @@ export default function CartPage() {
 
               <div className="space-y-1 mb-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">Subtotal</span>
+                  <span className="text-gray-500">{t('cart.subtotal')}</span>
                   <span className="text-gray-700">{formatRupiah(subtotalRaw)}</span>
                 </div>
                 {discountRaw > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-green-600">
-                      Diskon{appliedVoucher?.code ? ` (${appliedVoucher.code})` : ''}
+                      {t('cart.discount')}{appliedVoucher?.code ? ` (${appliedVoucher.code})` : ''}
                     </span>
                     <span className="text-green-600 font-medium">− {formatRupiah(discountRaw)}</span>
                   </div>
                 )}
                 {ppnRate > 0 && (
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">PPN {ppnRate}%</span>
+                    <span className="text-gray-500">{t('cart.taxLine', { rate: ppnRate })}</span>
                     <span className="text-gray-700">{formatRupiah(taxRaw)}</span>
                   </div>
                 )}
@@ -569,7 +569,7 @@ export default function CartPage() {
                     className="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg mt-1"
                     style={{ background: 'rgba(235,252,245,0.7)', color: '#087F5B' }}
                   >
-                    <span>Estimasi total ({approvedItems.length} barang tersedia)</span>
+                    <span>{t('cart.estimatedTotal', { count: approvedItems.length })}</span>
                     <span className="font-bold">
                       {formatRupiah(approvedItems.reduce((s, i) =>
                         s + Math.round(i.price * i.quantity * (1 + ppnRate / 100)), 0))}
@@ -584,7 +584,7 @@ export default function CartPage() {
 
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs text-gray-400">{totalQty} / {maxItemsPerOrder} item</span>
-                {isOverLimit && <span className="text-xs text-red-500 font-medium">Melebihi batas</span>}
+                {isOverLimit && <span className="text-xs text-red-500 font-medium">{t('cart.exceedsLimit')}</span>}
               </div>
               <p className="text-xs text-gray-400 mb-3">{t('cart.pendingNote')}</p>
 

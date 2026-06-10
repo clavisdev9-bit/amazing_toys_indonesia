@@ -95,8 +95,15 @@ export default function ProductCard({ product, tourAttr }) {
       }}
       {...tourAttr}
     >
-      {/* Image area */}
-      <button onClick={goToDetail} className="text-left w-full relative" style={{ aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', background: product.colorHex || '#EEF2FF' }}>
+      {/* Image area — div instead of button to avoid nested-button violation */}
+      <div
+        onClick={goToDetail}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => e.key === 'Enter' && goToDetail()}
+        className="text-left w-full relative cursor-pointer"
+        style={{ aspectRatio: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', background: product.colorHex || '#EEF2FF' }}
+      >
         {product.image_url && !imgError
           ? <img src={product.image_url} alt={product.name} className="w-full h-full object-contain" onError={() => setImgError(true)} />
           : <span className="text-5xl">🧸</span>
@@ -116,7 +123,6 @@ export default function ProductCard({ product, tourAttr }) {
               ? '0 1px 6px rgba(240,62,62,0.20)'
               : '0 1px 6px rgba(0,0,0,0.08)',
             transform: bouncing ? 'scale(1.28)' : 'scale(1)',
-            // spring curve: overshoot and settle
             transition: bouncing
               ? 'transform 120ms cubic-bezier(0.34, 1.56, 0.64, 1)'
               : 'transform 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94)',
@@ -125,7 +131,7 @@ export default function ProductCard({ product, tourAttr }) {
         >
           <HeartIcon filled={wished} />
         </button>
-      </button>
+      </div>
 
       {/* Info area */}
       <div
@@ -144,50 +150,41 @@ export default function ProductCard({ product, tourAttr }) {
           <StockBadge level={stockLevel} label={t(stockKey)} />
         </div>
 
-        {/* Add to cart button */}
-        {(isHelperMode || isApproveMode) ? (
-          <div
-            className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-[11px] font-semibold mt-1"
-            style={{
-              background: 'rgba(124,58,237,0.08)',
-              color: 'rgba(109,40,217,0.85)',
-              border: '1px solid rgba(124,58,237,0.18)',
-            }}
-          >
-            🙋 Pesan via petugas booth
-          </div>
-        ) : addable ? (
-          <button
-            onClick={handleAddToCart}
-            disabled={added}
-            className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-xs font-bold transition-all duration-150 border-none cursor-pointer mt-1"
-            style={
-              added
-                ? { background: 'rgba(64,192,87,0.85)', color: '#fff' }
-                : {
-                    background: 'rgba(59,91,219,0.88)',
-                    backdropFilter: 'blur(8px)',
-                    WebkitBackdropFilter: 'blur(8px)',
-                    color: 'rgba(255,255,255,0.97)',
-                    border: '1px solid rgba(116,143,252,0.40)',
-                    boxShadow: '0 2px 8px rgba(59,91,219,0.22), inset 0 1px 0 rgba(255,255,255,0.18)',
-                  }
-            }
-          >
-            {added ? t('product.added') : t('product.addToCart')}
-          </button>
-        ) : (
-          <button
-            disabled
-            className="w-full flex items-center justify-center py-2 rounded-[10px] text-xs font-bold mt-1 border-none cursor-not-allowed"
-            style={{
-              background: 'rgba(220,224,235,0.55)',
-              color: 'rgba(100,110,160,0.65)',
-              border: '1px solid rgba(200,205,230,0.5)',
-            }}
-          >
-            {t('product.outOfStock')}
-          </button>
+        {/* Add to cart button — hidden in helper/approve mode */}
+        {!(isHelperMode || isApproveMode) && (
+          addable ? (
+            <button
+              onClick={handleAddToCart}
+              disabled={added}
+              className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-xs font-bold transition-all duration-150 border-none cursor-pointer mt-1"
+              style={
+                added
+                  ? { background: 'rgba(64,192,87,0.85)', color: '#fff' }
+                  : {
+                      background: 'rgba(59,91,219,0.88)',
+                      backdropFilter: 'blur(8px)',
+                      WebkitBackdropFilter: 'blur(8px)',
+                      color: 'rgba(255,255,255,0.97)',
+                      border: '1px solid rgba(116,143,252,0.40)',
+                      boxShadow: '0 2px 8px rgba(59,91,219,0.22), inset 0 1px 0 rgba(255,255,255,0.18)',
+                    }
+              }
+            >
+              {added ? t('product.added') : t('product.addToCart')}
+            </button>
+          ) : (
+            <button
+              disabled
+              className="w-full flex items-center justify-center py-2 rounded-[10px] text-xs font-bold mt-1 border-none cursor-not-allowed"
+              style={{
+                background: 'rgba(220,224,235,0.55)',
+                color: 'rgba(100,110,160,0.65)',
+                border: '1px solid rgba(200,205,230,0.5)',
+              }}
+            >
+              {t('product.outOfStock')}
+            </button>
+          )
         )}
       </div>
     </div>

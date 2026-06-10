@@ -2380,3 +2380,594 @@ Sembunyikan tombol language switcher (EN/ID) di header CustomerShell khusus saat
 - Import: tambah `useLocation` dari `react-router-dom`
 - Tambah `const { pathname } = useLocation()` dan `const isKatalog = pathname === '/katalog'`
 - Language switcher div dibungkus `{!isKatalog && (...)}`
+
+---
+
+### CR-045 — Fix Public Product Endpoints (Hapus `authenticate`) + Dedicated `/hold` Endpoint
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:**
+- `backend/src/modules/products/products.router.js`
+
+**Type:** Bug Fix + Refactor
+
+**Background:**  
+`GET /api/v1/products` dan `GET /api/v1/products/categories` memiliki komentar "public browse (Customer)" tetapi masih membawa middleware `authenticate`. Setiap request tanpa Bearer token (customer belum login) ditolak 401 → halaman `/katalog` tidak dapat load produk. Selain itu, fungsionalitas toggle `is_on_hold` dari `admin.service.js` (`adminUpdateProduct`) dipindahkan ke endpoint dedicated di router produk agar lebih tepat sasaran dan mendukung broadcast WS yang akurat.
+
+**Perubahan:**
+
+1. **Hapus `authenticate` dari dua endpoint publik:**
+   ```js
+   // Sebelum:
+   router.get('/', authenticate, ...)
+   router.get('/categories', authenticate, ...)
+
+   // Sesudah:
+   router.get('/', ...)       // customer browse — no auth required
+   router.get('/categories', ...)  // public list
+   ```
+
+2. **Tambah endpoint `PATCH /:productId/hold`** (Leader/Admin):
+   ```js
+   router.patch('/:productId/hold', authenticate, authorize('LEADER', 'ADMIN'),
+     [body('is_on_hold').isBoolean()], validate,
+     async (req, res, next) => {
+       const { product, wasOnHold } = await productsSvc.toggleProductHold(productId, is_on_hold);
+       if (wasOnHold && is_on_hold === false) {
+         broadcastProductAvailable(product.product_id, product.product_name);
+       }
+       res.json({ success: true, ... });
+     }
+   );
+   ```
+   Broadcast `PRODUCT_AVAILABLE` hanya saat transisi `true → false` (stok tersedia kembali). Import `broadcastProductAvailable` dari `websocket.js`.
+
+**Yang TIDAK berubah:**  
+`GET /barcode/:barcode`, `GET /:productId`, `POST /`, `PATCH /:productId` — semua tetap dilindungi `authenticate`.
+
+**Recurrence Prevention:**  
+Setiap endpoint public customer-facing tidak boleh punya `authenticate` middleware. Cek komentar router; jika ada komentar "public" maka tidak boleh ada `authenticate`.
+
+---
+
+### CR-046 — QrScannerModal: Stabilisasi Callback + inversionAttempts Fix
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:**
+- `frontend/src/components/ui/QrScannerModal.jsx`
+
+**Type:** Bug Fix
+
+**Background:**  
+QR scanner di `/katalog` (BrowsePage) terbuka tapi tidak pernah mendeteksi QR code. Dua masalah terpisah berjalan bersamaan.
+
+**Root Cause:**
+
+1. **Callback instability** — `useEffect([onResult])` bergantung pada prop `onResult`. Di BrowsePage, `handleQrResult` bukan `useCallback` sehingga referensinya berubah setiap render. Setiap kali `usePublicConfig()` selesai fetch → parent re-render → `onResult` reference baru → `useEffect` cleanup → kamera stop → restart. Scanner terus restart sebelum sempat mendeteksi QR apapun.
+
+2. **`inversionAttempts: 'dontInvert'`** — jsQR hanya mencoba QR hitam-di-putih. QR dari layar/print sering tidak terdeteksi karena auto-exposure atau pencahayaan ruangan.
+
+**Fixes:**
+
+1. **Refs untuk callbacks** (`useLayoutEffect` + `useRef`):
+   ```js
+   const onResultRef     = useRef(onResult);
+   const resultParserRef = useRef(resultParser);
+   useLayoutEffect(() => {        // sync refs setiap render, tanpa deps
+     onResultRef.current     = onResult;
+     resultParserRef.current = resultParser;
+   });
+   useEffect(() => { ... }, []);  // empty deps — kamera hanya start sekali saat mount
+   ```
+   `scanLoop` menggunakan `onResultRef.current` dan `resultParserRef.current`.
+
+2. **`inversionAttempts: 'attemptBoth'`** — jsQR mencoba QR normal dan inverted per frame.
+
+3. **Frame skip** — `frameCount % 3 !== 0` — proses setiap frame ke-3 (~20 fps), mengurangi CPU load.
+
+**Props baru untuk reusability:**
+```js
+QrScannerModal({
+  onResult,
+  onClose,
+  title = 'Scan QR Transaksi',
+  hint = 'Arahkan kamera ke QR code...',
+  resultParser = parseTxnFromQr,   // default: cari pola TXN-YYYYMMDD-NNNNN
+})
+```
+`resultParser` prop memungkinkan modal dipakai untuk berbagai jenis QR (barcode produk, QR transaksi) tanpa modifikasi komponen.
+
+---
+
+### CR-047 — MockProductDetailPage: Barcode Fallback untuk QR Scan
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:**
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+
+**Type:** Bug Fix
+
+**Background:**  
+QR code produk (di-generate oleh CR-043) meng-encode nilai field `barcode` (mis. `"6016478556530"`). Saat di-scan di `/katalog` dan dinavigasi ke `/product/:barcode`, halaman menampilkan "Produk tidak ditemukan" karena `getProduct(id)` melakukan lookup by `product_id`, bukan by `barcode`.
+
+**Fix:**
+
+Tambah fallback di `useEffect` — jika `getProduct(id)` gagal (404), otomatis coba `getProductByBarcode(id)`:
+
+```js
+// Before:
+getProduct(id).then(...).catch(() => setProduct(null))
+
+// After:
+getProduct(id)
+  .then((r) => setProduct(r.data.data))
+  .catch(() =>
+    getProductByBarcode(id)   // fallback: id might be a barcode from QR scan
+      .then((r) => setProduct(r.data.data))
+      .catch(() => setProduct(null))
+  )
+  .finally(() => setLoading(false));
+```
+
+Juga tambah import: `import { getProductByBarcode } from '../../api/products'`.
+
+**Yang TIDAK berubah:** `handleAddToCart`, backend, API endpoints.
+
+---
+
+### CR-048 — Fix `approveOrder`: `FOR UPDATE` → `FOR UPDATE OF t`
+
+**Date:** 2026-06-08  
+**Status:** Done  
+**Files:**
+- `backend/src/modules/helper/helper.service.js`
+
+**Type:** Bug Fix — Critical
+
+**Symptom:**  
+Setiap klik "Setujui" di halaman Helper (mode HELPER_APPROVE) mengembalikan **500 Internal Server Error**. Tidak ada perubahan status pesanan.
+
+**Root Cause:**  
+`approveOrder` melakukan lock transaksi dengan query yang mengandung `LEFT JOIN customers`:
+```sql
+SELECT t.*, c.full_name, c.phone_number
+FROM transactions t
+LEFT JOIN customers c ON c.customer_id = t.customer_id
+WHERE t.transaction_id = $1
+FOR UPDATE   -- ← crash: FOR UPDATE tidak bisa di-apply ke nullable side of outer join
+```
+PostgreSQL melarang `FOR UPDATE` pada query dengan `LEFT JOIN`. Error dilempar sebelum business logic apapun berjalan — setiap approve selalu 500.
+
+**Fix:**
+```sql
+-- Before:
+FOR UPDATE
+
+-- After:
+FOR UPDATE OF t   -- lock hanya baris dari tabel transactions, bukan customers
+```
+
+**Pattern aman:** Selalu gunakan `FOR UPDATE OF <alias>` ketika query mengandung `LEFT JOIN` atau outer join apapun.
+
+---
+
+### CR-049 — Fix `usePublicConfig` Cache Poisoning + Tab Approval Unconditional
+
+**Date:** 2026-06-08  
+**Status:** Done  
+**Files:**
+- `frontend/src/hooks/useAppLogo.js`
+- `frontend/src/pages/helper/HelperPage.jsx`
+
+**Type:** Bug Fix
+
+**Symptom:**  
+Tab "Antrian Approval" tidak muncul di halaman `/helper` meskipun `order_mode = HELPER_APPROVE` dan ada pesanan `PENDING_APPROVAL`.
+
+**Root Cause:**
+
+1. **Cache poisoning (`useAppLogo.js`)** — `fetchCached()` punya catch handler:
+   ```js
+   .catch(() => { cached = {}; })  // {} adalah truthy!
+   ```
+   Jika fetch `/config/public` gagal sekali (mis. backend belum ready), `cached` di-set ke `{}`. Pada mount berikutnya: `if (cached) return Promise.resolve(cached)` → return `{}` selamanya tanpa retry. `config?.order_mode` selalu `undefined`.
+
+2. **Tab conditional pada config async (`HelperPage.jsx`)** — Tab hanya di-render jika `isApproveMode`:
+   ```js
+   ...(isApproveMode ? [{ id: 'approval', label: 'Antrian Approval' }] : [])
+   ```
+   Kombinasi keduanya: cache racun → `isApproveMode = false` → tab tidak pernah muncul, bahkan setelah reload.
+
+**Fixes:**
+
+```js
+// useAppLogo.js — Before:
+.catch(() => { cached = {}; })
+
+// After (biarkan cached = null sehingga mount berikutnya bisa retry):
+.catch(() => { /* leave cached = null so next mount retries */ })
+```
+
+```js
+// HelperPage.jsx — Before:
+...(isApproveMode ? [{ id: 'approval', label: 'Antrian Approval', badge: approvalCount }] : [])
+
+// After (selalu tampilkan, antrian kosong jika tidak ada PENDING_APPROVAL):
+{ id: 'approval', label: 'Antrian Approval', badge: approvalCount }
+```
+
+WS subscription untuk `PENDING_APPROVAL_CREATED` juga dijadikan unconditional.
+
+**Recurrence Prevention:**  
+Cache error harus diset ke `null`, BUKAN `{}`. Empty object truthy memblokir semua retry. Fitur navigasi (tab, menu) tidak boleh di-hide berbasis config async — tampilkan selalu, kosongkan kontennya jika tidak relevan.
+
+---
+
+### CR-050 — Fix ApprovalQueueTab: WS Subscriber + getApprovalQueue Filter
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:**
+- `backend/src/modules/helper/helper.service.js`
+- `frontend/src/components/helper/ApprovalQueueTab.jsx`
+
+**Type:** Bug Fix
+
+**Symptom:**  
+Setelah Helper klik "✓ Setujui", pesanan tetap tampil di antrian. Item tidak hilang dari list meskipun backend return 200.
+
+**Root Cause:**
+
+1. **Backend (`getApprovalQueue` query)** — query tidak memfilter `approval_status`:
+   ```sql
+   -- Before:
+   WHERE ti.tenant_id = $1 AND t.status = 'PENDING_APPROVAL'
+   -- After approve: item Booth A punya approval_status='APPROVED' tapi transaksi masih
+   -- status='PENDING_APPROVAL' (menunggu Booth B). Query masih return baris ini.
+   ```
+
+2. **Frontend (`ApprovalQueueTab.jsx`)** — tidak subscribe WS event `APPROVAL_QUEUE_UPDATE`. Antrian hanya refresh via auto-poll 20 detik → UX gap antara API sukses dan tampilan terupdate.
+
+**Fixes:**
+
+**Backend:**
+```sql
+-- After: tambah filter approval_status
+WHERE ti.tenant_id = $1
+  AND t.status = 'PENDING_APPROVAL'
+  AND ti.approval_status = 'PENDING'   -- ← ADDED
+```
+
+**Frontend (`ApprovalQueueTab.jsx`):**
+1. `removeFromQueue(txnId)` — hapus item dari local state segera setelah API berhasil (optimistic)
+2. Subscribe `APPROVAL_QUEUE_UPDATE` event via `useWebSocket` untuk sync real-time
+3. `handleReject` juga pakai `removeFromQueue` untuk konsistensi
+
+```js
+const { subscribe } = useWebSocket();
+useEffect(() => subscribe('APPROVAL_QUEUE_UPDATE', fetchQueue), [subscribe, fetchQueue]);
+
+function removeFromQueue(txnId) {
+  setQueue(prev => {
+    const updated = prev.filter(t => t.transaction_id !== txnId);
+    onCountChange?.(updated.length);
+    return updated;
+  });
+}
+```
+
+---
+
+### CR-051 — Fix is_on_hold Tidak Propagasi ke Cart + AppError meta + CartContext markOnHold
+
+**Date:** 2026-06-08  
+**Status:** Done  
+**Files:**
+- `frontend/src/hooks/useCatalogueState.js`
+- `backend/src/middlewares/error.middleware.js`
+- `backend/src/modules/orders/orders.service.js`
+- `frontend/src/context/CartContext.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Type:** Bug Fix
+
+**Symptom:**  
+Ketika customer memiliki keranjang campuran (ada produk on-hold dan tidak), popup pemisahan barang tidak muncul saat checkout. Checkout gagal dengan 422 generik tanpa UI yang memandu user.
+
+**Root Cause:**  
+`normalizeProduct()` di `useCatalogueState.js` tidak menyertakan field `is_on_hold` → semua item di cart selalu mendapat `is_on_hold: false` → `waitingItems` selalu kosong → `StockApprovalModal` tidak pernah muncul.
+
+**Fixes:**
+
+1. **`useCatalogueState.js`** — Tambah `is_on_hold: p.is_on_hold || false` ke `normalizeProduct`.
+
+2. **`error.middleware.js`** — Extend `AppError` untuk menerima `meta`:
+   ```js
+   class AppError extends Error {
+     constructor(message, statusCode = 400, meta = null) { ...; if (meta) this.meta = meta; }
+   }
+   // errorHandler: tambah ...(err.meta ? { meta: err.meta } : {}) ke response
+   ```
+
+3. **`orders.service.js`** — Pass `onHoldProductIds` di meta 422:
+   ```js
+   throw new AppError('Beberapa produk belum tersedia...', 422,
+     { onHoldProductIds: onHoldCheck.rows.map(r => r.product_id) });
+   ```
+
+4. **`CartContext.jsx`** — Tambah `markOnHold(productIds)`:
+   ```js
+   const markOnHold = useCallback((productIds) => {
+     const idSet = new Set(productIds);
+     setItems(prev => prev.map(i => idSet.has(i.product_id) ? {...i, is_on_hold: true} : i));
+   }, []);
+   ```
+
+5. **`CartPage.jsx`** — Handle 422 dengan `onHoldProductIds` sebagai fallback:
+   ```js
+   const onHoldIds = err.response?.data?.meta?.onHoldProductIds;
+   if (onHoldIds?.length > 0) {
+     markOnHold(onHoldIds);
+     setShowApprovalModal(true);
+     return;
+   }
+   ```
+
+**Alur setelah fix:**
+- Scenario A (on-hold saat ditambah ke cart): `normalizeProduct` fix → `is_on_hold: true` → modal muncul otomatis
+- Scenario B (race condition — produk di-hold setelah masuk cart): checkout → 422 + `onHoldProductIds` → `markOnHold()` → modal muncul
+
+---
+
+### CR-052 — Fix Backend Dev Mode: PORT Mismatch + sharp Dependency
+
+**Date:** 2026-06-09  
+**Status:** Done  
+**Files:**
+- `backend/.env`
+
+**Type:** Dev Environment Fix
+
+**Symptom:**  
+Semua API call dari frontend dev (Vite port 5175) gagal dengan "Registration failed. Please try again." — tidak ada response dari backend.
+
+**Root Cause:**
+
+1. `backend/.env` PORT = `3001`, tapi `vite.config.js` proxy target = `http://localhost:3002`. Backend listening di port yang salah → semua API call dari proxy gagal dengan "connection refused".
+
+2. `sharp` package tidak terpasang di local `node_modules` → backend crash saat startup (`Cannot find module 'sharp'`) sebelum sempat listen di port manapun.
+
+**Fixes:**
+```diff
+# backend/.env
+-PORT=3001
++PORT=3002
+-CORS_ORIGIN=...,http://localhost:3001,...
++CORS_ORIGIN=...,http://localhost:5175,...,http://localhost:3002,...
+```
+
+```bash
+cd backend && npm install   # pasang sharp dan semua dependencies
+```
+
+**Recurrence Prevention:**  
+`backend/.env PORT` harus selalu cocok dengan proxy target di `vite.config.js`. Sebelum dev mode, selalu `npm install` di `backend/` untuk memastikan native modules (sharp, bcrypt) terpasang.
+
+---
+
+### CR-053 — New Route `/product_cart/:id` (ProductCartPage)
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/pages/customer/ProductCartPage.jsx` *(new)*
+- `frontend/src/App.jsx`
+
+**Type:** Feature
+
+**Background:**  
+`/product/:id` (`MockProductDetailPage`) adalah halaman view-only tanpa cart action. Diperlukan rute alternatif `/product_cart/:id` yang memiliki tombol "Tambah ke Keranjang", untuk alur scan QR di mode `HELPER_APPROVE`.
+
+**Perubahan:**
+1. Buat `ProductCartPage.jsx` — duplikat `MockProductDetailPage` dengan sticky CTA full-width "Tambah ke Keranjang"
+2. `App.jsx` — tambah `<Route path="/product_cart/:id" element={<ProductCartPage />} />`
+
+---
+
+### CR-054 — Hide "Pesan via petugas booth" di `/katalog`
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/components/catalogue/ProductCard.jsx`
+
+**Type:** UI Cleanup
+
+**Perubahan:**  
+Hapus div "🙋 Pesan via petugas booth" dari `ProductCard`.
+
+- Sebelum: `(isHelperMode || isApproveMode) ? <div>🙋 Pesan via...</div> : addable ? <button>...</button> : <button disabled>...`
+- Setelah: `!(isHelperMode || isApproveMode) && (addable ? <button>...</button> : <button disabled>...)`
+- Efek: di mode helper/approve area tombol kosong; mode customer tidak berubah
+
+---
+
+### CR-055 — Hide Qty Pill + Cart Button di `/product/:id`
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+
+**Type:** UI Cleanup
+
+**Perubahan:**  
+Hapus seluruh sticky CTA dari `MockProductDetailPage` — halaman menjadi view-only.
+
+- Hapus import `useCart`
+- Hapus state `qty`, `added`, variabel `isHelperMode`
+- Hapus fungsi `handleAddToCart`
+- Hapus blok sticky CTA (qty pill + cart circle + "Pemesanan via petugas" banner)
+- `paddingBottom: inStock ? 175 : 24` → `paddingBottom: 24`
+
+`ProductCartPage` (`/product_cart/:id`) **tidak diubah** — tetap memiliki tombol "Tambah ke Keranjang".
+
+---
+
+### CR-056 — Audit & Wire Semua Hardcoded Indonesian Text ke Translator
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/context/LangContext.jsx` — ~70 new translation keys added (ID/EN/ZH)
+- `frontend/src/pages/customer/BrowsePage.jsx`
+- `frontend/src/pages/customer/CartPage.jsx`
+- `frontend/src/components/cart/StockApprovalModal.jsx`
+- `frontend/src/components/layout/CustomerShell.jsx`
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+- `frontend/src/pages/customer/CheckoutSuccessPage.jsx`
+- `frontend/src/pages/customer/ProductDetailPage.jsx`
+- `frontend/src/pages/helper/HelperPage.jsx`
+- `frontend/src/pages/cashier/CashierDashboardPage.jsx`
+- `frontend/src/pages/cashier/PaymentPage.jsx`
+- `frontend/src/pages/tenant/TenantOrdersPage.jsx`
+
+**Type:** i18n / Translation Wiring
+
+**Perubahan:**  
+Audit menyeluruh seluruh frontend — setiap hardcoded teks Bahasa Indonesia diganti dengan `t('key')` menggunakan `useLang()` dari `LangContext.jsx`. Language switcher EN/ZH/ID kini berfungsi penuh di semua halaman.
+
+Cakupan perbaikan per file:
+- **BrowsePage** — wishlist mode labels, scan toast messages
+- **CartPage** — `ProductAvailableToast` (tambah `useLang()`), `SavedForLaterRow` (tambah prop `t`), subtotal/discount/tax labels, waiting warning, checkout button labels
+- **StockApprovalModal** — import + semua 10 string
+- **CustomerShell** — `OrderNotifCard` (tambah `useLang()`), logout, readyToPay, viewQR; rename `const t = setTimeout` → `const timer` untuk hindari shadowing
+- **OrderTrackingPage** — `PublicOrderView` (tambah `useLang()`), 7 string public view
+- **CheckoutSuccessPage** — downloadQR button
+- **ProductDetailPage** — helperModeNote banner
+- **HelperPage** — semua 4 tab (OrderTab, HistoryTab, HandoverTab, HelperPage utama); ganti `STATUS_LABEL` statis dengan `t('badge.*')` dinamis; rename `TABS.map(t =>` → `TABS.map(tab_ =>` untuk hindari shadowing
+- **CashierDashboardPage** — hapus `STATUS_LABEL` statis, fix POS shortcut, tab labels, queue labels, badge labels
+- **PaymentPage** — import `useLang`, fix `AddProductCard` (stock labels, button labels), fix success screen, form labels, product browser
+- **TenantOrdersPage** — `BellButton` (tambah `useLang()`), stats strip, search placeholder, error/empty states
+
+Keys baru utama ditambahkan ke LangContext:
+- `cart.*` (30+ keys)
+- `helper.*` (tabOrder, tabApproval, tabHistory, tabHandover, pageTitle, newOrderToast, orderSummary, noItemSelected, customerPhone, approveGenerateQR, refresh, confirmHandover, noPaidOrders, ordersWaitingHandover, handoverError, createOrderError)
+- `badge.*` (RESERVED, WAITING_PAYMENT, HANDED_OVER, COMPLETED, PAID, dll.)
+- `shell.*`, `order.*` (public view), `checkout.downloadQR`, `product.helperModeNote`
+- `cashier.*` (posTitle, posDesc, queueTab, processedTab, noQueue, noTransactions, voucherPlaceholder)
+- `payment.*` (cancelled, success, method, methodLabel, cashReceived, change, paymentRef, processBtn, addProduct, newTxn, viewRecap, applying, stockLow, btnAdded, btnAdd)
+- `tenantOrders.*` (loadError, todayNotifs, unread, searchPlaceholder, retry, notFound, clearSearch, notifAriaLabel)
+
+---
+
+### CR-057 — Compact Language Switcher Dropdown di Header CustomerShell
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/components/layout/CustomerShell.jsx`
+
+**Type:** UI Enhancement
+
+**Perubahan:**  
+Ganti tampilan language switcher horizontal (tombol berjejer) di header `CustomerShell` dengan komponen `LangDropdown` yang kompak.
+
+**Komponen `LangDropdown` (ditambahkan sebelum `OrderNotifCard`):**
+- Tombol: ikon 🌐 + kode bahasa aktif (misal "EN") + panah ▾
+- Click-outside handler via `useRef` + `useEffect` (close dropdown saat klik di luar)
+- Dropdown muncul di bawah tombol, terpusat dengan `transform: translateX(-50%)`
+- Bahasa aktif di-highlight: `background #EEF2FF`, `color #3B5BDB`
+- Props: `lang`, `setLang` — render option dari `SUPPORTED_LANGS` (LangContext)
+
+**Style tombol:**
+```
+background: rgba(248,249,254,0.85)
+border: 1.5px solid #DEE2E6
+borderRadius: 20, padding: 4px 8px
+```
+
+**Style dropdown:**
+```
+background: white
+border: 1.5px solid #DEE2E6
+borderRadius: 12
+boxShadow: 0 4px 16px rgba(0,0,0,0.12)
+zIndex: 200
+```
+
+**Integrasi di JSX header:**
+```jsx
+{/* Centre — hidden on /katalog */}
+{!isKatalog && <LangDropdown lang={lang} setLang={setLang} />}
+```
+
+Dropdown tersembunyi (`isKatalog = true`) saat user berada di halaman `/katalog` karena halaman tersebut punya space header yang lebih terbatas.
+
+---
+
+### CR-058 — Scan QR di `/katalog` Navigate ke `/product_cart/:id`
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/pages/customer/BrowsePage.jsx`
+
+**Type:** Behaviour Change
+
+**Background:**  
+Button "Scan QR" di halaman `/katalog` (mode SELF_ORDER) sebelumnya navigate ke `/product/:id` (halaman view-only tanpa cart action). Diubah ke `/product_cart/:id` yang memiliki tombol "Tambah ke Keranjang" (lihat CR-053).
+
+**Perubahan:**  
+`handleQrResult` di `BrowsePage.jsx` — ubah destination navigate untuk mode non-HELPER_APPROVE:
+
+```jsx
+// BEFORE
+navigate(`/product/${text}`);
+
+// AFTER
+navigate(`/product_cart/${text}`);
+```
+
+**Scope:** Perubahan hanya pada 1 baris di `handleQrResult`. Alur mode `HELPER_APPROVE` (lookup barcode → add to cart) tidak terpengaruh.
+
+---
+
+### CR-059 — Fix Scan QR di CustomerShell Navigate ke `/product_cart/:id`
+
+**Date:** 2026-06-10  
+**Status:** Done  
+**Files:**
+- `frontend/src/components/layout/CustomerShell.jsx`
+
+**Type:** Bug Fix
+
+**Root Cause:**  
+CR-058 hanya memperbaiki `handleQrResult` di `BrowsePage.jsx`. Namun `CustomerShell.jsx` memiliki **handler QR terpisah** (`handleQrResult` baris 259) yang dipakai saat user klik icon Scan di **nav bar header** — dan handler ini masih `navigate('/product/${text}')`.
+
+Ada dua QR scan entry point:
+
+| Entry point | Handler | Status sebelum CR-059 |
+|---|---|---|
+| Icon scan di sticky bar `/katalog` | `BrowsePage.handleQrResult` | ✅ Fixed (CR-058) |
+| Icon scan di nav bar `CustomerShell` | `CustomerShell.handleQrResult` | ❌ Masih `/product/:id` |
+
+**Perubahan:**  
+`CustomerShell.jsx` `handleQrResult` — ubah navigate destination:
+
+```jsx
+// BEFORE
+navigate(`/product/${text}`);
+
+// AFTER
+navigate(`/product_cart/${text}`);
+```
+
+**Note:** `ProductCartPage` (`/product_cart/:id`) sudah support dual-lookup:
+1. Coba fetch by product_id via `getProduct(id)`
+2. Fallback ke `getProductByBarcode(id)` jika gagal
+
+Sehingga QR yang berisi barcode numerik (contoh: `0887961896398`) maupun product_id tetap bisa resolve ke halaman yang benar.

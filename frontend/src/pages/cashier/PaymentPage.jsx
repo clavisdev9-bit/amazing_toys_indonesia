@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useLang } from '../../context/LangContext';
 import { lookupPayment, processPayment } from '../../api/payments';
 import { getProducts, getCategories } from '../../api/products';
 import { addItemToTransaction, applyVoucherToOrder } from '../../api/cashier';
@@ -32,11 +33,12 @@ function normalizeProduct(p) {
 }
 
 function AddProductCard({ product, onAdd, adding }) {
+  const { t } = useLang();
   const { level } = getStockStatus(product.stock);
   const { bg, text } = getStockBadgeStyle(level);
   const addable = canAddToCart(product.stock);
   const isAdding = adding === product.id;
-  const stockLabel = { out: 'Habis', low: 'Terbatas', available: 'Tersedia' }[level] ?? 'Tersedia';
+  const stockLabel = { out: t('badge.OUT_OF_STOCK'), low: t('payment.stockLow'), available: t('badge.AVAILABLE') }[level] ?? t('badge.AVAILABLE');
   const [imgError, setImgError] = useState(false);
 
   return (
@@ -70,7 +72,7 @@ function AddProductCard({ product, onAdd, adding }) {
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           }`}
         >
-          {isAdding ? '✓ Ditambahkan' : addable ? '+ Tambah' : 'Habis'}
+          {isAdding ? t('payment.btnAdded') : addable ? t('payment.btnAdd') : t('badge.OUT_OF_STOCK')}
         </button>
       </div>
     </div>
@@ -82,6 +84,7 @@ export default function PaymentPage() {
   const navigate    = useNavigate();
   const location    = useLocation();
   const { user }    = useAuth();
+  const { t }       = useLang();
   const { toasts, addToast, removeToast } = useToast();
   const cashierName = user?.name ?? user?.username ?? 'Kasir';
 
@@ -121,11 +124,11 @@ export default function PaymentPage() {
         if (status === 409) {
           navigate(`/pesanan/${transactionId}/receipt`, { replace: true });
         } else if (status === 422) {
-          setError('Transaksi sudah dibatalkan.');
+          setError(t('payment.cancelled'));
         } else if (status === 410) {
-          setError('Transaksi telah kadaluarsa.');
+          setError(t('cashier.err410'));
         } else {
-          setError('Transaksi tidak ditemukan.');
+          setError(t('cashier.err404'));
         }
       })
       .finally(() => setLoading(false));
@@ -244,30 +247,30 @@ export default function PaymentPage() {
       <>
         <div className="max-w-lg bg-white rounded-xl border p-6 text-center">
           <div className="text-5xl mb-3">✅</div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">Pembayaran Berhasil!</h2>
+          <h2 className="text-xl font-bold text-gray-900 mb-1">{t('payment.success')}</h2>
           <p className="text-sm text-gray-500 mb-4">{formatDate(success.paidAt)}</p>
           <div className="bg-gray-50 rounded-lg p-4 text-left mb-4 space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">ID Transaksi</span>
+              <span className="text-gray-500">{t('confirmed.txnId')}</span>
               <span className="font-mono font-bold">{success.transactionId}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Metode</span>
+              <span className="text-gray-500">{t('payment.methodLabel')}</span>
               <span className="font-semibold">{success.paymentMethod}</span>
             </div>
             {success.cashChange != null && (
               <div className="flex justify-between">
-                <span className="text-gray-500">Kembalian</span>
+                <span className="text-gray-500">{t('payment.change')}</span>
                 <span className="font-bold text-green-600">{formatRupiah(success.cashChange)}</span>
               </div>
             )}
           </div>
           <div className="flex gap-2 mb-4">
             <Button variant="secondary" className="flex-1" onClick={() => navigate('/cashier')}>
-              Transaksi Baru
+              {t('payment.newTxn')}
             </Button>
             <Button className="flex-1" onClick={() => navigate('/cashier/rekap')}>
-              Lihat Rekap
+              {t('payment.viewRecap')}
             </Button>
           </div>
           <PrintReceiptButton txn={txn} onOpenModal={() => setIsModalOpen(true)} />
@@ -300,7 +303,7 @@ export default function PaymentPage() {
             onClick={() => navigate('/cashier')}
             className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 self-start"
           >
-            ← Kembali
+            {t('back')}
           </button>
 
           {error && !txn && (
@@ -339,24 +342,24 @@ export default function PaymentPage() {
                     <div className="border-t pt-2 mt-2 space-y-1 text-sm">
                       {(hasTax || hasDiscount) && (
                         <div className="flex justify-between text-gray-500">
-                          <span>Subtotal</span>
+                          <span>{t('cart.subtotal')}</span>
                           <span>{formatRupiah(subtotal)}</span>
                         </div>
                       )}
                       {hasDiscount && (
                         <div className="flex justify-between text-green-600">
-                          <span>Diskon ({txn.voucher_code})</span>
+                          <span>{t('cart.discount')} ({txn.voucher_code})</span>
                           <span>-{formatRupiah(discountAmt)}</span>
                         </div>
                       )}
                       {hasTax && (
                         <div className="flex justify-between text-gray-500">
-                          <span>PPN {taxRate}%</span>
+                          <span>{t('cart.taxLine', { rate: taxRate })}</span>
                           <span>{formatRupiah(taxAmt)}</span>
                         </div>
                       )}
                       <div className="flex justify-between font-bold">
-                        <span>Total</span>
+                        <span>{t('checkout.total')}</span>
                         <span className="text-blue-700 text-lg">{formatRupiah(txn.total_amount)}</span>
                       </div>
                     </div>
@@ -382,7 +385,7 @@ export default function PaymentPage() {
                   />
                   {voucherApplying && (
                     <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
-                      <Spinner className="w-3 h-3" /> Menerapkan voucher...
+                      <Spinner className="w-3 h-3" /> {t('payment.applying')}
                     </p>
                   )}
                 </div>
@@ -390,7 +393,7 @@ export default function PaymentPage() {
 
               {/* Payment form */}
               <form onSubmit={handleProcess} className="bg-white rounded-xl border p-4 space-y-4">
-                <h2 className="font-semibold text-gray-700">Metode Pembayaran</h2>
+                <h2 className="font-semibold text-gray-700">{t('payment.method')}</h2>
                 <div className="grid grid-cols-4 gap-2">
                   {METHODS.map((m) => (
                     <button
@@ -408,7 +411,7 @@ export default function PaymentPage() {
                 {method === 'CASH' && (
                   <div className="space-y-2">
                     <Input
-                      label="Uang Diterima (Rp)"
+                      label={t('payment.cashReceived')}
                       type="number"
                       min={txn.total_amount}
                       step="1000"
@@ -419,7 +422,7 @@ export default function PaymentPage() {
                     />
                     {cashReceived && parseFloat(cashReceived) >= txn.total_amount && (
                       <div className="bg-green-50 text-green-700 text-sm rounded-lg px-3 py-2">
-                        Kembalian: <strong>{formatRupiah(parseFloat(cashReceived) - txn.total_amount)}</strong>
+                        {t('payment.change')}: <strong>{formatRupiah(parseFloat(cashReceived) - txn.total_amount)}</strong>
                       </div>
                     )}
                   </div>
@@ -427,7 +430,7 @@ export default function PaymentPage() {
 
                 {method !== 'CASH' && (
                   <Input
-                    label="Nomor Referensi / Approval Code"
+                    label={t('payment.paymentRef')}
                     placeholder="Opsional"
                     value={paymentRef}
                     onChange={(e) => setPaymentRef(e.target.value)}
@@ -446,7 +449,7 @@ export default function PaymentPage() {
                   loading={processing}
                   disabled={method === 'CASH' && (!cashReceived || parseFloat(cashReceived) < txn.total_amount)}
                 >
-                  Proses Pembayaran
+                  {t('payment.processBtn')}
                 </Button>
               </form>
             </>
@@ -459,7 +462,7 @@ export default function PaymentPage() {
 
             {/* Header label */}
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-              Tambah Produk
+              {t('payment.addProduct')}
             </p>
 
             {/* Search */}
@@ -468,7 +471,7 @@ export default function PaymentPage() {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Cari produk..."
+                placeholder={t('search.placeholder')}
                 className="w-full border border-gray-200 rounded-lg pl-8 pr-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <svg className="absolute left-2.5 top-2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -512,7 +515,7 @@ export default function PaymentPage() {
                   {filteredProducts.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full py-16 text-gray-400 gap-2">
                       <span className="text-3xl">🔍</span>
-                      <p className="text-sm">Produk tidak ditemukan</p>
+                      <p className="text-sm">{t('product.notFound')}</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2.5">

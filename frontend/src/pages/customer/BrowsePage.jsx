@@ -46,7 +46,7 @@ export default function BrowsePage() {
     setShowScanner(false);
 
     if (!isApproveMode) {
-      navigate(`/product/${text}`);
+      navigate(`/product_cart/${text}`);
       return;
     }
 
@@ -62,13 +62,13 @@ export default function BrowsePage() {
         image_url:    p.image_url  ?? null,
         is_on_hold:   p.is_on_hold ?? false,
       }, 1);
-      setScanToast({ msg: `"${p.product_name}" ditambahkan ke keranjang`, type: 'success' });
+      setScanToast({ msg: `"${p.product_name}" ${t('browse.scanAddedToCart')}`, type: 'success' });
       setTimeout(() => {
         setScanToast(null);
         navigate('/keranjang');
       }, 900);
     } catch {
-      setScanToast({ msg: 'Produk tidak ditemukan. Coba scan ulang.', type: 'error' });
+      setScanToast({ msg: t('browse.scanNotFound'), type: 'error' });
       setTimeout(() => setScanToast(null), 3000);
     }
   }
@@ -133,7 +133,7 @@ export default function BrowsePage() {
                 type="text"
                 value={search}
                 onChange={e => actions.setSearch(e.target.value)}
-                placeholder="Cari di wishlist..."
+                placeholder={t('browse.searchWishlist')}
                 className="flex-1 bg-transparent border-none outline-none text-sm font-medium"
                 style={{ color: '#1A1A2E', fontFamily: 'inherit' }}
               />
@@ -161,7 +161,7 @@ export default function BrowsePage() {
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-              Tutup
+              {t('common.close')}
             </button>
           </div>
         </div>
@@ -175,10 +175,10 @@ export default function BrowsePage() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="#F03E3E">
               <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
             </svg>
-            Wishlist Saya
+            {t('browse.myWishlist')}
           </h2>
           <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
-            {wishlistProducts.length} produk tersimpan
+            {wishlistProducts.length} {t('browse.itemsSaved')}
           </span>
         </div>
 
@@ -197,10 +197,10 @@ export default function BrowsePage() {
             </div>
             <div>
               <p className="text-[15px] font-extrabold mb-1" style={{ color: 'rgba(30,40,100,0.85)' }}>
-                Wishlist masih kosong
+                {t('browse.wishlistEmpty')}
               </p>
               <p className="text-[13px]" style={{ color: 'rgba(80,90,150,0.65)' }}>
-                {search ? 'Produk tidak ditemukan di wishlist.' : 'Klik ❤️ pada produk favoritmu!'}
+                {search ? t('browse.noWishlistMatch') : t('browse.wishlistFavHint')}
               </p>
             </div>
             <button
@@ -212,7 +212,7 @@ export default function BrowsePage() {
                 boxShadow: '0 2px 8px rgba(59,91,219,0.25)',
               }}
             >
-              Jelajahi Produk
+              {t('browse.exploreCatalog')}
             </button>
           </div>
         ) : (

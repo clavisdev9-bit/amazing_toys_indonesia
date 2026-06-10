@@ -9,12 +9,6 @@ import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
-const STATUS_LABEL = {
-  RESERVED:        'Reserved (booth)',
-  WAITING_PAYMENT: 'Menunggu Bayar',
-  PENDING:         'Menunggu Bayar',
-};
-
 export default function CashierDashboardPage() {
   const navigate = useNavigate();
   const { t } = useLang();
@@ -72,8 +66,8 @@ export default function CashierDashboardPage() {
       >
         <span className="text-3xl">🛒</span>
         <div>
-          <p className="font-bold text-base">POS Langsung</p>
-          <p className="text-blue-200 text-xs mt-0.5">Buat pesanan walk-in tanpa customer scan QR</p>
+          <p className="font-bold text-base">{t('cashier.posTitle')}</p>
+          <p className="text-blue-200 text-xs mt-0.5">{t('cashier.posDesc')}</p>
         </div>
         <span className="ml-auto text-blue-200 text-xl">→</span>
       </button>
@@ -102,7 +96,7 @@ export default function CashierDashboardPage() {
             <span className="text-base shrink-0">🏷️</span>
             <input
               type="text"
-              placeholder="Kode voucher (opsional) — akan diterapkan otomatis"
+              placeholder={t('cashier.voucherPlaceholder')}
               value={voucherCode}
               onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
               className="flex-1 text-sm font-mono bg-transparent focus:outline-none text-amber-900 placeholder:text-amber-400 uppercase tracking-wider"
@@ -127,7 +121,7 @@ export default function CashierDashboardPage() {
             activeTab === 'queue' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'
           }`}
         >
-          Antrian ({queue.length})
+          {t('cashier.queueTab')} ({queue.length})
         </button>
         <button
           onClick={() => setActiveTab('recent')}
@@ -135,7 +129,7 @@ export default function CashierDashboardPage() {
             activeTab === 'recent' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'
           }`}
         >
-          Sudah Diproses
+          {t('cashier.processedTab')}
         </button>
       </div>
 
@@ -143,10 +137,10 @@ export default function CashierDashboardPage() {
       {activeTab === 'queue' && (
         <div>
           <div className="flex justify-end mb-2">
-            <button onClick={loadQueue} className="text-xs text-blue-600 hover:underline">Refresh</button>
+            <button onClick={loadQueue} className="text-xs text-blue-600 hover:underline">{t('helper.refresh')}</button>
           </div>
           {queue.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">Tidak ada antrian pembayaran.</p>
+            <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noQueue')}</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
               {queue.map(txn => (
@@ -165,7 +159,7 @@ export default function CashierDashboardPage() {
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-blue-700">{formatRupiah(txn.total_amount)}</p>
-                    <Badge status={txn.status} label={STATUS_LABEL[txn.status] || txn.status} />
+                    <Badge status={txn.status} label={t(`badge.${txn.status}`)} />
                   </div>
                 </button>
               ))}
@@ -178,7 +172,7 @@ export default function CashierDashboardPage() {
       {activeTab === 'recent' && (
         <div>
           {recent.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">Belum ada transaksi hari ini.</p>
+            <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noTransactions')}</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
               {recent.map((txn) => (

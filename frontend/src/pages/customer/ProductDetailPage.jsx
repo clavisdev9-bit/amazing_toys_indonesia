@@ -75,7 +75,7 @@ export default function ProductDetailPage() {
       {isHelperMode ? (
         <div className="p-4 bg-violet-50 border-t flex items-center gap-2 text-sm text-violet-700">
           <span className="text-base">🙋</span>
-          <span>Pemesanan dilakukan melalui petugas booth. Silakan temui staf di lokasi.</span>
+          <span>{t('product.helperModeNote')}</span>
         </div>
       ) : product.stock_status !== 'OUT_OF_STOCK' && (
         <div className="p-4 bg-white border-t flex items-center gap-3">

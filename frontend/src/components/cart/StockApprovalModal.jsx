@@ -1,10 +1,12 @@
 import React from 'react';
 import { formatRupiah } from '../../utils/format';
 import { usePublicConfig } from '../../hooks/useAppLogo';
+import { useLang } from '../../context/LangContext';
 
 export default function StockApprovalModal({ approvedItems, waitingItems, onConfirm, onCancel }) {
   const config  = usePublicConfig();
   const ppnRate = parseFloat(config?.ppn_rate) || 0;
+  const { t }   = useLang();
 
   function itemTotal(item) {
     return Math.round(item.price * item.quantity * (1 + ppnRate / 100));
@@ -47,11 +49,11 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
               <span className="text-lg">⚠️</span>
             </div>
             <h2 className="text-[15px] font-bold text-gray-900 leading-tight">
-              Sebagian barang belum<br />dikonfirmasi stoknya
+              {t('cart.approvalTitle')}
             </h2>
           </div>
           <p className="text-[13px] text-gray-500 leading-relaxed pl-12">
-            Barang berikut masih menunggu konfirmasi ketersediaan dari booth.
+            {t('cart.approvalDesc')}
           </p>
         </div>
 
@@ -66,10 +68,10 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
             }}
           >
             <p className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest mb-2.5">
-              Siap Diproses
+              {t('cart.readyToProcess')}
             </p>
             {approvedItems.length === 0 ? (
-              <p className="text-[11px] text-gray-400 italic">Tidak ada</p>
+              <p className="text-[11px] text-gray-400 italic">{t('cart.noItems')}</p>
             ) : (
               <div className="space-y-2.5">
                 {approvedItems.map((item) => (
@@ -98,7 +100,7 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
             }}
           >
             <p className="text-[10px] font-bold text-amber-700 uppercase tracking-widest mb-2.5">
-              Menunggu Konfirmasi
+              {t('cart.awaitingConfirmation')}
             </p>
             <div className="space-y-2.5">
               {waitingItems.map((item) => (
@@ -126,8 +128,7 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
           >
             <span className="text-blue-400 shrink-0 text-sm mt-px">💾</span>
             <p className="text-[12px] text-blue-800 leading-relaxed">
-              Barang yang menunggu konfirmasi akan <strong>disimpan ke Wishlist</strong> —
-              tidak dihapus. Anda akan diberitahu lewat notifikasi saat stok tersedia.
+              {t('cart.onHoldSavedNote')}
             </p>
           </div>
         </div>
@@ -140,7 +141,7 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
               style={{ background: 'rgba(235,252,245,0.5)', border: '1px solid rgba(8,127,91,0.12)' }}
             >
               <span className="text-[12px] text-gray-500">
-                Total {approvedItems.length} barang siap diproses
+                {t('cart.totalReadyItems', { count: approvedItems.length })}
               </span>
               <span className="text-[15px] font-extrabold text-blue-700">
                 {formatRupiah(approvedTotal)}
@@ -157,10 +158,10 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
               style={{ background: 'rgba(255,235,210,0.7)', border: '1px solid rgba(230,119,0,0.2)' }}
             >
               <p className="text-[12px] text-amber-800 font-semibold">
-                Semua barang sedang menunggu konfirmasi stok.
+                {t('cart.allOnHold')}
               </p>
               <p className="text-[11px] text-amber-600 mt-0.5">
-                Checkout tidak dapat dilanjutkan saat ini.
+                {t('cart.checkoutUnavailable')}
               </p>
             </div>
           </div>
@@ -177,7 +178,7 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
               border: '1px solid rgba(195,205,225,0.7)',
             }}
           >
-            Kembali
+            {t('common.back')}
           </button>
           {!allOnHold && (
             <button
@@ -189,7 +190,7 @@ export default function StockApprovalModal({ approvedItems, waitingItems, onConf
                 border: '1px solid rgba(116,143,252,0.4)',
               }}
             >
-              Ya, Lanjutkan Checkout
+              {t('cart.continueCheckout')}
             </button>
           )}
         </div>

@@ -31,6 +31,7 @@ import MaintenancePage from './pages/public/MaintenancePage';
 import BrowsePage from './pages/customer/BrowsePage';
 import ProductDetailPage from './pages/customer/ProductDetailPage';
 import MockProductDetailPage from './pages/customer/MockProductDetailPage';
+import ProductCartPage from './pages/customer/ProductCartPage';
 import CartPage from './pages/customer/CartPage';
 import CheckoutSuccessPage from './pages/customer/CheckoutSuccessPage';
 import OrderHistoryPage from './pages/customer/OrderHistoryPage';
@@ -153,6 +154,7 @@ function AppRoutes() {
               <Route path="/katalog" element={<BrowsePage />} />
               <Route path="/katalog/:productId" element={<ProductDetailPage />} />
               <Route path="/product/:id" element={<MockProductDetailPage />} />
+              <Route path="/product_cart/:id" element={<ProductCartPage />} />
               <Route path="/keranjang" element={<CartPage />} />
               <Route path="/checkout/sukses" element={<CheckoutSuccessPage />} />
             </Route>

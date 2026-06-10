@@ -5,6 +5,50 @@
 
 ---
 
+## Daftar Bug (Index)
+
+| ID | Tanggal | Symptom Singkat | Layer | Status | CR Terkait |
+|---|---|---|---|---|---|
+| [BUG-001](#bug-001) | 2026-05-27 | Transaksi tersync ke company salah (Odoo unauthorized company) | Integration | ✅ Resolved | CR-001, CR-009, CR-010 |
+| [BUG-002](#bug-002) | 2026-05-27 | Semua produk `stock_quantity=0`, order diblokir | Integration | ✅ Resolved | CR-002, CR-003, CR-004, CR-005 |
+| [BUG-003](#bug-003) | 2026-05-27 | `/katalog` tidak sync otomatis setelah admin update produk | Backend + Frontend | ✅ Resolved | CR-007, CR-008 |
+| [BUG-004](#bug-004) | 2026-05-27 | TXN-20260527-00002 tidak tersync ke Odoo SO | Integration | ✅ Resolved | CR-006, CR-006b |
+| [BUG-005](#bug-005) | 2026-05-27 | "Set Kategori" bulk modal menggunakan plain text input | Frontend | ✅ Resolved | CR-011 |
+| [BUG-006](#bug-006) | 2026-05-27 | ComboboxField label kosong saat options load async | Frontend | ✅ Resolved | CR-012 |
+| [BUG-007](#bug-007) | 2026-05-27 | "Website Not Found" saat akses app | Infra/DNS | ✅ Resolved | — |
+| [BUG-008](#bug-008) | 2026-05-28 | Receipt `/pesanan/:id/receipt` masih tampilkan harga pre-tax | Frontend | ✅ Resolved | CR-014 |
+| [BUG-009](#bug-009) | 2026-05-28 | Perubahan source frontend tidak reflected di running app | Infra/Docker | ✅ Resolved | — |
+| [BUG-010](#bug-010) | 2026-05-28 | TXN-20260528-00014 delayed + duplicate SO di Odoo | Integration | ✅ Resolved | CR-016 |
+| [BUG-011a](#bug-011a) | 2026-05-29 | `/pesanan/:id` masih tampilkan harga pre-tax | Frontend | ✅ Resolved | CR-023a |
+| [BUG-011b](#bug-011b) | 2026-05-29 | `/product/:id` masih tampilkan harga pre-tax | Frontend | ✅ Resolved | CR-024 |
+| [BUG-011](#bug-011) | 2026-05-28 | VoucherPoll CB-Flood blokir transaksi baru | Integration | ✅ Resolved | CR-017, CR-018, CR-019 |
+| [BUG-012](#bug-012) | 2026-05-28 | Concurrent polling loops → intermittent CB trip | Integration | ✅ Resolved | CR-020 |
+| [BUG-013](#bug-013) | 2026-05-30 | "Access denied. Required role: CUSTOMER" saat kasir klik Bayar POS | Backend | ✅ Resolved | CR-023 |
+| [BUG-014](#bug-014) | 2026-05-31 | Limit "Maks Item per Order" tidak dienforce | Backend + Frontend | ✅ Resolved | CR-028 |
+| [BUG-015](#bug-015) | 2026-06-04 | Migration 010 gagal: FK `customers(id)` tidak ditemukan | Database | ✅ Resolved | CR-029 |
+| [BUG-016a](#bug-016a) | 2026-06-04 | Voucher tenant-scoped menerapkan diskon ke semua item | Backend + Integration | ✅ Resolved | CR-030 |
+| [BUG-017a](#bug-017a) | 2026-06-06 | `FOR UPDATE` lock produk booth lain di `createHelperOrder` | Backend | ✅ Resolved | CR-035 |
+| [BUG-018](#bug-018) | 2026-06-06 | "Role tidak valid" saat buat akun HELPER | Backend | ✅ Resolved | CR-038 |
+| [BUG-019](#bug-019) | 2026-06-06 | Tombol "+ Cart" masih aktif saat `order_mode = HELPER_INPUT` | Frontend + Backend | ✅ Resolved | CR-035 |
+| [BUG-020](#bug-020) | 2026-06-07 | WebSocket in-app notification tidak terkirim ke customer (CR-036 Layer 2) | Backend + Frontend | ✅ Resolved | CR-036, CR-038 |
+| [BUG-023](#bug-023) | 2026-06-07 | Halaman POS Langsung (`/cashier/pos`) hilang / 404 | Frontend | ✅ Resolved | CR-023 |
+| [BUG-024](#bug-024) | 2026-06-07 | POS Langsung diblokir di mode HELPER_INPUT + missing HP/barcode input | Backend + Frontend | ✅ Resolved | CR-023, CR-035 |
+| [BUG-025](#bug-025) | 2026-06-07 | Gambar produk tidak tampil (broken image icon) | Frontend | ✅ Resolved | — |
+| [BUG-026](#bug-026) | 2026-06-07 | Fitur voucher kasir hilang dari `/cashier/pos` dan PaymentPage | Backend + Frontend | ✅ Resolved | CR-037 |
+| [BUG-027](#bug-027) | 2026-06-09 | Tombol "Setuju" tidak menghilangkan item dari antrian approval | Backend + Frontend | ✅ Resolved | CR-050 |
+| [BUG-028](#bug-028) | 2026-06-08 | Barang `is_on_hold` tidak masuk "Disimpan untuk Nanti" saat checkout | Backend + Frontend | ✅ Resolved | CR-051 |
+| [BUG-029](#bug-029) | 2026-06-09 | "Registration failed. Please try again." — backend crash `sharp` + PORT mismatch | Backend/Dev | ✅ Resolved | CR-052 |
+| [BUG-030](#bug-030) | 2026-06-09 | `/katalog` produk tidak ter-load (`401 Authentication token required`) | Backend | ✅ Resolved | CR-045 |
+| [BUG-031](#bug-031) | 2026-06-09 | QR Scanner kamera tidak bisa mendeteksi QR code | Frontend | ✅ Resolved | CR-046 |
+| [BUG-032](#bug-032) | 2026-06-09 | Scan QR di `/katalog`: "Produk tidak ditemukan" | Frontend | ✅ Resolved | CR-047 |
+| [BUG-033](#bug-033) | 2026-06-08 | `approveOrder` selalu gagal 500 (`FOR UPDATE` + `LEFT JOIN`) | Backend | ✅ Resolved | CR-048 |
+| [BUG-034](#bug-034) | 2026-06-08 | Tab "Antrian Approval" tidak muncul (`usePublicConfig` cache poisoning) | Frontend | ✅ Resolved | CR-049 |
+| [BUG-035](#bug-035) | 2026-06-10 | `<button>` nested di dalam `<button>` di ProductCard (React DOM warning) | Frontend | ✅ Resolved | CR-056 |
+| [BUG-036](#bug-036) | 2026-06-10 | `LangDropdown is not defined` di CustomerShell (Vite HMR stale cache) | Frontend/Dev | ✅ Resolved | CR-057 |
+| [BUG-037](#bug-037) | 2026-06-10 | `Download the React DevTools` muncul di console — React berjalan di dev mode | Frontend/Infra | ✅ Resolved | — |
+
+---
+
 ## BUG-001 — Transaksi Tersync ke Company Salah / "Access to unauthorized or invalid companies"
 
 **Symptom:**  
@@ -595,7 +639,7 @@ Sebelum menulis FK ke tabel yang sudah ada, verifikasi nama PK:
 
 ---
 
-## BUG-016 — Voucher Tenant-Scoped Menerapkan Diskon ke Semua Item (TXN-20260604-00024)
+## BUG-016a — Voucher Tenant-Scoped Menerapkan Diskon ke Semua Item (TXN-20260604-00024)
 
 **Date:** 2026-06-04  
 **Related CR:** CR-029
@@ -668,7 +712,7 @@ Tabel-tabel di proyek ini menggunakan pola `<table_singular>_id` sebagai PK (mis
 
 ---
 
-## BUG-017 — `FOR UPDATE` Lock Produk Booth Lain di `createHelperOrder` (CR-035)
+## BUG-017a — `FOR UPDATE` Lock Produk Booth Lain di `createHelperOrder` (CR-035)
 
 **Date:** 2026-06-06  
 **Related CR:** CR-035
@@ -1341,7 +1385,7 @@ docker compose up -d backend
 
 ---
 
-## BUG-016 — `approveOrder` selalu gagal dengan "Internal Server Error" (CR-040)
+## BUG-033 — `approveOrder` selalu gagal dengan "Internal Server Error" (CR-040)
 
 **Date:** 2026-06-08  
 **Resolved by:** clavis Development  
@@ -1403,7 +1447,7 @@ docker compose up -d backend
 
 ---
 
-## BUG-017 — Tab "Antrian Approval" Tidak Muncul di Halaman Helper
+## BUG-034 — Tab "Antrian Approval" Tidak Muncul di Halaman Helper
 
 **Date:** 2026-06-08  
 **Resolved by:** clavis Development  
@@ -2026,5 +2070,174 @@ Dengan ini:
 |---|---|
 | QR code encode **barcode**, bukan product_id — dua field yang berbeda | Setiap fitur yang menerima input dari QR scanner harus support lookup by barcode |
 | `MockProductDetailPage` dan `ProductDetailPage` sekarang support dual-lookup (product_id + barcode) | Tidak perlu ubah handler QR di BrowsePage/CustomerShell |
+
+---
+
+## BUG-035 — `<button>` Nested di Dalam `<button>` di ProductCard
+
+**Tanggal:** 2026-06-10  
+**Layer:** Frontend  
+**CR Terkait:** CR-056 (i18n audit)  
+**Status:** ✅ Resolved
+
+### Symptom
+
+Browser console menampilkan React DOM warning saat render katalog produk:
+
+```
+Warning: validateDOMNesting(...): <button> cannot appear as a descendant of <button>.
+    at button
+    at button
+    at div
+    at ProductCard
+```
+
+### Root Cause
+
+`ProductCard.jsx` mempunyai dua elemen `<button>` bersarang:
+- **Outer button** (baris 99): image area yang navigate ke detail page saat diklik
+- **Inner button** (baris 106): wishlist heart icon yang toggle wish status
+
+HTML spec melarang `<button>` di dalam `<button>`. React meneruskan peringatan ini dari browser's DOM validation.
+
+### Fix
+
+Ganti outer image-area `<button>` menjadi `<div>` sambil menjaga aksesibilitas:
+
+```jsx
+// BEFORE
+<button onClick={goToDetail} className="text-left w-full relative" ...>
+  ...
+  <button onClick={handleWish} ...>   {/* ← INVALID */}
+    <HeartIcon />
+  </button>
+</button>
+
+// AFTER
+<div
+  onClick={goToDetail}
+  role="button"
+  tabIndex={0}
+  onKeyDown={(e) => e.key === 'Enter' && goToDetail()}
+  className="text-left w-full relative cursor-pointer"
+  ...
+>
+  ...
+  <button onClick={handleWish} ...>   {/* ← valid: button inside div */}
+    <HeartIcon />
+  </button>
+</div>
+```
+
+### Files Changed
+
+- `frontend/src/components/catalogue/ProductCard.jsx`
+  - Baris 98-134: ganti outer `<button>` → `<div role="button" tabIndex={0} onKeyDown={...}>`
+  - Tambah `cursor-pointer` ke className
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Interactive area yang wrap element lain gunakan `<div role="button">`, bukan `<button>` | Terutama saat area tersebut berisi tombol-tombol lain |
+| `e.stopPropagation()` di child button tetap bekerja saat parent adalah `<div>` | Tidak ada perubahan fungsional |
+
+---
+
+## BUG-036 — `LangDropdown is not defined` di CustomerShell (HMR Stale)
+
+**Tanggal:** 2026-06-10  
+**Layer:** Frontend / Dev Environment  
+**CR Terkait:** CR-057  
+**Status:** ✅ Resolved
+
+### Symptom
+
+Console error saat hot-reload:
+
+```
+CustomerShell.jsx?t=1781057319928:374 Uncaught ReferenceError: LangDropdown is not defined
+CustomerShell.jsx?t=1781057331098:374 Uncaught ReferenceError: LangDropdown is not defined
+```
+
+### Root Cause
+
+Bukan bug pada source code. Error terjadi karena **Vite HMR menyajikan versi lama** dari `CustomerShell.jsx` (sebelum `LangDropdown` component ditambahkan di sesi sebelumnya). Timestamp `t=1781057319928` dan `t=1781057331098` menunjukkan dua upaya HMR reload dalam 12 detik — keduanya masih menggunakan bundle yang belum diperbarui.
+
+File di disk (`CustomerShell.jsx`) sudah benar: `LangDropdown` didefinisikan di baris 18, digunakan di baris 311.
+
+### Fix
+
+Hard browser refresh (`Ctrl + Shift + R`) atau restart Vite dev server untuk membersihkan HMR cache.
+
+Tidak ada perubahan kode diperlukan.
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Jika error console menunjukkan baris yang tidak cocok dengan source, cek timestamp `?t=` di stack trace | Timestamp berbeda dari mtime file saat ini = HMR stale |
+| Hard refresh (`Ctrl+Shift+R`) atau restart `npm run dev` membersihkan state HMR | Jangan langsung edit file berdasarkan stale error |
+
+---
+
+## BUG-037 — `Download the React DevTools` Muncul di Console
+
+**Tanggal:** 2026-06-10  
+**Layer:** Frontend / Infra  
+**CR Terkait:** —  
+**Status:** ✅ Resolved (non-bug + Dockerfile hardening)
+
+### Symptom
+
+```
+chunk-TDH2IRYZ.js?v=67049413:21551 Download the React DevTools for a better development experience: https://reactjs.org/link/react-devtools
+```
+
+### Root Cause Analysis
+
+**Bukan error** — ini pesan informasional dari React development build. Ada dua skenario berbeda:
+
+| Skenario | Penyebab | Apakah Bug? |
+|---|---|---|
+| `npm run dev` (local) | Vite dev server selalu menjalankan React dalam dev mode; pesan ini **selalu muncul** | ❌ Bukan bug |
+| Docker production | Dockerfile tidak eksplisit set `NODE_ENV=production` sebelum `vite build` | ⚠️ Potensi risiko |
+
+Identifikasi skenario: chunk filename `chunk-TDH2IRYZ.js?v=HASH` (bukan `?t=TIMESTAMP`) menunjukkan ini dari Vite's **pre-bundled dependency cache** → user sedang menjalankan `npm run dev`.
+
+Dalam production Docker build, `vite build` secara otomatis set `NODE_ENV=production`, tapi jika ada tooling upstream yang set `NODE_ENV=development` lebih awal, Vite tidak override (`process.env.NODE_ENV = process.env.NODE_ENV || 'production'`).
+
+### Fix
+
+**Local dev (npm run dev):** Tidak perlu diperbaiki. Instal [React DevTools extension](https://react.dev/learn/react-developer-tools) agar pesan hilang secara otomatis.
+
+**Dockerfile — hardening eksplisit:**
+
+```dockerfile
+# BEFORE
+COPY . .
+RUN npm run build
+
+# AFTER
+COPY . .
+ENV NODE_ENV=production   ← tambahan
+RUN npm run build
+```
+
+`ENV NODE_ENV=production` diletakkan SETELAH `npm ci` (bukan sebelumnya) agar devDependencies (vite, @vitejs/plugin-react) tetap terinstall untuk keperluan build.
+
+### Files Changed
+
+- `frontend/Dockerfile`
+  - Tambah `ENV NODE_ENV=production` antara `COPY . .` dan `RUN npm run build`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| `chunk-NAME.js?v=HASH` = Vite pre-bundled dep (dev mode) | Bukan error — pesan muncul setiap `npm run dev` |
+| `chunk-NAME.js?v=HASH` berbeda dari `source.jsx?t=TIMESTAMP` | `?t=` = HMR module, `?v=` = static asset/pre-bundle |
+| Selalu letakkan `ENV NODE_ENV=production` setelah `npm ci` di Dockerfile multi-stage build | Mencegah NODE_ENV upstream membatalkan produksi build |
+| React DevTools extension menghilangkan pesan ini di dev mode | Instal di semua browser yang digunakan untuk development |
 
 ---

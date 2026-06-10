@@ -38,6 +38,7 @@ function matchesSearch(group, query) {
 
 /* ── Bell button ─────────────────────────────────────────────────────────── */
 function BellButton({ unreadCount, isNew, onClick }) {
+  const { t } = useLang();
   return (
     <button
       onClick={onClick}
@@ -46,7 +47,7 @@ function BellButton({ unreadCount, isNew, onClick }) {
           ? 'bg-blue-50 border-blue-200 text-blue-600'
           : 'bg-gray-50 border-gray-300 text-gray-500 hover:bg-gray-100'
       } ${isNew ? 'pay-bell-active' : ''}`}
-      aria-label="Notifikasi pembayaran"
+      aria-label={t('tenantOrders.notifAriaLabel')}
     >
       <svg
         width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -89,7 +90,7 @@ export default function TenantOrdersPage() {
     getTenantOrders()
       .then((r) => setOrders(r.data.data ?? []))
       .catch((err) => {
-        const msg = err.response?.data?.message ?? err.message ?? 'Gagal memuat pesanan';
+        const msg = err.response?.data?.message ?? err.message ?? t('tenantOrders.loadError');
         setFetchError(msg);
       })
       .finally(() => setLoading(false));
@@ -217,7 +218,7 @@ export default function TenantOrdersPage() {
         {notifs.length > 0 && (
           <div className="grid grid-cols-2 gap-2 mb-4">
             <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">Notifikasi Hari Ini</p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-1">{t('tenantOrders.todayNotifs')}</p>
               <p className="text-2xl font-bold text-gray-900 font-mono">{notifs.length}</p>
             </div>
             <div className={`rounded-xl border px-4 py-3 ${
@@ -225,7 +226,7 @@ export default function TenantOrdersPage() {
             }`}>
               <p className={`text-[10px] uppercase tracking-wide mb-1 ${
                 unreadCount > 0 ? 'text-blue-600' : 'text-gray-400'
-              }`}>Belum Dibaca</p>
+              }`}>{t('tenantOrders.unread')}</p>
               <p className={`text-2xl font-bold font-mono ${
                 unreadCount > 0 ? 'text-blue-600' : 'text-gray-900'
               }`}>{unreadCount}</p>
@@ -246,7 +247,7 @@ export default function TenantOrdersPage() {
               type="text"
               value={searchInput}
               onChange={(e) => handleSearchChange(e.target.value)}
-              placeholder="Masukkan atau scan nomor transaksi..."
+              placeholder={t('tenantOrders.searchPlaceholder')}
               className="w-full pl-9 pr-8 py-2.5 text-sm border border-gray-300 rounded-xl
                          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
                          bg-white placeholder-gray-400"
@@ -286,7 +287,7 @@ export default function TenantOrdersPage() {
         {fetchError && (
           <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center justify-between">
             <span>{fetchError}</span>
-            <button onClick={fetchOrders} className="ml-3 font-medium underline shrink-0">Coba lagi</button>
+            <button onClick={fetchOrders} className="ml-3 font-medium underline shrink-0">{t('tenantOrders.retry')}</button>
           </div>
         )}
 
@@ -294,10 +295,10 @@ export default function TenantOrdersPage() {
         {!fetchError && noResults && (
           <div className="text-center py-12">
             <div className="text-4xl mb-2">🔍</div>
-            <p className="text-sm font-medium text-gray-500">Transaksi tidak ditemukan</p>
+            <p className="text-sm font-medium text-gray-500">{t('tenantOrders.notFound')}</p>
             <p className="text-xs text-gray-400 mt-1">"{searchQuery}"</p>
             <button onClick={handleClearSearch} className="mt-3 text-xs text-blue-600 hover:underline">
-              Hapus pencarian
+              {t('tenantOrders.clearSearch')}
             </button>
           </div>
         )}
