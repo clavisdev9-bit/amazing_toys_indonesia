@@ -48,7 +48,18 @@ router.get('/status',
       const addr   = await resolvePrinter(userId);
 
       if (!addr) {
-        return res.json({ success: true, configured: false, message: 'IP Printer belum dikonfigurasi.' });
+        return res.json({ success: true, configured: false, message: 'Printer belum dikonfigurasi (TCP maupun USB).' });
+      }
+
+      // USB printers: we can't do a TCP ping, just confirm config is present
+      if (addr.type === 'USB') {
+        return res.json({
+          success:    true,
+          configured: true,
+          connected:  null,  // cannot ping USB — assume connected when configured
+          address:    `USB:${addr.usbName}`,
+          message:    `Printer USB dikonfigurasi: "${addr.usbName}". Kirim struk untuk memverifikasi koneksi.`,
+        });
       }
 
       const { ThermalPrinter, PrinterTypes } = require('node-thermal-printer');
@@ -63,7 +74,7 @@ router.get('/status',
         configured: true,
         connected,
         address:    `${addr.ip}:${addr.port}`,
-        message:    connected ? 'Printer terhubung.' : 'Printer tidak dapat dijangkau.',
+        message:    connected ? 'Printer TCP terhubung.' : 'Printer TCP tidak dapat dijangkau.',
       });
     } catch (err) {
       next(err);

@@ -218,4 +218,60 @@ router.post('/orders/:transactionId/reject',
   },
 );
 
+/**
+ * POST /api/v1/helper/orders/:transactionId/items/:itemId/approve
+ * Approve a single item, optionally with reduced quantity.
+ * Body: { approved_qty?, note? }
+ */
+router.post('/orders/:transactionId/items/:itemId/approve',
+  authenticate, authorize('HELPER'),
+  [
+    param('transactionId').notEmpty(),
+    param('itemId').isUUID().withMessage('itemId harus UUID.'),
+    body('approved_qty').optional({ nullable: true }).isInt({ min: 1 }).withMessage('approved_qty minimal 1.'),
+    body('note').optional({ nullable: true }).isString().trim(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await helperSvc.approveItem(
+        req.params.transactionId,
+        req.params.itemId,
+        req.user.userId,
+        req.user.tenantId,
+        req.body.approved_qty ?? null,
+        req.body.note || null,
+      );
+      res.json({ success: true, message: 'Item disetujui.', data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
+ * POST /api/v1/helper/orders/:transactionId/items/:itemId/reject
+ * Reject a single item.
+ * Body: { reason? }
+ */
+router.post('/orders/:transactionId/items/:itemId/reject',
+  authenticate, authorize('HELPER'),
+  [
+    param('transactionId').notEmpty(),
+    param('itemId').isUUID().withMessage('itemId harus UUID.'),
+    body('reason').optional({ nullable: true }).isString().trim(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await helperSvc.rejectItem(
+        req.params.transactionId,
+        req.params.itemId,
+        req.user.userId,
+        req.user.tenantId,
+        req.body.reason || null,
+      );
+      res.json({ success: true, message: 'Item ditolak.', data });
+    } catch (err) { next(err); }
+  },
+);
+
 module.exports = router;

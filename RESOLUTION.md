@@ -46,6 +46,19 @@
 | [BUG-035](#bug-035) | 2026-06-10 | `<button>` nested di dalam `<button>` di ProductCard (React DOM warning) | Frontend | ✅ Resolved | CR-056 |
 | [BUG-036](#bug-036) | 2026-06-10 | `LangDropdown is not defined` di CustomerShell (Vite HMR stale cache) | Frontend/Dev | ✅ Resolved | CR-057 |
 | [BUG-037](#bug-037) | 2026-06-10 | `Download the React DevTools` muncul di console — React berjalan di dev mode | Frontend/Infra | ✅ Resolved | — |
+| [BUG-038](#bug-038) | 2026-06-10 | Klik "-" pada qty pill langsung hapus item (qty=5 → 0, bukan 4) | Frontend | ✅ Resolved | — |
+| [BUG-039](#bug-039) | 2026-06-10 | `/pesanan/:id` tidak auto-refresh setelah kasir proses pembayaran | Frontend | ✅ Resolved | — |
+| [BUG-040](#bug-040) | 2026-06-11 | `approveItem` (per-item approval) selalu gagal 500 (`FOR UPDATE` on JOIN) | Backend | ✅ Resolved | CR-040 |
+| [BUG-041](#bug-041) | 2026-06-11 | Antrian approval kosong — migration 017 belum diaplikasikan + `TxnExpireJob` kolom tidak ada | Database + Backend | ✅ Resolved | CR-040 |
+| [BUG-042](#bug-042) | 2026-06-11 | Input qty di modal approve item tidak bisa diketik (snap ke 1) | Frontend | ✅ Resolved | CR-040 |
+| [BUG-043](#bug-043) | 2026-06-11 | Route `POST .../items/:itemId/approve` not found — router lama di container | Backend/Deploy | ✅ Resolved | CR-040 |
+| [BUG-044](#bug-044) | 2026-06-11 | `approveItem` 500 — `inconsistent types deduced for parameter $1` pada UPDATE `subtotal = unit_price * $1` | Backend | ✅ Resolved | CR-040 |
+| [BUG-045](#bug-045) | 2026-06-11 | Kasir & customer tracking tampilkan qty original (5) bukan qty approved (3) | Frontend + Backend | ✅ Resolved | CR-040 |
+| [BUG-046](#bug-046) | 2026-06-11 | Voucher `usage_limit=2` hanya bisa dipakai 1 kali — per-customer duplicate check terlalu ketat | Backend | ✅ Resolved | — |
+| [CR-046](#cr-046) | 2026-06-11 | Auto-refresh approval queue tanpa blink — Virtual DOM smart merge + `React.memo` | Frontend | ✅ Done | CR-046 |
+| [BUG-047](#bug-047) | 2026-06-11 | Receipt & pickup page tampilkan qty original bukan approved (ASTRO BOY ×4 harusnya ×2) | Frontend | ✅ Resolved | — |
+| [CR-047](#cr-047) | 2026-06-11 | Urutkan produk `/katalog` berdasarkan status stok: Tersedia → Terbatas → Habis | Frontend | ✅ Done | CR-047 |
+| [CR-048](#cr-048) | 2026-06-11 | Hide chip "X pcs / Stock" di halaman detail produk — hanya badge status yang tampil | Frontend | ✅ Done | CR-048 |
 
 ---
 
@@ -2239,5 +2252,1082 @@ RUN npm run build
 | `chunk-NAME.js?v=HASH` berbeda dari `source.jsx?t=TIMESTAMP` | `?t=` = HMR module, `?v=` = static asset/pre-bundle |
 | Selalu letakkan `ENV NODE_ENV=production` setelah `npm ci` di Dockerfile multi-stage build | Mencegah NODE_ENV upstream membatalkan produksi build |
 | React DevTools extension menghilangkan pesan ini di dev mode | Instal di semua browser yang digunakan untuk development |
+
+---
+
+## BUG-038 — Klik "-" pada Qty Pill Langsung Menghapus Item (qty=5 → 0)
+
+**Tanggal:** 2026-06-10
+**Layer:** Frontend
+**CR Terkait:** —
+**Status:** ✅ Resolved
+
+### Symptom
+
+Di halaman `/keranjang` (`CartPage`), ketika customer menekan tombol "−" pada item dengan qty > 1 (contoh: qty=5), item langsung **hilang dari keranjang** alih-alih qty turun 1 menjadi 4.
+
+```
+Existing: Barang A qty=5 → klik "−" → item terhapus (qty=0/hilang)
+Expected: Barang A qty=5 → klik "−" → qty=4
+```
+
+### Root Cause
+
+`CartPage.jsx` baris 425 (sebelum fix) — tombol "−" **selalu** memanggil `removeItem(item.product_id)` tanpa mempertimbangkan `item.quantity` saat ini:
+
+```jsx
+// SEBELUM (salah):
+<button onClick={() => removeItem(item.product_id)}>
+  {item.quantity === 1 ? '🗑' : '−'}
+</button>
+```
+
+`removeItem` di `CartContext.jsx` langsung memfilter item keluar dari array — tanpa pengecekan qty sama sekali. Meskipun icon tombol memang menampilkan '−' saat qty > 1 (hanya ikon '🗑' saat qty=1), **onClick-nya tetap sama**: `removeItem`. Akibatnya klik "−" pada qty=5, 4, 3, atau 2 semuanya menghapus item sepenuhnya.
+
+Inkonsistensi terjadi karena:
+- Tombol "+" sudah benar menggunakan `updateQty(item.product_id, item.quantity + 1)`
+- Tombol "−" tidak pernah diupdate ke pola yang sama — hanya salinan tombol hapus dengan ikon kondisional
+
+### Analisis Semua Halaman (qty pill audit)
+
+| Halaman / File | "-" Button Behavior | Bug? |
+|---|---|---|
+| `CartPage.jsx` | Selalu `removeItem` → hapus item | ✅ **BUG** |
+| `CashierPOSPage.jsx` | `setQty(id, qty-1)` → hapus jika qty<1 | ✅ Benar |
+| `HelperPage.jsx` | `setQty(productId, -1)` + Math.max(0,...) → hapus dari cart-obj jika 0 | ✅ Benar |
+| `OrderTrackingPage.jsx` | Decrement, delete modal saat qty=1 | ✅ Benar |
+| `ProductDetailPage.jsx` | `Math.max(1, qty-1)` — pre-cart selector | ✅ Benar |
+| `MockProductDetailPage.jsx` | `Math.max(1, qty-1)` — pre-cart selector | ✅ Benar |
+
+### Fix
+
+**File:** `frontend/src/pages/customer/CartPage.jsx`
+
+```jsx
+// SEBELUM:
+<button onClick={() => removeItem(item.product_id)}>
+  {item.quantity === 1 ? '🗑' : '−'}
+</button>
+
+// SESUDAH:
+<button
+  onClick={() =>
+    item.quantity > 1
+      ? updateQty(item.product_id, item.quantity - 1)
+      : removeItem(item.product_id)
+  }
+>
+  {item.quantity === 1 ? '🗑' : '−'}
+</button>
+```
+
+Logika setelah fix:
+- `qty > 1` → panggil `updateQty(id, qty-1)` — turunkan 1, item tetap ada
+- `qty = 1` → panggil `removeItem(id)` — hapus item (sesuai ikon 🗑 yang sudah ada)
+
+`updateQty` sudah tersedia di CartContext dan sudah di-destructure di CartPage line 160 — tidak ada perubahan backend atau context yang diperlukan.
+
+### Files Changed
+
+- `frontend/src/pages/customer/CartPage.jsx`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Tombol "−" pada qty pill HARUS menggunakan `updateQty(id, qty-1)` saat qty > 1 | Hanya gunakan `removeItem` saat qty=1 atau sebagai tombol hapus eksplisit |
+| Icon kondisional (🗑 vs −) harus diikuti oleh onClick yang kondisional pula | Icon dan handler harus sinkron — jangan biarkan icon berubah tapi handler tetap sama |
+| Audit semua qty pill saat menambah fitur keranjang baru | Semua page/component yang render qty controls wajib dicek konsistensinya |
+
+---
+
+## BUG-039 — `/pesanan/:id` Tidak Auto-Refresh Setelah Kasir Proses Pembayaran
+
+**Tanggal:** 2026-06-10
+**Layer:** Frontend
+**CR Terkait:** CR-038 (payments), CR-036 (WS architecture)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Setelah kasir memproses pembayaran, halaman `/pesanan/:id` (OrderTrackingPage) tetap menampilkan status lama (PENDING / RESERVED) dan **tidak berubah otomatis** ke PAID. Customer harus menekan tombol Refresh secara manual atau melakukan hard-refresh browser.
+
+Contoh kasus: TXN-20260610-00081 — kasir sudah proses bayar, status di database berubah ke PAID, tapi halaman customer tidak berubah sampai di-refresh.
+
+### Root Cause Analysis
+
+Backend di `payments.service.js` sudah mengirim WebSocket event ke customer segera setelah pembayaran diproses:
+
+```javascript
+// payments.service.js line 181
+broadcastToCustomer(txn.customer_id, { event: 'ORDER_PAID', transactionId });
+```
+
+Namun `AuthenticatedOrderView` di `OrderTrackingPage.jsx` **tidak memiliki subscriber** untuk event `ORDER_PAID`. Semua event lain sudah terdaftar dengan benar:
+
+| WebSocket Event | Subscriber ada? | Keterangan |
+|---|---|---|
+| `PICKUP_DONE` | ✅ Ya | Tenant selesai handover |
+| `ORDER_RESERVED_FOR_CUSTOMER` | ✅ Ya | CR-036 |
+| `ORDER_APPROVED` | ✅ Ya | CR-040 |
+| `ORDER_REJECTED` | ✅ Ya | CR-040 |
+| `ORDER_PARTIAL_APPROVED` | ✅ Ya | CR-040 |
+| **`ORDER_PAID`** | ❌ **Tidak ada** | **← Root cause** |
+
+Event `ORDER_PAID` dikirim oleh backend tapi tidak pernah didengarkan oleh halaman customer — event diabaikan begitu saja.
+
+**Secondary gap:** Tidak ada polling fallback untuk status payment-pending. Jika koneksi WS terputus (network drop, tab resume dari sleep, dll.), page tidak akan pernah auto-update meski WS kemudian tersambung kembali.
+
+### Fix
+
+**File:** `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+**1. Tambah subscriber `ORDER_PAID`:**
+```javascript
+useEffect(() => {
+  return subscribe('ORDER_PAID', (data) => {
+    if (data?.transactionId === transactionId) fetchOrder();
+  });
+}, [transactionId, subscribe, fetchOrder]);
+```
+
+Ini memastikan segera setelah kasir klik "Bayar", event WS diterima dan halaman customer langsung melakukan `fetchOrder()` → status berubah dari PENDING/RESERVED ke PAID secara instan.
+
+**2. Tambah polling fallback (15 detik) untuk status payment-pending:**
+```javascript
+useEffect(() => {
+  const awaitingPayment = order?.status
+    && ['PENDING', 'RESERVED', 'WAITING_PAYMENT'].includes(order.status);
+  if (!awaitingPayment) return;
+  const id = setInterval(fetchOrder, 15_000);
+  return () => clearInterval(id);
+}, [order?.status, fetchOrder]);
+```
+
+Polling hanya aktif selama order berada di status yang menunggu pembayaran. Begitu status berubah (PAID / CANCELLED / EXPIRED), `order.status` berubah → `useEffect` re-runs → polling tidak dilanjutkan (`awaitingPayment = false`). Ini memastikan:
+- Jika WS delivery gagal → halaman tetap update dalam ≤15 detik
+- Jika customer buka tab dari background/sleep → fetch langsung terjadi saat effect re-run
+- Tidak ada polling overhead untuk order yang sudah PAID/COMPLETED
+
+### Alur Setelah Fix
+
+```
+Kasir klik Bayar
+  → backend: UPDATE transactions SET status='PAID'
+  → backend: broadcastToCustomer(customer_id, { event: 'ORDER_PAID', transactionId })
+  → frontend: subscribe handler menerima event (instant)
+  → frontend: fetchOrder() → status refresh ke PAID
+  → UI: badge berubah, QR disembunyikan, tampil pesan konfirmasi pembayaran
+  
+(Jika WS tidak tersampaikan → polling 15s sebagai fallback)
+```
+
+### Files Changed
+
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+  - Tambah `useEffect` subscriber `ORDER_PAID`
+  - Tambah `useEffect` polling fallback untuk status `PENDING | RESERVED | WAITING_PAYMENT`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setiap event WebSocket baru yang dibroadcast backend WAJIB ada pasangannya di subscriber frontend | Sebelum deploy fitur yang mengirim WS event baru, cek semua halaman yang relevan sudah subscribe |
+| Halaman yang menunggu status change HARUS memiliki polling fallback | WS adalah primary; polling adalah safety net — keduanya diperlukan untuk UX yang robust |
+| Audit `broadcastToCustomer` dan `broadcastToTenant` calls setiap CR yang menyentuh payments/status | Pastikan setiap broadcast punya consumer yang terdaftar di frontend |
+
+---
+
+## BUG-040 — `approveItem` (Per-Item Approval) Selalu Gagal dengan "Internal Server Error"
+
+**Tanggal:** 2026-06-11
+**Layer:** Backend
+**Page:** `/helper` → sub-menu Antrian Approval → item-level approve modal
+**CR Terkait:** CR-040 (HELPER_APPROVE Model D), Migration 017
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper membuka sub-menu **Antrian Approval**, menemukan transaksi `TXN-20260610-00084` dengan item **Acoustic Bloc Screens**, membuka modal persetujuan per-item, mengubah jumlah yang disetujui (mengurangi dari jumlah asli), lalu menekan tombol hijau emerald **"Setujui"** — halaman menampilkan toast error:
+
+> "Internal server error."
+
+Endpoint: `POST /api/v1/helper/orders/:transactionId/items/:itemId/approve`
+
+### Root Cause
+
+**`FOR UPDATE` pada INNER JOIN yang mengunci dua tabel sekaligus di `approveItem`**
+
+Di fungsi `approveItem` (`helper.service.js` baris ~1026), query awal menggunakan:
+
+```sql
+SELECT ti.item_id, ti.product_id, ti.quantity, ti.approval_status, p.product_name, p.stock_quantity
+FROM transaction_items ti
+JOIN products p ON p.product_id = ti.product_id
+WHERE ti.item_id = $1 AND ti.transaction_id = $2 AND ti.tenant_id = $3
+FOR UPDATE
+```
+
+`FOR UPDATE` pada INNER JOIN ini mencoba mengunci baris dari **kedua tabel** (`transaction_items` DAN `products`) secara **simultan** dalam satu query. Ini berbeda dengan pola yang sudah terbukti benar di `approveOrder` (yang berfungsi normal), di mana lock dilakukan secara **sequential**:
+
+| Fungsi | Urutan Lock |
+|---|---|
+| `approveOrder` (benar) | `transactions` → `transaction_items` → `products` (satu per satu, terpisah) |
+| `approveItem` (buggy) | `transactions` → `transaction_items + products` (simultan via JOIN FOR UPDATE) |
+
+**Masalah yang ditimbulkan:**
+
+1. **Lock ordering violation / deadlock**: Fungsi `createHelperOrder` mengunci `products` lebih dulu (step 1), kemudian `INSERT transactions`. Jika `approveItem` berjalan bersamaan — memegang lock `transactions` dan menunggu lock `products` — terjadi deadlock. PostgreSQL mendeteksi deadlock dan membatalkan salah satu transaksi dengan error yang tidak di-wrap sebagai `AppError`, sehingga error middleware mengembalikan 500.
+
+2. **Lock contention**: Bahkan tanpa concurrent request, `FOR UPDATE` pada JOIN membuat PostgreSQL harus memperoleh row lock dari kedua tabel sekaligus. Ini rentan terhadap contention dan bisa menyebabkan "could not obtain lock on row" error (juga bukan `AppError` → 500).
+
+Perbandingan dengan **BUG-033** (RESOLUTION.md): BUG-033 memperbaiki `FOR UPDATE` pada LEFT JOIN (`FOR UPDATE` → `FOR UPDATE OF t`). BUG-040 adalah masalah serupa pada INNER JOIN di fungsi yang berbeda.
+
+**Mengapa hanya `approveItem` yang terpengaruh (bukan `approveOrder`)?**
+
+`approveOrder` sudah menggunakan pola yang benar — lock terpisah dengan urutan konsisten. `approveItem` ditulis dengan pola yang berbeda (JOIN + FOR UPDATE) yang melanggar urutan lock yang sama.
+
+### Fix
+
+**File:** `backend/src/modules/helper/helper.service.js`
+
+**Sebelum** (buggy — JOIN + FOR UPDATE):
+```js
+const itemRes = await client.query(
+  `SELECT ti.item_id, ti.product_id, ti.quantity, ti.approval_status, p.product_name, p.stock_quantity
+   FROM transaction_items ti
+   JOIN products p ON p.product_id = ti.product_id
+   WHERE ti.item_id = $1 AND ti.transaction_id = $2 AND ti.tenant_id = $3
+   FOR UPDATE`,
+  [itemId, transactionId, helperTenantId],
+);
+// ... effectiveQty ...
+if (item.stock_quantity < effectiveQty) {
+  throw new AppError(`Stok "${item.product_name}" tidak mencukupi ...`, 409);
+}
+```
+
+**Sesudah** (fixed — dua query terpisah, urutan lock konsisten):
+```js
+// Lock hanya transaction_items (tanpa JOIN)
+const itemRes = await client.query(
+  `SELECT ti.item_id, ti.product_id, ti.quantity, ti.approval_status
+   FROM transaction_items ti
+   WHERE ti.item_id = $1 AND ti.transaction_id = $2 AND ti.tenant_id = $3
+   FOR UPDATE`,
+  [itemId, transactionId, helperTenantId],
+);
+// ... effectiveQty ...
+
+// Lock products secara terpisah (mirrors approveOrder)
+const prodRes = await client.query(
+  `SELECT product_name, stock_quantity FROM products WHERE product_id = $1 FOR UPDATE`,
+  [item.product_id],
+);
+const prod = prodRes.rows[0];
+if (!prod || prod.stock_quantity < effectiveQty) {
+  throw new AppError(`Stok "${prod?.product_name || item.product_id}" tidak mencukupi ...`, 409);
+}
+```
+
+Urutan lock setelah fix: `transactions` → `transaction_items` → `products` — identik dengan `approveOrder`.
+
+### Files Changed
+
+- `backend/src/modules/helper/helper.service.js`
+  - Fungsi `approveItem` (~baris 1025): Pisahkan JOIN query menjadi dua query terpisah
+  - Query 1: `SELECT ... FROM transaction_items WHERE ... FOR UPDATE` (tanpa JOIN products)
+  - Query 2: `SELECT product_name, stock_quantity FROM products WHERE product_id = $1 FOR UPDATE`
+  - Pengecekan stok menggunakan `prod.stock_quantity` dan `prod.product_name` (dari query 2)
+
+### Deployment
+
+```bash
+# Copy file yang diupdate ke container backend
+docker cp backend/src/modules/helper/helper.service.js hybrid_backend:/app/src/modules/helper/helper.service.js
+docker restart hybrid_backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| `FOR UPDATE` **tidak boleh** digabung dengan JOIN ke tabel lain dalam satu query | Gunakan query terpisah; lock satu tabel dulu, kemudian tabel lain, sesuai urutan lock yang konsisten di seluruh codebase |
+| Urutan lock wajib konsisten di semua fungsi: `transactions` → `transaction_items` → `products` | Jika ada fungsi baru yang menyentuh ketiga tabel ini, ikuti urutan yang sama |
+| Semua error PostgreSQL yang tidak di-wrap `AppError` akan menjadi 500 di frontend | Setiap raw DB error (deadlock, lock timeout, constraint violation) WAJIB di-catch dan dikonversi ke `AppError` bila diharapkan |
+| Cross-reference dengan BUG-033: `FOR UPDATE` pada JOIN (LEFT atau INNER) selalu berpotensi masalah | Selalu lock tabel satu per satu, bukan sekaligus via JOIN |
+
+---
+
+## BUG-041 — Antrian Approval Kosong di Halaman Helper (`/helper`)
+
+**Tanggal:** 2026-06-11
+**Layer:** Database (migration) + Backend (scheduler)
+**Page:** `/helper` → sub-menu Antrian Approval
+**CR Terkait:** Migration 017 (per-item approval), CR-040 (HELPER_APPROVE)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper membuka halaman `/helper`, tab **Antrian Approval** tidak menampilkan list apapun — hanya "Antrian kosong" meskipun ada transaksi dengan status `PENDING_APPROVAL` di database.
+
+Backend log menunjukkan error berulang setiap kali helper mengakses halaman:
+```
+error: column ti.approved_quantity does not exist
+  at getApprovalQueue (/app/src/modules/helper/helper.service.js:638)
+  path: /api/v1/helper/approval-queue
+```
+
+Dan error sekunder dari scheduler:
+```
+[txn.expire.sweep] DB update failed: column "updated_at" of relation "transactions" does not exist
+```
+
+### Root Cause
+
+**Root Cause 1 (PRIMER) — Migration 017 belum diaplikasikan ke database Docker**
+
+`backend/migrations/017_per_item_approval.sql` menambahkan dua kolom ke `transaction_items`:
+```sql
+ADD COLUMN IF NOT EXISTS approved_quantity INTEGER,
+ADD COLUMN IF NOT EXISTS rejection_reason  TEXT;
+```
+
+Namun migration ini **tidak pernah dijalankan** di database Docker (`amazing_toys_hybrid`). Akibatnya, `getApprovalQueue` di `helper.service.js:638` yang men-SELECT `ti.approved_quantity` langsung gagal dengan PostgreSQL error mentah (bukan `AppError`) → backend return 500 → frontend catch tanpa error message → `queue` tetap `[]` → UI tampil "Antrian kosong".
+
+Verifikasi:
+```sql
+-- Sebelum fix: hanya 11 kolom, tidak ada approved_quantity/rejection_reason
+SELECT column_name FROM information_schema.columns WHERE table_name='transaction_items';
+```
+
+**Root Cause 2 (SEKUNDER) — `TxnExpireJob.js` update kolom `updated_at` yang tidak ada**
+
+`backend/src/modules/scheduler/jobs/TxnExpireJob.js` menjalankan:
+```sql
+UPDATE transactions SET status = 'EXPIRED', updated_at = NOW() WHERE ...
+```
+
+Tabel `transactions` tidak memiliki kolom `updated_at` — kolom tersebut ada di `products` (via trigger) tapi tidak pernah ditambahkan ke `transactions`. Setiap 5 menit sweep job ini gagal. Meskipun non-fatal (error di-catch dan di-log), ini menyebabkan transaksi yang sudah expired tidak pernah otomatis diubah ke status `EXPIRED`.
+
+### Fix
+
+**Fix 1 — Apply migration 017 ke database Docker:**
+```sql
+ALTER TABLE transaction_items
+  ADD COLUMN IF NOT EXISTS approved_quantity INTEGER,
+  ADD COLUMN IF NOT EXISTS rejection_reason  TEXT;
+```
+
+Dijalankan via:
+```bash
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c "
+  ALTER TABLE transaction_items
+    ADD COLUMN IF NOT EXISTS approved_quantity INTEGER,
+    ADD COLUMN IF NOT EXISTS rejection_reason  TEXT;"
+```
+
+**Fix 2 — Hapus `updated_at` dari `TxnExpireJob.js`:**
+
+```diff
+- SET status     = 'EXPIRED',
+-     updated_at = NOW()
++ SET status = 'EXPIRED'
+```
+
+File: `backend/src/modules/scheduler/jobs/TxnExpireJob.js`
+
+### Chain of Failure
+
+```
+Helper buka /helper → tab Antrian Approval
+  → fetchQueue() → GET /api/v1/helper/approval-queue
+  → getApprovalQueue() → SELECT ti.approved_quantity FROM transaction_items
+  → PostgreSQL: ERROR column ti.approved_quantity does not exist
+  → withTransaction: ROLLBACK + rethrow
+  → Error middleware: 500 Internal server error
+  → Frontend: catch(() => {}) → queue tetap []
+  → UI: "Antrian kosong" (padahal ada data)
+```
+
+### Files Changed
+
+- Database `amazing_toys_hybrid`: Migration 017 diaplikasikan (kolom `approved_quantity` + `rejection_reason`)
+- `backend/src/modules/scheduler/jobs/TxnExpireJob.js`: Hapus `updated_at = NOW()` dari UPDATE `transactions`
+
+### Deployment
+
+```bash
+# Migration sudah dijalankan langsung via docker exec (tidak perlu rebuild)
+
+# Deploy TxnExpireJob fix
+docker cp backend/src/modules/scheduler/jobs/TxnExpireJob.js hybrid_backend:/app/src/modules/scheduler/jobs/TxnExpireJob.js
+docker restart hybrid_backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setiap migration baru di `backend/migrations/` **wajib langsung diaplikasikan** ke semua environment (local dev, Docker) | Setelah push migration baru, jalankan: `docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -f /tmp/<file>.sql` |
+| Saat menulis query yang me-reference kolom dari migration baru, cek apakah migration sudah dijalankan di target env | Gunakan `\d table_name` di psql untuk verifikasi kolom sebelum deploy code yang bergantung padanya |
+| Column references di UPDATE/SELECT harus diverifikasi terhadap schema aktual | `transactions` tidak punya `updated_at`; jangan tambahkan ke UPDATE tanpa menambahkan kolom via migration terlebih dahulu |
+| Setiap error PostgreSQL dari scheduler/background job harus di-alert, bukan hanya di-log | Error `updated_at does not exist` di sweep job menghentikan expiry otomatis selama berhari-hari tanpa disadari |
+
+---
+
+## BUG-042 — Input Qty di Modal Approve Item Tidak Bisa Diketik (Snap ke 1)
+
+**Tanggal:** 2026-06-11
+**Layer:** Frontend
+**Page:** `/helper` → tab Antrian Approval → tombol "✓" per item → modal "Setujui Item"
+**Component:** `frontend/src/components/helper/ApprovalQueueTab.jsx` — `ItemRow`
+**CR Terkait:** CR-040 (HELPER_APPROVE, per-item approval)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper membuka modal setujui item dan mencoba mengubah qty (contoh: customer order 7 pcs, stok hanya 5, helper ingin setujui 5 pcs). Saat mengetik angka baru di input field:
+
+- Bug 1: Ketik "5" → yang muncul "1" (field snap kembali ke nilai minimum)
+- Bug 2: Tidak bisa clear input lalu ketik angka baru — setiap kali field dikosongkan, nilai langsung kembali ke 1
+
+### Root Cause
+
+`onChange` handler di `ItemRow` menggunakan pola:
+
+```jsx
+onChange={(e) => setApprovedQty(Math.min(item.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
+```
+
+Urutan kejadian saat user mencoba clear dan ketik "5":
+
+1. User select-all + Backspace → `e.target.value = ""` (empty string)
+2. `parseInt("") = NaN`
+3. `NaN || 1 = 1` → state menjadi `1`
+4. React re-render: controlled input dikembalikan ke `value={1}`
+5. User ketik "5" → field menunjukkan "15" (bukan "5") karena append ke "1"
+6. `Math.min(item.quantity, 15) = item.quantity` → field snap ke max
+
+State `approvedQty` adalah `number`. Setiap kali field berada dalam intermediate state (kosong, atau saat user sedang mengetik), `|| 1` fallback memaksa snap ke 1, menutup kemungkinan intermediate state yang dibutuhkan saat mengetik.
+
+### Fix
+
+Pisahkan state string (untuk input typing) dari nilai numerik (untuk logika):
+
+**Before:**
+```jsx
+const [approvedQty, setApprovedQty] = useState(item.quantity);
+// ...
+onChange={(e) => setApprovedQty(Math.min(item.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
+```
+
+**After:**
+```jsx
+const [approvedQty, setApprovedQty] = useState(String(item.quantity));
+const approvedQtyNum = Math.min(item.quantity, Math.max(1, parseInt(approvedQty, 10) || 1));
+// ...
+onChange={(e) => setApprovedQty(e.target.value)}
+onBlur={() => setApprovedQty(String(approvedQtyNum))}
+```
+
+- `approvedQty` (string): nilai mentah dari input — bebas berubah saat user mengetik, termasuk saat kosong
+- `approvedQtyNum` (number): selalu valid (1–item.quantity) — digunakan untuk logika submit, warning text, button label
+- `onBlur`: normalisasi string kembali ke angka valid setelah user selesai mengetik
+- `handleApproveConfirm`, warning, dan button label semua diubah menggunakan `approvedQtyNum`
+
+### Files Changed
+
+- `frontend/src/components/helper/ApprovalQueueTab.jsx`: Refactor `ItemRow` qty state (string + computed number)
+
+### Deployment
+
+```bash
+docker cp frontend/src/components/helper/ApprovalQueueTab.jsx hybrid_frontend_dev:/app/src/components/helper/ApprovalQueueTab.jsx
+# atau rebuild container frontend jika tidak menggunakan volume mount
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| React `<input type="number">` dengan `value` controlled: **jangan clamp di `onChange`** | Clamping saat `onChange` menutup intermediate state yang diperlukan untuk mengetik angka multi-digit. Selalu gunakan string state untuk input, hitung nilai valid terpisah, clamp di `onBlur` |
+| Hindari pola `parseInt(str) \|\| fallback` pada controlled input | `"" \|\| 1` dan `"0" \|\| 1` menghasilkan `1` keduanya — fallback tidak bisa membedakan "user sedang mengetik" dari "nilai memang 0" |
+| Untuk number input, gunakan dua variabel: raw string (untuk input DOM) + computed number (untuk logika) | Pattern: `const [raw, setRaw] = useState(String(init)); const num = parseInt(raw, 10) \|\| 1; onBlur={() => setRaw(String(num))}` |
+
+---
+
+## BUG-043 — Route `POST .../items/:itemId/approve` Not Found (404)
+
+**Tanggal:** 2026-06-11
+**Layer:** Backend / Deployment
+**Page:** `/helper` → modal approve item → klik "✓ Setujui X pcs"
+**CR Terkait:** CR-040 (HELPER_APPROVE, per-item approval)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper mengisi qty di modal approve item (BUG-042 sudah di-fix) lalu klik tombol konfirmasi. Frontend error:
+
+```
+Route POST /api/v1/helper/orders/TXN-20260611-00050/items/fb758858-56e3-4b31-869c-1f2c1c0575b9/approve not found.
+```
+
+HTTP 404 — bukan 500. Artinya Express tidak menemukan matching route.
+
+### Root Cause
+
+`docker restart hybrid_backend` hanya me-restart container dengan image yang sama. Image di-build **sebelum** route per-item approval (`/orders/:transactionId/items/:itemId/approve` dan `.../reject`) ditambahkan ke `helper.router.js`.
+
+Verifikasi:
+```bash
+docker exec hybrid_backend grep "items.*approve" /app/src/modules/helper/helper.router.js
+# → no output (exit code 1 = not found)
+```
+
+File lokal (`backend/src/modules/helper/helper.router.js`) sudah memiliki route di baris 226–275, namun container masih running versi lama yang tidak memiliki kedua route tersebut.
+
+### Fix
+
+Copy file router yang sudah diupdate ke dalam container yang sedang berjalan, lalu restart:
+
+```bash
+docker cp backend/src/modules/helper/helper.router.js hybrid_backend:/app/src/modules/helper/helper.router.js
+docker restart hybrid_backend
+```
+
+Verifikasi setelah fix:
+```bash
+docker exec hybrid_backend grep -n "items.*approve" /app/src/modules/helper/helper.router.js
+# → 222: * POST /api/v1/helper/orders/:transactionId/items/:itemId/approve
+# → 226: router.post('/orders/:transactionId/items/:itemId/approve', ...)
+```
+
+### Files Changed
+
+- `hybrid_backend` container: `/app/src/modules/helper/helper.router.js` diperbarui via `docker cp`
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setelah menambah route baru ke router, **wajib `docker cp`** file router ke container yang running (atau rebuild image) | `docker restart` tidak memuat perubahan file lokal — hanya menggunakan image yang sudah ada |
+| Setelah setiap sesi development yang mengubah backend file, jalankan `docker cp` + `docker restart` untuk semua file yang diubah | Urutan minimal: `docker cp <local> <container>:<path>` → `docker restart <container>` |
+| Saat ada error 404 "Route not found" padahal route sudah ada di file lokal, pertama cek apakah container running file yang sama: `docker exec <c> grep "pattern" <file>` | 404 ≠ bug di code; bisa jadi deployment gap antara local dan container |
+
+---
+
+## BUG-044 — `approveItem` 500: `inconsistent types deduced for parameter $1`
+
+**Tanggal:** 2026-06-11
+**Layer:** Backend
+**Page:** `/helper` → modal approve item → konfirmasi approve dengan qty dikurangi
+**CR Terkait:** CR-040 (HELPER_APPROVE, per-item approval)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Setelah BUG-043 (route) diperbaiki, approve item masih gagal 500:
+
+```
+error: inconsistent types deduced for parameter $1
+  at helper.service.js:1066:5
+  at approveItem (helper.service.js:1014:21)
+```
+
+### Root Cause
+
+Query UPDATE di `approveItem` menggunakan `$1` dalam dua konteks berbeda:
+
+```sql
+UPDATE transaction_items
+   SET approval_status   = 'APPROVED',
+       approved_quantity = $1,          -- PostgreSQL infers: INTEGER
+       subtotal          = unit_price * $1   -- PostgreSQL infers: NUMERIC (operand dari unit_price NUMERIC)
+ WHERE item_id = $2
+```
+
+PostgreSQL menggunakan *type inference* untuk menentukan tipe setiap parameter placeholder. Karena `approved_quantity` adalah kolom `INTEGER`, PostgreSQL menyimpulkan `$1 = INTEGER`. Namun `unit_price * $1` merupakan ekspresi numerik di mana `unit_price` bertipe `NUMERIC`, sehingga PostgreSQL menyimpulkan `$1 = NUMERIC` untuk konteks ini.
+
+Dua inferensi berbeda untuk parameter yang sama → error `inconsistent types deduced for parameter $1`.
+
+### Fix
+
+Tambahkan explicit cast `::integer` pada penggunaan `$1` di ekspresi aritmetika:
+
+```diff
+- subtotal = unit_price * $1
++ subtotal = unit_price * $1::integer
+```
+
+File: `backend/src/modules/helper/helper.service.js` baris 1070.
+
+Dengan cast eksplisit, PostgreSQL tahu bahwa `$1` adalah `INTEGER` di kedua konteks. PostgreSQL kemudian secara otomatis mempromosikan `integer → numeric` saat mengalikan dengan `unit_price NUMERIC`.
+
+### Files Changed
+
+- `backend/src/modules/helper/helper.service.js` baris 1070: `unit_price * $1` → `unit_price * $1::integer`
+
+### Deployment
+
+```bash
+docker cp backend/src/modules/helper/helper.service.js hybrid_backend:/app/src/modules/helper/helper.service.js
+docker restart hybrid_backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Jika parameter `$N` dipakai di lebih dari satu SET clause dalam satu UPDATE, dan salah satunya melibatkan ekspresi aritmetika dengan kolom bertipe NUMERIC, tambahkan explicit cast: `$N::integer` atau `$N::numeric` | PostgreSQL tidak bisa deduce type tunggal jika inference dari berbagai clause bertentangan |
+| Saat menulis `SET col_integer = $1, col_numeric = expr * $1`, selalu gunakan `$1::integer` di ekspresi untuk memaksa konsistensi | Pola `approved_quantity = $1, subtotal = unit_price * $1` adalah trigger klasik untuk error ini |
+
+---
+
+## BUG-045 — Kasir & Customer Tracking Tampilkan Qty Original, Bukan Qty Approved
+
+**Tanggal:** 2026-06-11
+**Layer:** Frontend + Backend
+**Page:** 
+- `/cashier/bayar/:txnId` (kasir — PaymentPage)
+- Struk thermal (ThermalReceipt)
+- `/pesanan/:txnId` (customer — OrderTrackingPage)
+- `GET /api/v1/orders/:txnId/public` (public token endpoint)
+**CR Terkait:** CR-040 (HELPER_APPROVE, per-item approval)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Setelah helper approve item dengan qty dikurangi (contoh: customer order 5 pcs → disetujui 3 pcs, TXN-20260611-00052):
+- Halaman kasir (`/cashier/bayar/...`) menampilkan "Nama Produk × 5" dan harga `unit_price × 5`
+- Struk thermal mencetak qty 5 dan harga dihitung dari qty 5
+- Halaman tracking order customer menampilkan qty 5
+
+Data yang benar (`approved_quantity = 3`, `subtotal = unit_price × 3`) sudah ada di database dan dikembalikan oleh API, namun tidak dipakai di frontend.
+
+### Root Cause
+
+**Root Cause 1 — `lookupPayment` API tidak return `approved_quantity`**
+
+`backend/src/modules/payments/payments.service.js` SELECT items hanya mengambil `ti.quantity, ti.unit_price, ti.subtotal`, tanpa `ti.approved_quantity` dan `ti.approval_status`. Frontend tidak bisa tau qty mana yang digunakan.
+
+**Root Cause 2 — Frontend mengabaikan `approved_quantity` dan `subtotal`**
+
+Di tiga tempat frontend, qty dan harga di-compute ulang dari `item.quantity` (original) bukan dari `approved_quantity` dan `subtotal`:
+
+| File | Baris | Kode lama (salah) |
+|---|---|---|
+| `PaymentPage.jsx` | ~329-330 | `item.quantity`, `item.unit_price * item.quantity` |
+| `ThermalReceipt.jsx` | ~181, 238, 241 | `i.quantity`, `item.unit_price * item.quantity * (1 + tax)`, `x${item.quantity}` |
+| `OrderTrackingPage.jsx` | ~449, 458 | `item.quantity`, `item.unit_price * item.quantity * (1 + ppnRate)` |
+
+**Root Cause 3 — Public token endpoint tidak return `approved_quantity`**
+
+`GET /api/v1/orders/:txnId/public` (orders.router.js) hanya return `{ qty: r.quantity, unitPrice }`, tanpa `approved_quantity` atau `subtotal`.
+
+### Fix
+
+**Backend `payments.service.js`** — tambah `approved_quantity, approval_status` ke SELECT:
+```diff
+- SELECT ti.quantity, ti.unit_price, ti.subtotal,
++ SELECT ti.quantity, ti.approved_quantity, ti.approval_status,
++        ti.unit_price, ti.subtotal,
+```
+
+**Frontend `PaymentPage.jsx`** — pakai effective qty + filter rejected:
+```diff
+- {(txn.items ?? []).map((item, i) => (
++ {(txn.items ?? []).filter(item => item.approval_status !== 'REJECTED').map((item, i) => (
+-   <span>{item.product_name} × {item.quantity}</span>
++   <span>{item.product_name} × {item.approved_quantity ?? item.quantity}</span>
+-   <span>{formatRupiah(item.unit_price * item.quantity)}</span>
++   <span>{formatRupiah(item.subtotal)}</span>
+```
+
+**Frontend `ThermalReceipt.jsx`**:
+```diff
+- items.reduce((sum, i) => sum + (i.quantity || 1), 0)
++ items.filter(i => i.approval_status !== 'REJECTED').reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity ?? 1), 0)
+- {items.map(...
++ {items.filter(item => item.approval_status !== 'REJECTED').map(...
+- item.unit_price * item.quantity * (1 + taxRate / 100)
++ item.subtotal * (1 + taxRate / 100)
+- x${item.quantity}
++ x${item.approved_quantity ?? item.quantity}
+```
+
+**Frontend `OrderTrackingPage.jsx`**:
+```diff
+- {item.product_name} × {item.quantity}
++ {item.product_name} × {item.approved_quantity ?? item.quantity}
+- {formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))}
++ {formatRupiah(Math.round(item.subtotal * (1 + ppnRate / 100)))}
+```
+
+**Backend `orders.router.js`** (public endpoint) — tambah `approved_quantity, subtotal, approval_status` ke SELECT dan response:
+```diff
+- SELECT p.product_name, ti.quantity, ti.unit_price
++ SELECT p.product_name, ti.quantity, ti.approved_quantity,
++        ti.unit_price, ti.subtotal, ti.approval_status
+# response:
+- { name, qty: r.quantity, unitPrice }
++ { name, qty: r.approved_quantity ?? r.quantity, unitPrice, subtotal, approvedQuantity, originalQty }
+# filter:
++ .filter(r => r.approval_status !== 'REJECTED')
+```
+
+### Files Changed
+
+- `backend/src/modules/payments/payments.service.js`
+- `backend/src/modules/orders/orders.router.js`
+- `frontend/src/pages/cashier/PaymentPage.jsx`
+- `frontend/src/components/cashier/ThermalReceipt.jsx`
+- `frontend/src/pages/customer/OrderTrackingPage.jsx`
+
+### Deployment
+
+```bash
+# Backend
+docker cp backend/src/modules/payments/payments.service.js hybrid_backend:/app/src/modules/payments/payments.service.js
+docker cp backend/src/modules/orders/orders.router.js hybrid_backend:/app/src/modules/orders/orders.router.js
+docker restart hybrid_backend
+
+# Frontend — perlu rebuild image (static Nginx build, bukan volume mount)
+docker compose build frontend
+docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setiap endpoint yang return `transaction_items` ke sisi display **wajib include `approved_quantity`, `approval_status`, `subtotal`** | Jika salah satu kolom ini tidak di-return, frontend akan fallback ke `quantity` (original) yang salah setelah per-item approval |
+| Frontend yang menampilkan qty dan harga item WAJIB pakai `approved_quantity ?? quantity` (qty) dan `item.subtotal` (harga), BUKAN menghitung ulang `unit_price * quantity` | Menghitung ulang dari `quantity` mengabaikan keputusan approval helper |
+| Item dengan `approval_status = 'REJECTED'` harus difilter dari tampilan kasir dan customer (bukan ditampilkan dengan qty 0) | Rejected items tidak berkontribusi ke total; menampilkannya akan membingungkan dan salah perhitungan |
+| Setelah menambah fitur baru yang memutasi data (per-item approval), audit semua endpoint yang membaca data tersebut dan semua halaman yang menampilkannya | BUG-045 terjadi karena endpoint dan tampilan dibuat sebelum fitur `approved_quantity` ada |
+
+---
+
+## BUG-046 — Voucher `usage_limit=2` Hanya Bisa Dipakai 1 Kali
+
+**Tanggal:** 2026-06-11
+**Layer:** Backend
+**Page:** Admin → `/admin` tab Voucher (voucher AMZ70)
+**File:** `backend/src/modules/vouchers/vouchers.service.js`
+**Status:** ✅ Resolved
+
+### Symptom
+
+Voucher AMZ70 memiliki `usage_limit = 2` (batas pemakaian 2 kali). Setelah dipakai 1 kali, percobaan pemakaian kedua gagal meskipun `usage_count = 1 < usage_limit = 2`.
+
+State DB saat bug dilaporkan:
+```
+code  | usage_limit | usage_count | is_active
+AMZ70 |           2 |           1 | true
+```
+`voucher_usages`: 1 row — customer `089620033308`, TXN-20260611-00056.
+
+### Root Cause
+
+**Root Cause 1 (PRIMER) — Per-customer duplicate check mengabaikan `usage_limit`**
+
+`validateVoucher` Step 6 melakukan pengecekan:
+```js
+// SELECT 1 FROM voucher_usages WHERE voucher_code = $1 AND customer_id = $2
+if (usedRes.rows.length > 0) throw new AppError('ALREADY_USED', 400);
+```
+
+Jika customer yang SAMA mencoba memakai voucher lagi, langsung diblokir (`ALREADY_USED`) terlepas dari nilai `usage_limit`. Dengan demikian, semantik `usage_limit = 2` menjadi "2 customer berbeda masing-masing sekali", bukan "2 pemakaian total".
+
+Admin yang menetapkan `usage_limit = 2` mengharapkan voucher bisa dipakai 2 kali total — oleh customer yang sama atau berbeda. Per-customer check mengubah arti `usage_limit` secara tak terduga.
+
+**Root Cause 2 (SEKUNDER) — `applyVoucher` non-atomic: INSERT idempotent tapi UPDATE tidak**
+
+```js
+// INSERT ... ON CONFLICT (voucher_code, transaction_id) DO NOTHING
+await c.query(`INSERT INTO voucher_usages ...`);
+
+// UPDATE berjalan TERLEPAS dari apakah INSERT berhasil
+await c.query(`UPDATE vouchers SET usage_count = usage_count + 1 ...`);
+```
+
+Jika `applyVoucher` dipanggil dua kali untuk `(voucher_code, transaction_id)` yang sama (retry, race condition), INSERT kedua adalah no-op tapi UPDATE tetap berjalan → `usage_count` double-increment → voucher habis lebih cepat dari `usage_limit`.
+
+### Fix
+
+**Fix 1 — Hapus per-customer duplicate check**
+
+Hapus Step 6 dari `validateVoucher`. Satu-satunya pembatas adalah `usage_limit` global (Step 3). Ini sesuai dengan semantik yang diharapkan: "voucher dapat dipakai hingga `usage_limit` kali total, oleh customer apapun."
+
+```diff
+- // 6. Duplicate check — skip for Walk-in Customer
+- if (customerId) {
+-   const walkinId = await _getWalkinCustomerId();
+-   const isWalkin = customerId === walkinId;
+-   if (!isWalkin) {
+-     const usedRes = await query(`SELECT 1 FROM voucher_usages WHERE ...`);
+-     if (usedRes.rows.length > 0) throw new AppError('ALREADY_USED', 400);
+-   }
+- }
+```
+
+Helper `_getWalkinCustomerId` dan konstanta `WALKIN_PHONE` juga dihapus karena tidak lagi digunakan.
+
+**Fix 2 — INSERT kondisional sebelum UPDATE**
+
+```diff
+- await c.query(`INSERT INTO voucher_usages ... ON CONFLICT DO NOTHING`);
+- await c.query(`UPDATE vouchers SET usage_count = usage_count + 1 ...`);
++ const insertRes = await c.query(`INSERT INTO voucher_usages ... ON CONFLICT DO NOTHING`);
++ if (insertRes.rowCount > 0) {
++   await c.query(`UPDATE vouchers SET usage_count = usage_count + 1 ...`);
++ }
+```
+
+UPDATE `usage_count` sekarang hanya berjalan jika INSERT benar-benar memasukkan baris baru.
+
+### Files Changed
+
+- `backend/src/modules/vouchers/vouchers.service.js`
+
+### Deployment
+
+```bash
+docker cp backend/src/modules/vouchers/vouchers.service.js hybrid_backend:/app/src/modules/vouchers/vouchers.service.js
+docker restart hybrid_backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| `usage_limit` adalah satu-satunya pembatas pemakaian voucher — tidak ada per-customer limit terpisah | Per-customer check bertentangan dengan semantik `usage_limit > 1` yang diharapkan admin |
+| Setiap INSERT idempotent (`ON CONFLICT DO NOTHING`) yang diikuti UPDATE harus kondisional: cek `insertRes.rowCount > 0` sebelum menjalankan UPDATE | Jika tidak, retry atau concurrent call akan double-increment counter |
+| Saat desain voucher: jika butuh pembatasan per-customer, tambahkan field `per_customer_limit` eksplisit di tabel `vouchers` | Jangan implisit encode per-customer limit sebagai "ada/tidak di usage table" karena ini konflik dengan `usage_limit` global |
+
+---
+
+## CR-046 — Auto-Refresh Approval Queue Tanpa Blink
+
+**Date:** 2026-06-11
+**CR Terkait:** CR-046
+
+### Permintaan
+
+Halaman `/helper` tab "Approval Queue" memperbarui data secara otomatis tanpa kedipan (blink), menggunakan mekanisme Virtual DOM React dan sistem Re-rendering.
+
+### Root Cause Potensi Blink
+
+Implementasi sebelumnya memanggil `fetchQueue()` yang selalu mengeksekusi `setLoading(true)`, kemudian mengganti seluruh state `queue` dengan array baru dari server (`setQueue(data)`). Dua masalah:
+
+1. **`setLoading(true)` di background** — meski rendering bersyarat (`loading && queue.length === 0`) mencegah spinner tampil saat ada data, state change tetap memaksa re-render tidak perlu.
+2. **`setQueue(data)` full replace** — setiap polling mengganti array dengan referensi baru. Seluruh `ApprovalCard` dan `ItemRow` menerima prop baru → React masuk ke reconciliation cycle penuh meski datanya tidak berubah.
+3. **`ItemRow`/`ApprovalCard` bukan `React.memo`** — komponen re-render setiap kali parent re-render, terlepas dari apakah props berubah.
+
+### Fix
+
+**1. `fetchQueue(silent)` — dua mode**
+
+```js
+const fetchQueue = useCallback((silent = false) => {
+  if (!silent) setLoading(true);   // hanya untuk initial load / manual refresh
+  else         setRefreshing(true); // indikator kecil, tidak mengubah layout
+
+  getApprovalQueue()
+    .then(r => {
+      setQueue(prev => mergeQueue(prev, r.data.data ?? []));
+      setLastRefreshed(new Date());
+    })
+    ...
+}, [onCountChange]);
+```
+
+- Polling (20 s) dan WebSocket push memanggil `fetchQueue(true)` → tidak ada spinner, tidak ada layout shift.
+- Initial mount dan tombol Refresh manual memanggil `fetchQueue(false)` → spinner normal.
+
+**2. `mergeQueue` + `mergeItems` — preserve object references**
+
+```js
+function mergeItems(prevItems, nextItems) {
+  const prevMap = new Map(prevItems.map(i => [i.item_id, i]));
+  return nextItems.map(i => {
+    const old = prevMap.get(i.item_id);
+    if (!old) return i;
+    // Jika tidak ada yang berubah, kembalikan referensi lama
+    if (old.approval_status === i.approval_status &&
+        old.approved_quantity === i.approved_quantity &&
+        old.rejection_reason  === i.rejection_reason &&
+        old.quantity          === i.quantity) return old;
+    return i;
+  });
+}
+```
+
+React membandingkan prop `item` dengan referensi (`===`). Jika referensi sama, `React.memo` bail out → tidak masuk render cycle sama sekali.
+
+**3. `React.memo` pada `ItemRow` dan `ApprovalCard`**
+
+```jsx
+const ItemRow    = memo(function ItemRow(...)    { ... });
+const ApprovalCard = memo(function ApprovalCard(...) { ... });
+```
+
+Kombinasi dengan smart merge: item yang tidak berubah → referensi sama → `memo` skip re-render.
+
+**4. Visual auto-refresh indicator**
+
+```jsx
+{/* Pulsing green dot — auto-refresh active */}
+<span className="relative flex h-2 w-2">
+  <span className="animate-ping absolute ... bg-emerald-400 opacity-75" />
+  <span className="relative ... bg-emerald-500" />
+</span>
+// + "diperbarui HH:MM:SS" di subtitle header
+```
+
+### Files Changed
+
+- `frontend/src/components/helper/ApprovalQueueTab.jsx`
+
+### Deployment
+
+```bash
+docker compose build frontend && docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Jangan gunakan `setLoading(true)` untuk background refresh — pisahkan "initial load state" dari "background fetching state" | `setLoading` memicu re-render; untuk polling cukup `setRefreshing` yang tidak mengubah layout |
+| Gunakan smart merge (`mergeQueue`/`mergeItems`) bukan full replace (`setQueue(data)`) saat memperbarui list | Full replace selalu menghasilkan referensi baru → semua child re-render meski data sama |
+| Bungkus komponen list item dengan `React.memo` jika parent sering re-render karena polling | Tanpa `memo`, setiap polling cycle memaksa seluruh list masuk reconciliation |
+
+---
+
+## BUG-047 — Receipt & Pickup Page Tampilkan Qty Original, Bukan Qty Approved
+
+**Date:** 2026-06-11
+**CR Terkait:** —
+
+### Symptom
+
+`TXN-20260611-00064` — customer memesan ASTRO BOY ×4, helper menyetujui ×2. Halaman:
+- `/pesanan/TXN-20260611-00064/receipt` → masih menampilkan **ASTRO BOY ×4**
+- `/pesanan/TXN-20260611-00064/pickup` → masih menampilkan **×4** dan progress bar dihitung dari ×4
+
+### Root Cause
+
+Ini adalah pola yang sama dengan **BUG-045** (qty approved tidak ditampilkan). BUG-045 hanya memperbaiki `PaymentPage.jsx`, `ThermalReceipt.jsx`, dan `OrderTrackingPage.jsx`. Dua halaman lain terlewat saat audit:
+
+| Halaman | File | Baris yang bermasalah |
+|---|---|---|
+| `/pesanan/:id/receipt` | `ReceiptPickupPage.jsx` | L125 `item.unit_price * item.quantity` · L128 `×{item.quantity}` · L165 `×{item.quantity}` |
+| `/pesanan/:id/pickup` | `PickupStatusPage.jsx` | L59 `totalItems` · L60-62 `doneItems` · L116 `×{item.quantity}` |
+
+Semua titik menggunakan `item.quantity` (qty yang dipesan customer) alih-alih `item.approved_quantity ?? item.quantity` (qty yang disetujui helper).
+
+Tambahan: item dengan `approval_status = 'REJECTED'` tidak difilter, sehingga item yang ditolak tetap muncul di receipt dan pickup.
+
+### Fix
+
+**ReceiptPickupPage.jsx:**
+
+```diff
+- const groups = groupByTenant(order.items);
++ const groups = groupByTenant(order.items.filter(i => i.approval_status !== 'REJECTED'));
+
+- {order.items.map((item, idx) => {
+-   const priceIncTax = Math.round(item.unit_price * item.quantity * (1 + taxRate / 100));
++ {order.items.filter(i => i.approval_status !== 'REJECTED').map((item, idx) => {
++   const priceIncTax = Math.round(item.subtotal * (1 + taxRate / 100));
+
+-   <span>{item.product_name} ×{item.quantity}</span>
++   <span>{item.product_name} ×{item.approved_quantity ?? item.quantity}</span>
+
+# Bagian pickup instructions:
+-   {item.product_name} ×{item.quantity}
++   {item.product_name} ×{item.approved_quantity ?? item.quantity}
+```
+
+**PickupStatusPage.jsx:**
+
+```diff
+- const groups = groupByTenant(order.items);
+- const totalItems = order.items.reduce((sum, i) => sum + i.quantity, 0);
+- const doneItems  = order.items.filter(i => i.pickup_status === 'DONE').reduce((sum, i) => sum + i.quantity, 0);
++ const activeItems = order.items.filter(i => i.approval_status !== 'REJECTED');
++ const groups = groupByTenant(activeItems);
++ const totalItems = activeItems.reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity), 0);
++ const doneItems  = activeItems.filter(i => i.pickup_status === 'DONE').reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity), 0);
+
+- ×{item.quantity} · {formatRupiah(item.unit_price * item.quantity)}
++ ×{item.approved_quantity ?? item.quantity} · {formatRupiah(item.subtotal)}
+```
+
+### Files Changed
+
+- `frontend/src/pages/customer/ReceiptPickupPage.jsx`
+- `frontend/src/pages/customer/PickupStatusPage.jsx`
+
+### Deployment
+
+```bash
+docker compose build frontend && docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Saat menambah fitur yang mengubah qty item (approval, partial fulfillment, dll.), lakukan audit menyeluruh semua halaman yang menampilkan `item.quantity` | BUG-045 dan BUG-047 keduanya terjadi karena audit halaman tidak lengkap — hanya halaman "utama" yang difix, halaman downstream terlewat |
+| Daftar halaman customer yang menampilkan qty item: `OrderTrackingPage`, `ReceiptPickupPage`, `PickupStatusPage`, `CartPage`, `ThermalReceipt`, `PaymentPage`, `orders.router.js` (public token) | Jadikan checklist ini sebagai standar setiap kali ada perubahan data qty/approval |
+| Gunakan `item.subtotal` (nilai tersimpan di DB) bukan `item.unit_price * item.quantity` untuk kalkulasi harga — `subtotal` sudah mencerminkan approved qty setelah approval | Menghitung ulang dari `unit_price * quantity` selalu menghasilkan nilai pre-approval |
+| Selalu filter `approval_status !== 'REJECTED'` sebelum render item di halaman customer | Item yang ditolak tidak boleh tampil di receipt, pickup list, atau progress bar |
+
+---
+
+## CR-048 — Hide Stok (pcs) di Halaman Detail Produk
+
+**Date:** 2026-06-11
+**CR Terkait:** CR-048
+
+### Permintaan
+
+Sembunyikan chip "52 pcs / Stock" di spec strip pada halaman `/product/:id` dan `/product_cart/:id`. Badge status (Tersedia/Stok Terbatas/Habis) tetap tampil.
+
+### Root Cause
+
+Saat spec strip didesain, tiga chip ditampilkan sejajar: Booth, Location, Stock (angka pcs). Jumlah stok eksak (`52 pcs`) tidak seharusnya terlihat oleh customer — hanya status kategoris (Available/Limited/Out) yang relevan.
+
+### Fix
+
+Hapus baris `<SpecItem emoji="📦" ... />` dari kedua komponen:
+
+```diff
+  <div style={{ display: 'flex', gap: 8 }}>
+    <SpecItem emoji="🏪" value={product.tenant_name} label={t('product.booth')} />
+    <SpecItem emoji="📍" value={product.booth_location ?? '-'} label={t('product.location')} />
+-   <SpecItem emoji="📦" value={`${stock} pcs`} label={t('product.stock')} />
+  </div>
+```
+
+### Files Changed
+
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+- `frontend/src/pages/customer/ProductCartPage.jsx`
+
+### Deployment
+
+```bash
+docker compose build frontend && docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Halaman customer tidak boleh menampilkan angka stok eksak — hanya badge status kategoris | Angka stok adalah informasi operasional internal, bukan informasi yang perlu diketahui customer |
+| Badge status (`getStockStatus()`) sudah cukup untuk customer: Tersedia / Stok Terbatas / Habis | Gunakan badge dari `stockUtils.js`, bukan angka raw `stock_quantity` |
 
 ---

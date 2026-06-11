@@ -406,31 +406,68 @@ export default function ConfigTab() {
               <p className="text-xs text-gray-400">
                 Digunakan jika kasir tidak memiliki printer yang ditetapkan secara khusus.
               </p>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <Input label="IP Address"
-                    placeholder="Contoh: 192.168.0.105"
-                    value={config.printer_ip || ''}
-                    onChange={(e) => { set('printer_ip', e.target.value); setPrinterStatus(null); }} />
-                </div>
-                <div>
-                  <Input label="Port" type="number" min="1" max="65535"
-                    placeholder="9100"
-                    value={config.printer_port ?? 9100}
-                    onChange={(e) => { set('printer_port', parseInt(e.target.value, 10) || 9100); setPrinterStatus(null); }} />
-                </div>
+
+              {/* Connection type toggle */}
+              <div className="flex gap-2">
+                {['TCP', 'USB'].map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => { set('printer_type', t); setPrinterStatus(null); }}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors
+                      ${(config.printer_type || 'TCP') === t
+                        ? 'bg-slate-700 text-white border-slate-700'
+                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                  >
+                    {t === 'TCP' ? '🌐 TCP/IP (Jaringan)' : '🔌 USB (Windows)'}
+                  </button>
+                ))}
               </div>
+
+              {(config.printer_type || 'TCP') === 'TCP' ? (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <Input label="IP Address"
+                      placeholder="Contoh: 192.168.0.105"
+                      value={config.printer_ip || ''}
+                      onChange={(e) => { set('printer_ip', e.target.value); setPrinterStatus(null); }} />
+                  </div>
+                  <div>
+                    <Input label="Port" type="number" min="1" max="65535"
+                      placeholder="9100"
+                      value={config.printer_port ?? 9100}
+                      onChange={(e) => { set('printer_port', parseInt(e.target.value, 10) || 9100); setPrinterStatus(null); }} />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <Input label="Nama Printer Windows"
+                    placeholder='Contoh: EPSON TM-T82 atau Generic / Text Only'
+                    value={config.printer_usb_name || ''}
+                    onChange={(e) => { set('printer_usb_name', e.target.value); setPrinterStatus(null); }} />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Cek nama printer di: <strong>Windows → Settings → Bluetooth &amp; devices → Printers &amp; scanners</strong>.
+                    Untuk Linux: gunakan path seperti <code className="font-mono">/dev/usb/lp0</code>.
+                  </p>
+                </div>
+              )}
 
               {printerStatus && (
                 <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm border
-                  ${printerStatus.connected
+                  ${printerStatus.connected || printerStatus.connected === null
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
                     : 'bg-red-50 border-red-200 text-red-800'}`}>
-                  <span className="text-base leading-none mt-0.5">{printerStatus.connected ? '✅' : '❌'}</span>
+                  <span className="text-base leading-none mt-0.5">
+                    {printerStatus.connected ? '✅' : printerStatus.connected === null ? '🔌' : '❌'}
+                  </span>
                   <div>
-                    <p className="font-medium">{printerStatus.connected ? 'Printer terhubung' : 'Printer tidak terjangkau'}</p>
+                    <p className="font-medium">
+                      {printerStatus.connected ? 'Printer terhubung'
+                        : printerStatus.connected === null ? 'Printer USB dikonfigurasi'
+                        : 'Printer tidak terjangkau'}
+                    </p>
                     <p className="text-xs mt-0.5 opacity-80">{printerStatus.message}</p>
-                    {printerStatus.configured && !printerStatus.connected && (
+                    {printerStatus.configured && printerStatus.connected === false && (
                       <p className="text-xs mt-1">Pastikan printer menyala, di jaringan yang sama, dan port tidak diblokir firewall.</p>
                     )}
                   </div>
@@ -466,7 +503,10 @@ export default function ConfigTab() {
                     const assignment   = getCashierAssignment(cashier.user_id);
                     const testResult   = cashierTestStatus[cashier.user_id];
                     const isTesting    = testingUserId === cashier.user_id;
-                    const hasIp        = !!assignment.printer_ip;
+                    const assignType   = (assignment.printer_type || 'TCP').toUpperCase();
+                    const hasConfig    = assignType === 'USB'
+                      ? !!assignment.printer_usb_name
+                      : !!assignment.printer_ip;
 
                     return (
                       <div key={cashier.user_id} className="py-3 space-y-2">
@@ -479,14 +519,38 @@ export default function ConfigTab() {
                               <span className="text-xs bg-gray-100 text-gray-500 rounded-full px-2 py-0.5">nonaktif</span>
                             )}
                           </div>
-                          {hasIp && (
+                          {hasConfig && (
                             <span className="text-xs bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 font-mono">
-                              {assignment.printer_ip}:{assignment.printer_port || 9100}
+                              {assignType === 'USB'
+                                ? `USB:${assignment.printer_usb_name}`
+                                : `${assignment.printer_ip}:${assignment.printer_port || 9100}`}
                             </span>
                           )}
                         </div>
 
-                        {/* IP + Port inputs */}
+                        {/* Type toggle */}
+                        <div className="flex gap-1.5">
+                          {['TCP', 'USB'].map((t) => (
+                            <button key={t} type="button"
+                              onClick={() => setCashierPrinter(cashier.user_id, 'printer_type', t)}
+                              className={`px-2 py-1 rounded text-xs font-medium border transition-colors
+                                ${assignType === t
+                                  ? 'bg-slate-700 text-white border-slate-700'
+                                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+                            >{t}</button>
+                          ))}
+                        </div>
+
+                        {/* IP + Port inputs (TCP) or USB name */}
+                        {assignType === 'USB' ? (
+                          <input
+                            type="text"
+                            placeholder='Nama printer Windows (kosong = gunakan global)'
+                            value={assignment.printer_usb_name || ''}
+                            onChange={(e) => setCashierPrinter(cashier.user_id, 'printer_usb_name', e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 font-mono"
+                          />
+                        ) : (
                         <div className="grid grid-cols-3 gap-2">
                           <div className="col-span-2">
                             <input
@@ -508,6 +572,7 @@ export default function ConfigTab() {
                             />
                           </div>
                         </div>
+                        )}
 
                         {/* Test result */}
                         {testResult && testResult !== 'testing' && (
@@ -525,8 +590,8 @@ export default function ConfigTab() {
                         <button
                           type="button"
                           onClick={() => handleTestCashierPrinter(cashier.user_id)}
-                          disabled={isTesting || !hasIp}
-                          title={!hasIp ? 'Isi IP printer terlebih dahulu' : ''}
+                          disabled={isTesting || !hasConfig}
+                          title={!hasConfig ? 'Isi konfigurasi printer terlebih dahulu' : ''}
                           className="flex items-center gap-1 text-xs px-2.5 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 transition-colors"
                         >
                           {isTesting

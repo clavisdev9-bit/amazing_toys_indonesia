@@ -5,6 +5,14 @@ import { useWebSocket } from './useWebSocket';
 
 const FLOOR_ORDER = ['GF', 'UG', 'LG', '1F', '2F', '3F'];
 
+// Sort priority: Available (0) → Limited (1) → Out of Stock (2)
+// Matches the thresholds in stockUtils.js getStockStatus()
+function stockSortKey(stock) {
+  if (stock === 0) return 2;
+  if (stock <= 3)  return 1;
+  return 0;
+}
+
 const TENANT_COLORS = [
   { colorHex: '#EEEDFE', textColorHex: '#3C3489' },
   { colorHex: '#FAEEDA', textColorHex: '#633806' },
@@ -156,14 +164,14 @@ export function useCatalogueState() {
     let result = products;
     if (curCat !== 'All') result = result.filter(p => p.category === curCat);
     if (search.trim()) result = result.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
-    return result;
+    return [...result].sort((a, b) => stockSortKey(a.stock) - stockSortKey(b.stock));
   }, [products, curCat, search]);
 
   const storeModeProducts = useMemo(() => {
     if (selectedStoreIds.length === 0) return [];
     let result = products.filter(p => selectedStoreIds.includes(p.tenant_id));
     if (storeCat !== 'All') result = result.filter(p => p.category === storeCat);
-    return result;
+    return [...result].sort((a, b) => stockSortKey(a.stock) - stockSortKey(b.stock));
   }, [products, selectedStoreIds, storeCat]);
 
   const storesByFloor = useMemo(() => {

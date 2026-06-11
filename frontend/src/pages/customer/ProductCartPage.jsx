@@ -221,7 +221,6 @@ export default function ProductCartPage() {
         <div style={{ display: 'flex', gap: 8 }}>
           <SpecItem emoji="🏪" value={product.tenant_name} label={t('product.booth')} />
           <SpecItem emoji="📍" value={product.booth_location ?? '-'} label={t('product.location')} />
-          <SpecItem emoji="📦" value={`${stock} pcs`} label={t('product.stock')} />
         </div>
 
         {/* Category chips */}

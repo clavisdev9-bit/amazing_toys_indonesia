@@ -59,7 +59,7 @@ export default function ReceiptPickupPage() {
     );
   }
 
-  const groups = groupByTenant(order.items);
+  const groups = groupByTenant(order.items.filter(i => i.approval_status !== 'REJECTED'));
   const isStaff = role !== 'CUSTOMER';
 
   // Adapt order shape to what PrintConfirmationModal / sendEReceipt expect
@@ -120,12 +120,12 @@ export default function ReceiptPickupPage() {
               </span>
             </div>
             <div className="divide-y">
-              {order.items.map((item, idx) => {
+              {order.items.filter(i => i.approval_status !== 'REJECTED').map((item, idx) => {
                 const taxRate = parseFloat(order.tax_rate ?? 0);
-                const priceIncTax = Math.round(item.unit_price * item.quantity * (1 + taxRate / 100));
+                const priceIncTax = Math.round(item.subtotal * (1 + taxRate / 100));
                 return (
                   <div key={idx} className="flex justify-between items-center px-4 py-2.5 text-sm">
-                    <span className="text-gray-700">{item.product_name} ×{item.quantity}</span>
+                    <span className="text-gray-700">{item.product_name} ×{item.approved_quantity ?? item.quantity}</span>
                     <span className="text-gray-700">{formatRupiah(priceIncTax)}</span>
                   </div>
                 );
@@ -162,7 +162,7 @@ export default function ReceiptPickupPage() {
                   {group.items.map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center px-4 py-3">
                       <span className="text-sm text-gray-800">
-                        {item.product_name} ×{item.quantity}
+                        {item.product_name} ×{item.approved_quantity ?? item.quantity}
                       </span>
                       <Badge status={pickupBadgeStatus(item.pickup_status)} />
                     </div>

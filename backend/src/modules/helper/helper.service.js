@@ -636,8 +636,8 @@ async function getApprovalQueue(helperTenantId) {
   const txns = result.rows;
   for (const txn of txns) {
     const itemsRes = await query(
-      `SELECT ti.product_id, p.product_name, ti.quantity, ti.unit_price,
-              ti.subtotal, ti.approval_status
+      `SELECT ti.item_id, ti.product_id, p.product_name, ti.quantity, ti.unit_price,
+              ti.subtotal, ti.approval_status, ti.approved_quantity, ti.rejection_reason
        FROM transaction_items ti
        JOIN products p ON p.product_id = ti.product_id
        WHERE ti.transaction_id = $1 AND ti.tenant_id = $2`,
@@ -904,6 +904,299 @@ async function rejectOrder(transactionId, helperId, helperTenantId, reason = 'Di
   });
 }
 
+// ── Per-item approval helpers ─────────────────────────────────────────────────
+
+/**
+ * After a single item is approved/rejected, check whether the entire transaction
+ * can now advance (all items resolved).  Called inside an open DB transaction.
+ *
+ * Returns one of:
+ *   { done: false }                   — still waiting on other items / booths
+ *   { done: true, outcome: 'PENDING'  , expiresAt, customerId }
+ *   { done: true, outcome: 'CANCELLED', customerId }
+ */
+async function _resolveAfterItemAction(client, transactionId, helperTenantId, helperId, note) {
+  // Are all items for THIS booth resolved?
+  const boothPendingRes = await client.query(
+    `SELECT COUNT(*) AS cnt FROM transaction_items
+     WHERE transaction_id = $1 AND tenant_id = $2 AND approval_status = 'PENDING'`,
+    [transactionId, helperTenantId],
+  );
+  if (parseInt(boothPendingRes.rows[0].cnt) > 0) return { done: false };
+
+  // Are all items across ALL booths resolved?
+  const globalPendingRes = await client.query(
+    `SELECT COUNT(*) AS cnt FROM transaction_items
+     WHERE transaction_id = $1 AND approval_status = 'PENDING'`,
+    [transactionId],
+  );
+  if (parseInt(globalPendingRes.rows[0].cnt) > 0) return { done: false };
+
+  // All resolved — is at least one item APPROVED?
+  const approvedRes = await client.query(
+    `SELECT COUNT(*) AS cnt FROM transaction_items
+     WHERE transaction_id = $1 AND approval_status = 'APPROVED'`,
+    [transactionId],
+  );
+  const hasApproved = parseInt(approvedRes.rows[0].cnt) > 0;
+
+  const txnRow = (await client.query(
+    `SELECT customer_id FROM transactions WHERE transaction_id = $1`,
+    [transactionId],
+  )).rows[0];
+
+  if (!hasApproved) {
+    // All items rejected — cancel the transaction
+    await client.query(
+      `UPDATE transactions
+         SET status = 'CANCELLED', cancelled_at = NOW(),
+             cancellation_reason = 'Semua item ditolak oleh helper',
+             approval_note = $1
+       WHERE transaction_id = $2`,
+      [note || 'Semua item ditolak', transactionId],
+    );
+    return { done: true, outcome: 'CANCELLED', customerId: txnRow?.customer_id };
+  }
+
+  // At least one item approved — recalculate totals from approved items only
+  const totalsRes = await client.query(
+    `SELECT SUM(
+       CASE WHEN approval_status = 'APPROVED'
+            THEN unit_price * COALESCE(approved_quantity, quantity)
+            ELSE 0 END
+     ) AS new_subtotal
+     FROM transaction_items WHERE transaction_id = $1`,
+    [transactionId],
+  );
+  const newSubtotal = parseFloat(totalsRes.rows[0].new_subtotal) || 0;
+
+  // Re-read tax rate from transaction
+  const taxRes = await client.query(
+    `SELECT tax_rate FROM transactions WHERE transaction_id = $1`,
+    [transactionId],
+  );
+  const taxRate = parseFloat(taxRes.rows[0]?.tax_rate) || 0;
+  const newTaxAmount = Math.round(newSubtotal * taxRate / 100);
+  const newTotal = newSubtotal + newTaxAmount;
+
+  const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutesCR040() * 60 * 1000);
+
+  await client.query(
+    `UPDATE transactions
+       SET status             = 'PENDING',
+           approved_at        = NOW(),
+           approved_by        = $1,
+           approval_note      = $2,
+           timer_locked_until = $3,
+           expires_at         = $3,
+           subtotal_amount    = $4,
+           tax_amount         = $5,
+           total_amount       = $6
+     WHERE transaction_id     = $7`,
+    [helperId, note, expiresAt, newSubtotal, newTaxAmount, newTotal, transactionId],
+  );
+
+  return { done: true, outcome: 'PENDING', expiresAt, customerId: txnRow?.customer_id, newTotal };
+}
+
+/**
+ * Approve a single transaction item.
+ * Optionally reduce quantity (e.g. 1 of 2 units is defective).
+ *
+ * @param {string} transactionId
+ * @param {string} itemId           UUID from transaction_items.item_id
+ * @param {string} helperId
+ * @param {string} helperTenantId
+ * @param {number|null} approvedQty  null = approve full quantity
+ * @param {string|null} note
+ */
+async function approveItem(transactionId, itemId, helperId, helperTenantId, approvedQty = null, note = null) {
+  const committed = await withTransaction(async (client) => {
+    // Lock transaction row
+    const txRow = (await client.query(
+      `SELECT status FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId],
+    )).rows[0];
+    if (!txRow) throw new AppError('Transaksi tidak ditemukan.', 404);
+    if (txRow.status !== 'PENDING_APPROVAL') {
+      throw new AppError(`Hanya transaksi PENDING_APPROVAL yang bisa diproses. Status: ${txRow.status}.`, 409);
+    }
+
+    // Lock only the transaction_items row — no JOIN here (same pattern as approveOrder).
+    // Joining products in a FOR UPDATE query locks rows from both tables simultaneously,
+    // which can deadlock against createHelperOrder (locks products first, then transactions).
+    const itemRes = await client.query(
+      `SELECT ti.item_id, ti.product_id, ti.quantity, ti.approval_status
+       FROM transaction_items ti
+       WHERE ti.item_id = $1 AND ti.transaction_id = $2 AND ti.tenant_id = $3
+       FOR UPDATE`,
+      [itemId, transactionId, helperTenantId],
+    );
+    if (itemRes.rows.length === 0) throw new AppError('Item tidak ditemukan di booth ini.', 404);
+    const item = itemRes.rows[0];
+    if (item.approval_status !== 'PENDING') {
+      throw new AppError(`Item sudah diproses (status: ${item.approval_status}).`, 409);
+    }
+
+    const effectiveQty = (approvedQty !== null && approvedQty > 0 && approvedQty <= item.quantity)
+      ? approvedQty
+      : item.quantity;
+
+    // Lock the product row separately — mirrors approveOrder; ensures consistent lock ordering:
+    // transactions → transaction_items → products (never products before transactions).
+    const prodRes = await client.query(
+      `SELECT product_name, stock_quantity FROM products WHERE product_id = $1 FOR UPDATE`,
+      [item.product_id],
+    );
+    const prod = prodRes.rows[0];
+    if (!prod || prod.stock_quantity < effectiveQty) {
+      throw new AppError(
+        `Stok "${prod?.product_name || item.product_id}" tidak mencukupi (tersedia: ${prod?.stock_quantity ?? 0}, diminta: ${effectiveQty}).`,
+        409,
+      );
+    }
+
+    // Deduct stock
+    await client.query(
+      `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+      [effectiveQty, item.product_id],
+    );
+
+    // Mark item approved
+    await client.query(
+      `UPDATE transaction_items
+         SET approval_status   = 'APPROVED',
+             approved_quantity = $1,
+             subtotal          = unit_price * $1::integer
+       WHERE item_id = $2`,
+      [effectiveQty, itemId],
+    );
+
+    await writeAuditLog({
+      action: 'ITEM_APPROVED', actorId: helperId, actorRole: 'HELPER',
+      entityType: 'TRANSACTION_ITEM', entityId: itemId,
+      newValue: { transactionId, effectiveQty, originalQty: item.quantity, note },
+    });
+
+    // Check if all items are now resolved → possibly advance transaction status
+    const resolution = await _resolveAfterItemAction(client, transactionId, helperTenantId, helperId, note);
+    return { resolution, effectiveQty, originalQty: item.quantity };
+  });
+
+  await _broadcastResolution(committed.resolution, transactionId, helperTenantId);
+
+  return {
+    transactionId,
+    itemId,
+    approvedQty: committed.effectiveQty,
+    originalQty: committed.originalQty,
+    ...committed.resolution,
+  };
+}
+
+/**
+ * Reject a single transaction item.
+ *
+ * @param {string} transactionId
+ * @param {string} itemId
+ * @param {string} helperId
+ * @param {string} helperTenantId
+ * @param {string|null} reason
+ */
+async function rejectItem(transactionId, itemId, helperId, helperTenantId, reason = null) {
+  const committed = await withTransaction(async (client) => {
+    const txRow = (await client.query(
+      `SELECT status FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId],
+    )).rows[0];
+    if (!txRow) throw new AppError('Transaksi tidak ditemukan.', 404);
+    if (txRow.status !== 'PENDING_APPROVAL') {
+      throw new AppError(`Hanya transaksi PENDING_APPROVAL yang bisa diproses. Status: ${txRow.status}.`, 409);
+    }
+
+    const itemRes = await client.query(
+      `SELECT item_id, product_id, approval_status
+       FROM transaction_items
+       WHERE item_id = $1 AND transaction_id = $2 AND tenant_id = $3
+       FOR UPDATE`,
+      [itemId, transactionId, helperTenantId],
+    );
+    if (itemRes.rows.length === 0) throw new AppError('Item tidak ditemukan di booth ini.', 404);
+    const item = itemRes.rows[0];
+    if (item.approval_status !== 'PENDING') {
+      throw new AppError(`Item sudah diproses (status: ${item.approval_status}).`, 409);
+    }
+
+    await client.query(
+      `UPDATE transaction_items
+         SET approval_status = 'REJECTED',
+             rejection_reason = $1
+       WHERE item_id = $2`,
+      [reason, itemId],
+    );
+
+    await writeAuditLog({
+      action: 'ITEM_REJECTED', actorId: helperId, actorRole: 'HELPER',
+      entityType: 'TRANSACTION_ITEM', entityId: itemId,
+      newValue: { transactionId, reason },
+    });
+
+    const resolution = await _resolveAfterItemAction(client, transactionId, helperTenantId, helperId, reason);
+    return { resolution };
+  });
+
+  await _broadcastResolution(committed.resolution, transactionId, helperTenantId);
+
+  return { transactionId, itemId, ...committed.resolution };
+}
+
+/**
+ * Broadcast WS events after a per-item action resolves (or not) the transaction.
+ */
+async function _broadcastResolution(resolution, transactionId, helperTenantId) {
+  if (!resolution.done) {
+    // Item processed but transaction still waiting — update queue UI
+    try {
+      broadcastToTenant(helperTenantId, { event: 'APPROVAL_QUEUE_UPDATE', transactionId, action: 'ITEM_UPDATED' });
+    } catch (e) { logger.warn('WS APPROVAL_QUEUE_UPDATE(ITEM_UPDATED) failed', { error: e.message }); }
+    return;
+  }
+
+  if (resolution.outcome === 'CANCELLED') {
+    try {
+      broadcastToCustomer(resolution.customerId, {
+        event: 'ORDER_REJECTED', transactionId,
+        message: 'Semua item dalam pesanan Anda telah ditolak oleh helper.',
+      });
+    } catch (e) { logger.warn('WS ORDER_REJECTED broadcast failed', { error: e.message }); }
+    try {
+      broadcastToTenant(helperTenantId, { event: 'APPROVAL_QUEUE_UPDATE', transactionId, action: 'REJECTED' });
+    } catch (e) { logger.warn('WS APPROVAL_QUEUE_UPDATE(REJECTED) failed', { error: e.message }); }
+    return;
+  }
+
+  // PENDING — generate QR then notify
+  let qrPayload = null;
+  try {
+    qrPayload = await generateTransactionQR(transactionId);
+    if (qrPayload) {
+      await query(`UPDATE transactions SET qr_payload = $1 WHERE transaction_id = $2`, [qrPayload, transactionId]);
+    }
+  } catch (e) { logger.error('[_broadcastResolution] QR failed', { error: e.message }); }
+
+  try {
+    broadcastToCustomer(resolution.customerId, {
+      event: 'ORDER_APPROVED', transactionId,
+      expiresAt: resolution.expiresAt, qrPayload,
+      message: 'Pesanan Anda telah disetujui. Silakan lakukan pembayaran.',
+    });
+  } catch (e) { logger.warn('WS ORDER_APPROVED broadcast failed', { error: e.message }); }
+
+  try {
+    broadcastToTenant(helperTenantId, { event: 'APPROVAL_QUEUE_UPDATE', transactionId, action: 'APPROVED' });
+  } catch (e) { logger.warn('WS APPROVAL_QUEUE_UPDATE(APPROVED) failed', { error: e.message }); }
+}
+
 module.exports = {
   createHelperOrder,
   resendWa,
@@ -916,4 +1209,7 @@ module.exports = {
   getApprovalQueue,
   approveOrder,
   rejectOrder,
+  // Per-item approval
+  approveItem,
+  rejectItem,
 };

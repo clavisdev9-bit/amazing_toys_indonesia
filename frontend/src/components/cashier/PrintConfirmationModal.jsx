@@ -281,8 +281,9 @@ export default function PrintConfirmationModal({
 
           {/* Hint text */}
           <p className="text-center text-xs text-gray-400 pt-1">
-            ESC/POS membutuhkan printer terhubung ke jaringan (IP dikonfigurasi admin).
-            <br/>Gunakan <em>Download HTML</em> jika printer belum terhubung.
+            <strong>Print Langsung</strong> mendukung printer TCP/IP maupun USB (dikonfigurasi admin).
+            <br/>Untuk USB: pastikan nama printer Windows sudah diisi di Admin → Konfigurasi → Printer Thermal.
+            <br/>Gunakan <em>Download HTML</em> jika printer belum terhubung sama sekali.
           </p>
         </div>
       </div>

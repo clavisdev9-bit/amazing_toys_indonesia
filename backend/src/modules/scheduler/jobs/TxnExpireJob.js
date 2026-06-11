@@ -22,9 +22,8 @@ async function execute() {
   try {
     const result = await query(`
       UPDATE transactions
-         SET status     = 'EXPIRED',
-             updated_at = NOW()
-       WHERE status     = 'PENDING'
+         SET status = 'EXPIRED'
+       WHERE status = 'PENDING'
          AND expires_at IS NOT NULL
          AND expires_at < NOW()
       RETURNING transaction_id

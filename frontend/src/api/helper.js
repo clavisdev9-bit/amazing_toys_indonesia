@@ -29,3 +29,13 @@ export const approveOrder = (txnId, note = null) =>
 
 export const rejectOrder = (txnId, reason = null) =>
   client.post(`/helper/orders/${txnId}/reject`, reason ? { reason } : {});
+
+// Per-item approval
+export const approveItem = (txnId, itemId, approvedQty = null, note = null) =>
+  client.post(`/helper/orders/${txnId}/items/${itemId}/approve`, {
+    ...(approvedQty !== null ? { approved_qty: approvedQty } : {}),
+    ...(note ? { note } : {}),
+  });
+
+export const rejectItem = (txnId, itemId, reason = null) =>
+  client.post(`/helper/orders/${txnId}/items/${itemId}/reject`, reason ? { reason } : {});

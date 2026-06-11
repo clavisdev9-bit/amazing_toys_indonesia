@@ -71,7 +71,8 @@ router.get('/:txnId/public',
 
       // Ambil items — TIDAK mengekspos data customer
       const itemsResult = await query(
-        `SELECT p.product_name, ti.quantity, ti.unit_price
+        `SELECT p.product_name, ti.quantity, ti.approved_quantity,
+                ti.unit_price, ti.subtotal, ti.approval_status
          FROM transaction_items ti
          JOIN products p ON p.product_id = ti.product_id
          WHERE ti.transaction_id = $1`,
@@ -92,11 +93,16 @@ router.get('/:txnId/public',
           expiresAt:    txn.public_token_exp,
           qrData:       paid ? null : txn.qr_payload,   // sembunyikan QR setelah PAID
           paid,
-          items: itemsResult.rows.map(r => ({
-            name:      r.product_name,
-            qty:       r.quantity,
-            unitPrice: parseFloat(r.unit_price),
-          })),
+          items: itemsResult.rows
+            .filter(r => r.approval_status !== 'REJECTED')
+            .map(r => ({
+              name:             r.product_name,
+              qty:              r.approved_quantity ?? r.quantity,
+              unitPrice:        parseFloat(r.unit_price),
+              subtotal:         parseFloat(r.subtotal),
+              approvedQuantity: r.approved_quantity,
+              originalQty:      r.quantity,
+            })),
         },
       });
     } catch (err) { next(err); }

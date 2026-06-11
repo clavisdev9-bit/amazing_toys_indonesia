@@ -178,7 +178,7 @@ export default function ThermalReceipt({
   const cashChange    = success?.cashChange ?? null;
   const items         = txn?.items ?? [];
   const taxRate       = parseFloat(txn?.tax_rate ?? 0);
-  const itemCount     = items.reduce((sum, i) => sum + (i.quantity || 1), 0);
+  const itemCount     = items.filter(i => i.approval_status !== 'REJECTED').reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity ?? 1), 0);
 
   const tenantMap = new Map();
   for (const item of items) {
@@ -231,14 +231,14 @@ export default function ThermalReceipt({
 
       {/* Items */}
       <div style={S.sectionTitle}>Items Purchased</div>
-      {items.map((item, i) => (
+      {items.filter(item => item.approval_status !== 'REJECTED').map((item, i) => (
         <div key={i} style={S.itemWrap}>
           <div style={S.itemTop}>
             <span style={S.itemName}>{item.product_name}</span>
-            <span style={S.itemPrice}>{formatRupiah(Math.round(item.unit_price * item.quantity * (1 + taxRate / 100)))}</span>
+            <span style={S.itemPrice}>{formatRupiah(Math.round(item.subtotal * (1 + taxRate / 100)))}</span>
           </div>
           <div style={S.itemSub}>
-            {[item.tenant_name, item.booth_location, `x${item.quantity}`]
+            {[item.tenant_name, item.booth_location, `x${item.approved_quantity ?? item.quantity}`]
               .filter(Boolean)
               .join(' / ')}
           </div>

@@ -600,7 +600,7 @@ export default function MasterDataTab() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  {['ID / Nama','Deskripsi','Kategori','Harga','Tenant','Barcode','Status','Foto','Diperbarui','Aksi'].map((h) => (
+                  {['ID / Nama','Deskripsi','Kategori','Harga','Stok','Tenant','Barcode','Status','Foto','Diperbarui','Aksi'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -620,6 +620,13 @@ export default function MasterDataTab() {
                     </td>
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.category}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-700 whitespace-nowrap">{formatRupiah(p.price)}</td>
+                    <td className="px-3 py-2.5 text-xs tabular-nums whitespace-nowrap">
+                      <span className={`font-semibold ${
+                        p.stock_quantity <= 0  ? 'text-red-600'
+                        : p.stock_quantity <= 5 ? 'text-amber-600'
+                        : 'text-emerald-700'
+                      }`}>{p.stock_quantity}</span>
+                    </td>
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.tenant_name}</td>
                     <td className="px-3 py-2.5">
                       <button

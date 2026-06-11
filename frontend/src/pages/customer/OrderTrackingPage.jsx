@@ -229,6 +229,13 @@ function AuthenticatedOrderView({ transactionId }) {
     });
   }, [transactionId, subscribe, fetchOrder]);
 
+  // Listen for ORDER_PAID — fired by cashier after payment is processed
+  useEffect(() => {
+    return subscribe('ORDER_PAID', (data) => {
+      if (data?.transactionId === transactionId) fetchOrder();
+    });
+  }, [transactionId, subscribe, fetchOrder]);
+
   // CR-040: listen for ORDER_APPROVED / ORDER_REJECTED from helper
   useEffect(() => {
     const unsubApprove = subscribe('ORDER_APPROVED', (data) => {
@@ -251,6 +258,16 @@ function AuthenticatedOrderView({ transactionId }) {
     });
     return () => { unsubApprove(); unsubReject(); unsubPartial(); };
   }, [transactionId, subscribe, fetchOrder]);
+
+  // Polling fallback — keeps page fresh when WS is not connected or delivery fails.
+  // Only active while order is in a payment-pending status.
+  useEffect(() => {
+    const awaitingPayment = order?.status
+      && ['PENDING', 'RESERVED', 'WAITING_PAYMENT'].includes(order.status);
+    if (!awaitingPayment) return;
+    const id = setInterval(fetchOrder, 15_000);
+    return () => clearInterval(id);
+  }, [order?.status, fetchOrder]);
 
   useEffect(() => () => clearTimeout(approvalTimerRef.current), []);
 
@@ -429,7 +446,7 @@ function AuthenticatedOrderView({ transactionId }) {
                 {group.items.map((item) => (
                   <div key={item.product_id} className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-700">{item.product_name} × {item.quantity}</span>
+                      <span className="text-gray-700">{item.product_name} × {item.approved_quantity ?? item.quantity}</span>
                       {order.status === 'PENDING' && !order.approved_at && (
                         <button onClick={() => openEdit(item)} className="text-gray-400 hover:text-blue-600 transition-colors" title="Edit jumlah">
                           <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -438,7 +455,7 @@ function AuthenticatedOrderView({ transactionId }) {
                         </button>
                       )}
                     </div>
-                    <span className="text-gray-500">{formatRupiah(Math.round(item.unit_price * item.quantity * (1 + ppnRate / 100)))}</span>
+                    <span className="text-gray-500">{formatRupiah(Math.round(item.subtotal * (1 + ppnRate / 100)))}</span>
                   </div>
                 ))}
               </div>

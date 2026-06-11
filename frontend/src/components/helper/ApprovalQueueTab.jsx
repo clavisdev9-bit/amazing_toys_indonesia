@@ -1,14 +1,222 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getApprovalQueue, approveOrder, rejectOrder } from '../../api/helper';
+import { useState, useEffect, useCallback, memo } from 'react';
+import { getApprovalQueue, approveOrder, rejectOrder, approveItem, rejectItem } from '../../api/helper';
 import { formatRupiah, formatDate } from '../../utils/format';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 import Modal from '../ui/Modal';
 import { useWebSocket } from '../../hooks/useWebSocket';
 
-function ApprovalCard({ txn, onApprove, onReject, approving, rejecting }) {
-  const [showRejectModal, setShowRejectModal] = useState(false);
+// ── Smart merge helpers ────────────────────────────────────────────────────────
+// Preserve unchanged object references so React's Virtual DOM diffing can skip
+// subtrees that haven't changed — no blink, no unnecessary re-render.
+
+function mergeItems(prevItems, nextItems) {
+  if (!prevItems?.length) return nextItems;
+  const prevMap = new Map(prevItems.map(i => [i.item_id, i]));
+  return nextItems.map(i => {
+    const old = prevMap.get(i.item_id);
+    if (!old) return i;
+    if (
+      old.approval_status   === i.approval_status   &&
+      old.approved_quantity === i.approved_quantity &&
+      old.rejection_reason  === i.rejection_reason  &&
+      old.quantity          === i.quantity
+    ) return old; // same ref → React bails out of subtree re-render
+    return i;
+  });
+}
+
+function mergeQueue(prev, next) {
+  const prevMap = new Map(prev.map(t => [t.transaction_id, t]));
+  return next.map(t => {
+    const old = prevMap.get(t.transaction_id);
+    if (!old) return t;
+    const mergedItems = mergeItems(old.items, t.items ?? []);
+    const itemsUnchanged =
+      mergedItems.length === (old.items ?? []).length &&
+      mergedItems.every((it, idx) => it === (old.items ?? [])[idx]);
+    if (itemsUnchanged && old.total_amount === t.total_amount) return old;
+    return { ...t, items: mergedItems };
+  });
+}
+
+// ── Per-item row ──────────────────────────────────────────────────────────────
+
+const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
+  const [status, setStatus]           = useState(item.approval_status);
+  const [busy, setBusy]               = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showRejectModal, setShowRejectModal]   = useState(false);
+  const [approvedQty, setApprovedQty] = useState(String(item.quantity));
+  const approvedQtyNum = Math.min(item.quantity, Math.max(1, parseInt(approvedQty, 10) || 1));
   const [rejectReason, setRejectReason] = useState('');
+
+  // Sync when parent receives updated data from server
+  useEffect(() => { setStatus(item.approval_status); }, [item.approval_status]);
+
+  async function handleApproveConfirm() {
+    setBusy(true);
+    setShowApproveModal(false);
+    try {
+      const qty = approvedQtyNum < item.quantity ? approvedQtyNum : null;
+      await approveItem(txnId, item.item_id, qty);
+      setStatus('APPROVED');
+      onItemUpdated();
+    } catch (err) {
+      onError(err.response?.data?.message || 'Gagal menyetujui item.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRejectConfirm() {
+    setBusy(true);
+    setShowRejectModal(false);
+    try {
+      await rejectItem(txnId, item.item_id, rejectReason || null);
+      setStatus('REJECTED');
+      setRejectReason('');
+      onItemUpdated();
+    } catch (err) {
+      onError(err.response?.data?.message || 'Gagal menolak item.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const isPending  = status === 'PENDING';
+  const isApproved = status === 'APPROVED';
+  const isRejected = status === 'REJECTED';
+
+  const effectiveQty = isApproved && item.approved_quantity != null
+    ? item.approved_quantity
+    : item.quantity;
+
+  return (
+    <div className={`flex items-center gap-2 py-2 px-3 rounded-lg text-sm
+      ${isApproved ? 'bg-emerald-50' : isRejected ? 'bg-red-50 line-through opacity-60' : 'bg-gray-50'}`}
+    >
+      {/* Status dot */}
+      <span className={`w-2 h-2 rounded-full flex-shrink-0
+        ${isApproved ? 'bg-emerald-500' : isRejected ? 'bg-red-400' : 'bg-amber-400'}`}
+      />
+
+      {/* Product name + qty */}
+      <div className="flex-1 min-w-0">
+        <span className="text-gray-800 font-medium truncate block">{item.product_name}</span>
+        <span className="text-gray-400 text-xs">
+          {isApproved && item.approved_quantity != null && item.approved_quantity < item.quantity
+            ? <><span className="line-through mr-1">×{item.quantity}</span><span className="text-emerald-600 font-semibold">×{item.approved_quantity}</span></>
+            : `×${effectiveQty}`
+          }
+          {isRejected && item.rejection_reason && (
+            <span className="ml-1 text-red-400 italic">— {item.rejection_reason}</span>
+          )}
+        </span>
+      </div>
+
+      {/* Subtotal */}
+      <span className="text-gray-500 tabular-nums text-xs flex-shrink-0">
+        {formatRupiah(item.unit_price * effectiveQty)}
+      </span>
+
+      {/* Action buttons — only when PENDING */}
+      {isPending && (
+        <div className="flex gap-1 flex-shrink-0">
+          <button
+            disabled={busy}
+            onClick={() => { setApprovedQty(String(item.quantity)); setShowApproveModal(true); }}
+            className="px-2 py-1 text-xs font-semibold rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50"
+          >
+            {busy ? '...' : '✓'}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => { setRejectReason(''); setShowRejectModal(true); }}
+            className="px-2 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Status badge when resolved */}
+      {!isPending && (
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0
+          ${isApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+          {isApproved ? 'Disetujui' : 'Ditolak'}
+        </span>
+      )}
+
+      {/* Approve modal — with qty adjustment */}
+      <Modal open={showApproveModal} onClose={() => setShowApproveModal(false)} title="Setujui Item">
+        <p className="text-sm text-gray-600 mb-3">
+          <span className="font-semibold">{item.product_name}</span> — qty dipesan:{' '}
+          <span className="font-bold">{item.quantity} pcs</span>
+        </p>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Qty yang disetujui
+        </label>
+        <div className="flex items-center gap-2 mb-1">
+          <input
+            type="number"
+            min={1}
+            max={item.quantity}
+            value={approvedQty}
+            onChange={(e) => setApprovedQty(e.target.value)}
+            onBlur={() => setApprovedQty(String(approvedQtyNum))}
+            className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          />
+          <span className="text-xs text-gray-400">dari {item.quantity} pcs</span>
+        </div>
+        {approvedQtyNum < item.quantity && (
+          <p className="text-xs text-amber-600 mb-3">
+            ⚠ {item.quantity - approvedQtyNum} pcs tidak akan disetujui (misal: cacat/kurang stok)
+          </p>
+        )}
+        <div className="flex gap-2 mt-4">
+          <Button variant="secondary" className="flex-1" onClick={() => setShowApproveModal(false)}>Batal</Button>
+          <Button variant="primary" className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={handleApproveConfirm}>
+            ✓ Setujui {approvedQtyNum} pcs
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Reject modal */}
+      <Modal open={showRejectModal} onClose={() => setShowRejectModal(false)} title="Tolak Item">
+        <p className="text-sm text-gray-600 mb-3">
+          Tolak <span className="font-semibold">{item.product_name}</span> ×{item.quantity}?
+        </p>
+        <textarea
+          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+          rows={3}
+          placeholder="Alasan penolakan (opsional): stok habis, barang cacat, dibatalkan customer, dsb..."
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+        />
+        <div className="flex gap-2 mt-4">
+          <Button variant="secondary" className="flex-1" onClick={() => setShowRejectModal(false)}>Batal</Button>
+          <Button variant="danger" className="flex-1" onClick={handleRejectConfirm}>Tolak Item</Button>
+        </div>
+      </Modal>
+    </div>
+  );
+});
+
+// ── Approval card ─────────────────────────────────────────────────────────────
+
+const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll, approvingAll, rejectingAll, onRefresh }) {
+  const [showRejectAllModal, setShowRejectAllModal] = useState(false);
+  const [rejectAllReason, setRejectAllReason]       = useState('');
+  const [toast, setToast]                           = useState(null);
+
+  function showLocalToast(msg, type = 'error') {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  const allResolved  = txn.items?.every(i => i.approval_status !== 'PENDING');
+  const pendingCount = txn.items?.filter(i => i.approval_status === 'PENDING').length ?? 0;
 
   return (
     <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
@@ -18,144 +226,164 @@ function ApprovalCard({ txn, onApprove, onReject, approving, rejecting }) {
           <p className="font-mono text-sm font-bold text-gray-900">{txn.transaction_id}</p>
           <p className="text-xs text-gray-400">{formatDate(txn.created_at)}</p>
         </div>
-        <span className="text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2.5 py-1">
-          ⏳ Menunggu Approval
+        <span className={`text-xs font-semibold border rounded-full px-2.5 py-1
+          ${allResolved ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
+          {allResolved ? '✓ Menunggu booth lain' : `⏳ ${pendingCount} item menunggu`}
         </span>
       </div>
 
-      {/* Customer info */}
+      {/* Customer */}
       <div className="px-4 pt-3 pb-1">
         <div className="flex items-center gap-2 mb-2">
           <span className="text-base">👤</span>
           <div>
-            <p className="text-sm font-medium text-gray-800">
-              {txn.customer_name || 'Customer tidak diketahui'}
-            </p>
-            {txn.customer_phone && (
-              <p className="text-xs text-gray-400">{txn.customer_phone}</p>
-            )}
+            <p className="text-sm font-medium text-gray-800">{txn.customer_name || 'Customer tidak diketahui'}</p>
+            {txn.customer_phone && <p className="text-xs text-gray-400">{txn.customer_phone}</p>}
           </div>
         </div>
       </div>
 
-      {/* Items */}
-      <div className="px-4 pb-2 space-y-1">
+      {/* Per-item list */}
+      <div className="px-4 pb-2 space-y-1.5">
         {txn.items?.map((item) => (
-          <div key={item.product_id} className="flex justify-between text-sm">
-            <span className="text-gray-700">{item.product_name} <span className="text-gray-400">×{item.quantity}</span></span>
-            <span className="text-gray-500 tabular-nums">{formatRupiah(item.subtotal)}</span>
-          </div>
+          <ItemRow
+            key={item.item_id}
+            txnId={txn.transaction_id}
+            item={item}
+            onItemUpdated={onRefresh}
+            onError={showLocalToast}
+          />
         ))}
       </div>
 
+      {/* Local toast */}
+      {toast && (
+        <div className={`mx-4 mb-2 px-3 py-2 rounded-lg text-xs font-medium text-white
+          ${toast.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}>
+          {toast.msg}
+        </div>
+      )}
+
       {/* Total */}
       <div className="flex items-center justify-between px-4 py-2 border-t bg-gray-50">
-        <span className="text-sm text-gray-500">Total</span>
+        <span className="text-sm text-gray-500">Total (estimasi)</span>
         <span className="font-bold text-base text-emerald-700">{formatRupiah(txn.total_amount)}</span>
       </div>
 
-      {/* Action buttons */}
-      <div className="flex gap-2 px-4 py-3 border-t">
-        <Button
-          variant="danger"
-          size="sm"
-          className="flex-1"
-          loading={rejecting}
-          disabled={approving}
-          onClick={() => setShowRejectModal(true)}
-        >
-          Tolak
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-          loading={approving}
-          disabled={rejecting}
-          onClick={() => onApprove(txn.transaction_id)}
-        >
-          ✓ Setujui
-        </Button>
-      </div>
+      {/* Bulk actions — only shown when there are still pending items */}
+      {!allResolved && (
+        <div className="flex gap-2 px-4 py-3 border-t bg-gray-50">
+          <Button
+            variant="danger"
+            size="sm"
+            className="flex-1"
+            loading={rejectingAll}
+            disabled={approvingAll}
+            onClick={() => setShowRejectAllModal(true)}
+          >
+            Tolak Semua
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+            loading={approvingAll}
+            disabled={rejectingAll}
+            onClick={() => onApproveAll(txn.transaction_id)}
+          >
+            ✓ Setujui Semua
+          </Button>
+        </div>
+      )}
 
-      {/* Reject modal */}
-      <Modal
-        open={showRejectModal}
-        onClose={() => setShowRejectModal(false)}
-        title="Tolak Pesanan"
-      >
+      {/* Reject all modal */}
+      <Modal open={showRejectAllModal} onClose={() => setShowRejectAllModal(false)} title="Tolak Semua Item">
         <p className="text-sm text-gray-600 mb-3">
-          Berikan alasan penolakan untuk pesanan <span className="font-mono font-semibold">{txn.transaction_id}</span>:
+          Tolak <strong>semua item pending</strong> dari pesanan{' '}
+          <span className="font-mono font-semibold">{txn.transaction_id}</span>?
         </p>
         <textarea
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
           rows={3}
-          placeholder="Contoh: Stok habis, produk rusak, dsb..."
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
+          placeholder="Alasan penolakan (opsional)..."
+          value={rejectAllReason}
+          onChange={(e) => setRejectAllReason(e.target.value)}
         />
         <div className="flex gap-2 mt-4">
-          <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={() => { setShowRejectModal(false); setRejectReason(''); }}
-          >
+          <Button variant="secondary" className="flex-1" onClick={() => { setShowRejectAllModal(false); setRejectAllReason(''); }}>
             Batal
           </Button>
           <Button
             variant="danger"
             className="flex-1"
-            loading={rejecting}
+            loading={rejectingAll}
             onClick={() => {
-              onReject(txn.transaction_id, rejectReason || undefined);
-              setShowRejectModal(false);
-              setRejectReason('');
+              onRejectAll(txn.transaction_id, rejectAllReason || undefined);
+              setShowRejectAllModal(false);
+              setRejectAllReason('');
             }}
           >
-            Tolak Pesanan
+            Tolak Semua
           </Button>
         </div>
       </Modal>
     </div>
   );
-}
+});
+
+// ── Main tab ──────────────────────────────────────────────────────────────────
 
 export default function ApprovalQueueTab({ onCountChange }) {
-  const [queue, setQueue]       = useState([]);
-  const [loading, setLoading]   = useState(true);
+  const [queue, setQueue]             = useState([]);
+  const [loading, setLoading]         = useState(true);   // initial load only
+  const [refreshing, setRefreshing]   = useState(false);  // silent background tick
+  const [lastRefreshed, setLastRefreshed] = useState(null);
   const [approvingId, setApprovingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
-  const [toast, setToast]       = useState(null);
-  const { subscribe }           = useWebSocket();
+  const [toast, setToast]             = useState(null);
+  const { subscribe }                 = useWebSocket();
 
   function showToast(msg, type = 'success') {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 4000);
   }
 
-  const fetchQueue = useCallback(() => {
-    setLoading(true);
+  /**
+   * silent=true  → background poll / WS push — no spinner, no flicker
+   * silent=false → initial load or manual refresh button
+   */
+  const fetchQueue = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    else         setRefreshing(true);
+
     getApprovalQueue()
       .then((r) => {
         const data = r.data.data ?? [];
-        setQueue(data);
+        // Smart merge: only swap items whose data actually changed.
+        // Unchanged references let React skip those subtrees entirely.
+        setQueue((prev) => mergeQueue(prev, data));
         onCountChange?.(data.length);
+        setLastRefreshed(new Date());
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   }, [onCountChange]);
 
-  useEffect(() => { fetchQueue(); }, [fetchQueue]);
+  // Initial load
+  useEffect(() => { fetchQueue(false); }, [fetchQueue]);
 
-  // Auto-refresh every 20s in case WS misses an event
+  // Background polling every 20 s — silent so cards never blink
   useEffect(() => {
-    const id = setInterval(fetchQueue, 20_000);
+    const id = setInterval(() => fetchQueue(true), 20_000);
     return () => clearInterval(id);
   }, [fetchQueue]);
 
-  // Real-time: refresh when another helper (other booth) acts on the queue
+  // WebSocket real-time push — also silent
   useEffect(() => {
-    return subscribe('APPROVAL_QUEUE_UPDATE', fetchQueue);
+    return subscribe('APPROVAL_QUEUE_UPDATE', () => fetchQueue(true));
   }, [subscribe, fetchQueue]);
 
   function removeFromQueue(txnId) {
@@ -166,13 +394,13 @@ export default function ApprovalQueueTab({ onCountChange }) {
     });
   }
 
-  async function handleApprove(txnId) {
+  async function handleApproveAll(txnId) {
     setApprovingId(txnId);
     try {
       await approveOrder(txnId);
       removeFromQueue(txnId);
-      showToast('Pesanan disetujui. Stok dikurangi dan timer dimulai.');
-      fetchQueue();
+      showToast('Semua item disetujui. Stok dikurangi dan timer dimulai.');
+      fetchQueue(true);
     } catch (err) {
       showToast(err.response?.data?.message || 'Gagal menyetujui pesanan.', 'error');
     } finally {
@@ -180,13 +408,13 @@ export default function ApprovalQueueTab({ onCountChange }) {
     }
   }
 
-  async function handleReject(txnId, reason) {
+  async function handleRejectAll(txnId, reason) {
     setRejectingId(txnId);
     try {
       await rejectOrder(txnId, reason);
       removeFromQueue(txnId);
       showToast('Pesanan ditolak.');
-      fetchQueue();
+      fetchQueue(true);
     } catch (err) {
       showToast(err.response?.data?.message || 'Gagal menolak pesanan.', 'error');
     } finally {
@@ -194,9 +422,14 @@ export default function ApprovalQueueTab({ onCountChange }) {
     }
   }
 
+  // Format last-refreshed time as HH:MM:SS
+  const lastRefreshedStr = lastRefreshed
+    ? lastRefreshed.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : null;
+
   return (
     <div className="space-y-4">
-      {/* Toast */}
+      {/* Global toast */}
       {toast && (
         <div className={`fixed top-4 left-1/2 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white
           ${toast.type === 'error' ? 'bg-red-600' : 'bg-emerald-600'}`}
@@ -209,11 +442,26 @@ export default function ApprovalQueueTab({ onCountChange }) {
       {/* Header bar */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-bold text-gray-800">Antrian Persetujuan</h2>
-          <p className="text-xs text-gray-400">Pesanan customer menunggu review Anda</p>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-bold text-gray-800">Antrian Persetujuan</h2>
+            {/* Pulsing dot — auto-refresh active indicator */}
+            <span className="relative flex h-2 w-2" title="Auto-refresh aktif setiap 20 detik">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+          </div>
+          <p className="text-xs text-gray-400">
+            Setujui atau tolak item satu per satu
+            {lastRefreshedStr && (
+              <span className="ml-2 text-gray-300">
+                · diperbarui {lastRefreshedStr}
+                {refreshing && <span className="ml-1 text-emerald-400">↻</span>}
+              </span>
+            )}
+          </p>
         </div>
         <button
-          onClick={fetchQueue}
+          onClick={() => fetchQueue(false)}
           disabled={loading}
           className="flex items-center gap-1 text-xs text-gray-500 hover:text-emerald-600 disabled:opacity-50"
         >
@@ -224,6 +472,14 @@ export default function ApprovalQueueTab({ onCountChange }) {
         </button>
       </div>
 
+      {/* Legend */}
+      <div className="flex gap-3 text-xs text-gray-400">
+        <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"/>Menunggu</span>
+        <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"/>Disetujui</span>
+        <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1"/>Ditolak</span>
+      </div>
+
+      {/* List — spinner only on true initial load (empty queue + loading) */}
       {loading && queue.length === 0 ? (
         <div className="flex justify-center py-10"><Spinner /></div>
       ) : queue.length === 0 ? (
@@ -237,10 +493,11 @@ export default function ApprovalQueueTab({ onCountChange }) {
           <ApprovalCard
             key={txn.transaction_id}
             txn={txn}
-            approving={approvingId === txn.transaction_id}
-            rejecting={rejectingId === txn.transaction_id}
-            onApprove={handleApprove}
-            onReject={handleReject}
+            approvingAll={approvingId === txn.transaction_id}
+            rejectingAll={rejectingId === txn.transaction_id}
+            onApproveAll={handleApproveAll}
+            onRejectAll={handleRejectAll}
+            onRefresh={() => fetchQueue(true)}
           />
         ))
       )}

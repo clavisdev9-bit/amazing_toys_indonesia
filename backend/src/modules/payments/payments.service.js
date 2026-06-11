@@ -41,7 +41,8 @@ async function lookupTransaction(transactionId) {
   }
 
   const itemsResult = await query(
-    `SELECT ti.quantity, ti.unit_price, ti.subtotal,
+    `SELECT ti.quantity, ti.approved_quantity, ti.approval_status,
+            ti.unit_price, ti.subtotal,
             p.product_name, p.image_url,
             ten.tenant_id, ten.tenant_name, ten.booth_location
      FROM transaction_items ti

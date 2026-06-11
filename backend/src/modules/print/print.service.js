@@ -35,7 +35,9 @@ function rpad(str, len) {
 }
 
 /**
- * Resolve printer IP/port for a given userId.
+ * Resolve printer connection info for a given userId.
+ * Returns { type: 'TCP', ip, port } | { type: 'USB', usbName } | null
+ *
  * Priority: per-user assignment → global config → env var.
  */
 async function resolvePrinter(userId) {
@@ -44,20 +46,26 @@ async function resolvePrinter(userId) {
 
   // 1. Per-user assignment
   const assignment = userId ? assignments.find((a) => a.user_id === userId) : null;
-  if (assignment && assignment.printer_ip && assignment.printer_ip.trim()) {
-    return {
-      ip:   assignment.printer_ip.trim(),
-      port: parseInt(assignment.printer_port || 9100, 10),
-    };
+  if (assignment) {
+    const assignType = (assignment.printer_type || 'TCP').toUpperCase();
+    if (assignType === 'USB') {
+      const usbName = (assignment.printer_usb_name || '').trim();
+      if (usbName) return { type: 'USB', usbName };
+    } else if (assignment.printer_ip && assignment.printer_ip.trim()) {
+      return { type: 'TCP', ip: assignment.printer_ip.trim(), port: parseInt(assignment.printer_port || 9100, 10) };
+    }
   }
 
   // 2. Global config
-  const globalIp = (cfg.printer_ip && cfg.printer_ip.trim()) || process.env.PRINTER_IP || '';
-  if (globalIp) {
-    return {
-      ip:   globalIp,
-      port: parseInt(cfg.printer_port || process.env.PRINTER_PORT || '9100', 10),
-    };
+  const globalType = (cfg.printer_type || 'TCP').toUpperCase();
+  if (globalType === 'USB') {
+    const usbName = (cfg.printer_usb_name || '').trim();
+    if (usbName) return { type: 'USB', usbName };
+  } else {
+    const globalIp = (cfg.printer_ip && cfg.printer_ip.trim()) || process.env.PRINTER_IP || '';
+    if (globalIp) {
+      return { type: 'TCP', ip: globalIp, port: parseInt(cfg.printer_port || process.env.PRINTER_PORT || '9100', 10) };
+    }
   }
 
   return null;
@@ -67,19 +75,34 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
   const printer_addr = await resolvePrinter(userId);
 
   if (!printer_addr) {
-    throw new AppError('IP Printer belum dikonfigurasi. Atur di Admin → Konfigurasi → Printer Thermal.', 503);
+    throw new AppError(
+      'Printer belum dikonfigurasi. Atur di Admin → Konfigurasi → Printer Thermal (TCP/IP atau USB).',
+      503,
+    );
   }
 
-  const { ip: printerIp, port: printerPort } = printer_addr;
+  // Build interface string based on connection type
+  let interfaceStr;
+  let addrLabel;
+  if (printer_addr.type === 'USB') {
+    // Windows USB: interface = 'printer:NamaPrinter'
+    // Linux USB  : interface = '/dev/usb/lp0'
+    const usbName = printer_addr.usbName;
+    interfaceStr = usbName.startsWith('/dev/') ? usbName : `printer:${usbName}`;
+    addrLabel    = `USB:${usbName}`;
+  } else {
+    interfaceStr = `tcp://${printer_addr.ip}:${printer_addr.port}`;
+    addrLabel    = `${printer_addr.ip}:${printer_addr.port}`;
+  }
 
   const printer = new ThermalPrinter({
     type:          PrinterTypes.EPSON,
-    interface:     `tcp://${printerIp}:${printerPort}`,
+    interface:     interfaceStr,
     characterSet:  CharacterSet.PC850_MULTILINGUAL,
     removeSpecialCharacters: false,
     lineCharacter: '-',
     breakLine:     BreakLine.CHARACTER,
-    options: { timeout: 3000 },
+    options: { timeout: printer_addr.type === 'USB' ? 10000 : 3000 },
   });
 
   const cfg          = await adminSvc.getSystemConfig();
@@ -207,9 +230,12 @@ async function printReceipt({ txn, success, cashierName, customer, cashReceived,
   try {
     await printer.execute();
   } catch (execErr) {
-    throw new AppError(`Gagal mengirim data ke printer (${printerIp}:${printerPort}): ${execErr.message}`, 503);
+    const hint = printer_addr.type === 'USB'
+      ? `Pastikan nama printer Windows benar dan printer terhubung.`
+      : `Pastikan printer menyala dan terhubung ke jaringan.`;
+    throw new AppError(`Gagal mengirim data ke printer (${addrLabel}): ${execErr.message}. ${hint}`, 503);
   }
-  logger.info(`[Print] Receipt printed: ${txnId} → ${printerIp}:${printerPort}`);
+  logger.info(`[Print] Receipt printed: ${txnId} → ${addrLabel} [${printer_addr.type}]`);
 }
 
 module.exports = { printReceipt, resolvePrinter };

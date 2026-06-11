@@ -1,0 +1,2670 @@
+=== PAGE 1 ===
+PrinterDeveloperDocumentation
+iMinIntegratedPrinter
+DeveloperDocumentation
+
+=== PAGE 2 ===
+DocumentUpdate Description
+Version DateUpdate Content Update Preparedby
+V1.0.0 2023/7/31 InitialRelease XieHuayen
+V1.0.1 2024/4/18 1Optimize dockingwith SDK2.2.4.2 -5.How to obtainprinter status
+using Bluetooth
+XieHuayen
+V1.0.2 2024/6/25 1. The vehicle-mounted self-developed printerfirmwareaddsGS1
+one-dimensional code printingAPI. Pdf417, MaxiCode,AztecCode,
+DataMatrixQR code printingAPI
+Note:OnlysupportsPC80 printer firmware
+2. setTextBitmapTypefacesupportscustom font .ttffilesand only
+supportstextand imageprinting.
+XieHuayen
+V1.0.3 2024/8/5 IPrinterCallback callback method return value
+description
+XieHuayen
+V1.0.4 2024/9/30 1.AddAPI relatedto label printing(4. Definition oflabel printing
+interface(new))
+2.Needa new SDKversion to use
+implementation
+'com.github.iminsoftware:IminPrinterLibrary:V1.0.0.15'
+Xie Huayen
+
+=== PAGE 3 ===
+目录
+iMin Integrated Printer.....................................................................................................................1
+DeveloperDocumentation.............................................................................................................. 1
+Document Update Description ...................................................................................................2
+Introduction ................................................................................................................................ 7
+Connect to the printer interface via built-in printing service interface.....................................8
+1. Method to connect to the printer via built-in printing service interface...................... 8
+2. Bind to printing service initialization utility class.........................................................10
+3. Interface Definition Description ................................................................................................... 11
+3.1 Printer initialization and configuration ...............................................................................11
+3.1.1 Print initialization .....................................................................................................11
+3.1.2 Initialize，restore printing parameters...................................................................12
+3.2 To obtain printer-related information ................................................................................ 13
+3.2.1 To obtain printer board serial number ....................................................................13
+3.2.2 To obtain printer model ...........................................................................................14
+3.2.3 To obtain printer thermal head model ....................................................................14
+3.2.4 To obtain printer firmware version......................................................................... 15
+3.2.5 To obtain printing service version number............................................................. 16
+3.2.6 To obtain printer hardware version .........................................................................16
+3.3 To obtain printer status...................................................................................................... 17
+3.4 Printer configuration-related information......................................................................... 17
+3.4.1 To obtain USB connection pid vid ............................................................................17
+3.4.2 To obtain the name of the connected USB devices ................................................ 18
+3.4.3 To obtain the printing density ................................................................................. 18
+3.4.4 To obtain printing length ......................................................................................... 18
+3.4.8 To obtain the current paper type of the printer ..................................................... 18
+3.4.10 To obtain the frequency of paper cutting ............................................................. 19
+3.4.11 Configure printer mode.........................................................................................19
+3.4.12 To obtain printer current mode.............................................................................19
+3.5 Cash drawer Operation .......................................................................................................21
+3.5.1 Open cash drawer ....................................................................................................21
+3.5.2 To obtain current cash drawer status......................................................................21
+3.5.3 To obtain the number of times cash drawer was opened ...................................... 21
+3.6 Print self-test page..............................................................................................................21
+3.7 ESC/POS printing command............................................................................................... 23
+3.8 Paper feeding related ......................................................................................................... 23
+3.8.1 Feed one line ........................................................................................................... 23
+3.8.2 Self-define height if several lines feeding ............................................................... 23
+3.9 Cutter (Paper cutting) related .............................................................................................24
+3.9.1 Cut paper (Half-cut).................................................................................................24
+3.9.2 Cut paper（Full cut）............................................................................................. 24
+3.10 Configure print global alignment method ........................................................................24
+3.11 Text bitmap print related..................................................................................................25
+3.11.1Configure print font face........................................................................................ 25
+
+=== PAGE 4 ===
+3.11.2 Set the font size for printing text images .............................................................. 25
+3.11.3 Configure text bitmap print style .......................................................................... 25
+3.11.4 Configure text Strikethrough.................................................................................26
+3.11.5 Configure text Underline .......................................................................................26
+3.11.6 Configure text line spacing .................................................................................... 26
+3.11.7 Configure text spacing between letters................................................................ 26
+3.11.8 Configure text Anti-white...................................................................................... 27
+3.11.9 Text bitmap printing .............................................................................................. 27
+3.11.10 Text bitmap print with alignment........................................................................27
+3.12 Bitmap printing .................................................................................................................28
+3.12.1 Bitmap printing ......................................................................................................28
+3.12.2 Bitmap print with alignment................................................................................. 28
+3.12.3 Print multiple bitmap ............................................................................................ 29
+3.12.4 Print multiple bitmap with alignment...................................................................29
+3.12.5 Single colour bitmap processing and printing .......................................................30
+3.12.6 Single colour bitmap processing and print with alignment..................................30
+3.13 Print table chart ................................................................................................................31
+3.13.1 Print table in propotion to width weight.............................................................. 31
+3.13.2 Print table according to the width value ...............................................................31
+3.14 1D code print related ........................................................................................................32
+3.14.1 Configure the width of 1D code............................................................................ 32
+3.14.2 Configure the height of 1D code........................................................................... 32
+3.14.3 Configure the position of 1D code HRI character ................................................. 33
+3.14.4 Print 1D code......................................................................................................... 33
+3.14.5 1D code print with alignment................................................................................34
+3.14.6 1D code print with full parameters....................................................................... 34
+3.15 QR code print ....................................................................................................................36
+3.15.1 Configure the size of QR code............................................................................... 36
+3.15.2 Configure QR code error correction level ............................................................. 36
+3.15.3 Print QR code.........................................................................................................37
+3.15.4 Print QR code with alignment............................................................................... 37
+3.15.6. Print PDF417 .........................................................................................................38
+3.15.7. Print MaxiCode ..................................................................................................... 39
+3.15.8. Print AztecCode .................................................................................................... 39
+3.15.9. Print DataMatrix ................................................................................................... 39
+3.16 Configure left margin........................................................................................................40
+3.17 Print double QR code ......................................................................................................40
+3.17.1 Configure double QR code size............................................................................. 40
+3.17.2 Configure double QR code(QR1) left margin ........................................................ 40
+3.17.3 Configure QR code (QR2) left margin....................................................................41
+3.17.4 Configure double QR code (QR1) error level ........................................................ 41
+3.17.5 Configure QR code (QR2) error............................................................................. 41
+3.17.6 Configure double QR code (QR1) version............................................................. 41
+3.17.7 Configure double QR code (QR2) version............................................................. 42
+
+=== PAGE 5 ===
+3.17.8 Print double QR code............................................................................................ 42
+3.18 Transaction printing ..........................................................................................................42
+3.18.1 Enter transaction print mode ................................................................................43
+3.18.2 Submit a transaction ..............................................................................................43
+3.18.2 Transaction submission callback result................................................................. 44
+3.18.3 Terminate transaction print...................................................................................44
+3.18.4 Terminate transaction print callback result.......................................................... 45
+3.19 Printerupgrade ..........................................................................................................46
+3.19.1 To obtain printer upgrade status...........................................................................46
+4.Definition Explanation of Label Printing Interface (New) ............................................................. 47
+4.1. Canvas Settings.......................................................................................................... 47
+4.2 Draw text content....................................................................................................... 47
+4.3.Draw barcode content................................................................................................49
+4.4. Draw QR code content...............................................................................................50
+4.5. Draw an image...........................................................................................................50
+4.6 Draw special graphics................................................................................................. 52
+4.7 Print and draw content...............................................................................................53
+1. Example.........................................................................................................................53
+2. Printing label skills........................................................................................................ 55
+3.Description of enumeration parameters.......................................................................56
+================================================================
+==============================............................................................................59
+4.Integrate the printer via built-in virtual bluetooth connection .................................................... 59
+2.1 Virtual Bluetooth introduction ................................................................................... 59
+2.2 Virtual Bluetooth usage..............................................................................................60
+5.H5WebPageintegrate with printerthroughJSBridge....................................................... 65
+5.1 H5 Web page integrate with printer plug-in example........................................................65
+5.2 Integrate with jquery plug-in to print.................................................................................65
+5.2.1、 Simple method to introduce.............................................................................. 65
+5.2.1.1.Introduce print SDK script.................................................................................... 65
+5.2.1.2. Initialization ......................................................................................................... 66
+5.2.1.3. Integration related ...............................................................................................66
+5.2.2 Implement vue-cli scarffolding in vue2 ...................................................................66
+5.2.2.1. Configure imin-printer package in vue.config.js................................................. 66
+5.2.2.2. Import package to main.js...................................................................................67
+5.2.2.3. To use it in App.vue or components....................................................................67
+5.2.3、 Implement vite scarffolding in vue3 .................................................................. 68
+5.2.3.1. To configure imin-printer package in vite.config.js.............................................68
+5.2.3.2. Import package to main.js...................................................................................68
+5.2.3.3. Use it in App.vue or components........................................................................69
+5.3. Api Description .................................................................................................................. 69
+Initialize printer (Only support SPI/USB printing)............................................................ 69
+Obtain printer status.........................................................................................................69
+Feed paper with one line ..................................................................................................69
+
+=== PAGE 6 ===
+User-defined paper feed spacing ..................................................................................... 70
+Cut paper.......................................................................................................................... 70
+Configure alignment......................................................................................................... 70
+Configure print font size................................................................................................... 70
+Configure print font type ..................................................................................................70
+Configure text style ...........................................................................................................71
+Configure print text line spacing ...................................................................................... 71
+Configure print paper width (Can ignore this) ................................................................. 71
+Print text........................................................................................................................... 71
+Print text and add new line .............................................................................................. 71
+Print one row table...........................................................................................................72
+Configure 1D paper width ................................................................................................ 72
+Configure 1D barcode height............................................................................................72
+Select HRI character print position of 1D barcode...........................................................72
+18 Print barcode............................................................................................................... 72
+Print barcode and configure alignment method ..............................................................73
+Configure QR code size .....................................................................................................73
+Configure QR code error level .......................................................................................... 74
+Configure left margin........................................................................................................74
+Print QR code....................................................................................................................74
+Print QR code with alignment.......................................................................................... 74
+Configure paper format (Not recommend to use as the printer will be reset）............ 74
+Print bitmap ...................................................................................................................... 75
+Trigger cash drawer .......................................................................................................... 75
+Configure double QR code size.........................................................................................75
+Configure double QR code QR1 error correction level .................................................... 75
+Configure double QR code QR2 error correction level .................................................... 75
+Configure double QR code QR1 left margin.....................................................................75
+Configure double QR code QR2left margin ......................................................................76
+Configure double QR code QR1 version ...........................................................................76
+Configure double QR code QR2 version ...........................................................................76
+Print double QR code........................................................................................................76
+
+=== PAGE 7 ===
+Introduction
+iMindevicescomeswithbuilt-inthermalprinter,allowinganapplicationtoprintthermal
+receiptsdirectly via iMInSDK.Products withintegratedprintersare:
+Hand-held mobile series —— M2-202、M2-203、M2 Pro、Swift 1 、Swift 1 Pro、
+Swift2、Swift2 Pro etc.
+Tabletseries——M2Max、D1、D1Pro、Falcon1、Falcon 2 etc.
+DesktopPOSseries——D1w、D4、D4Pro 、Swan 2etc
+Therearetwotypes ofspecificationsforiMindevices’built-inprinter:
+•80mmpaperwidth,comeswith papercutter,compatiblewith 58mmwidthaswell。
+For example, Falcon 1 ,D4 Pro, Swan 2,Falcon 2 ,is equipped with this type of
+printer.
+• 58mm paper width, doesn’t comes with paper cutter. Products likeD1,D1Pro, M2
+Max,M2-202,M2-203,M2Pro,Swift1,Swift1Pro,Swift2,Swift2Proareequipped
+with thiskindofprinter
+•Labelprinting onlysupports Swan 2label version
+Note: Print Products supported by sdk V2.0: D4 Pro , Swift 2 ,
+Swift2Pro,Swift1Pro，Swan2,Falcon2,Swift2Ultra
+The application developer can integrate with the built-in printer using three different
+methods:
+•Connect totheprinterviabuilt-inprinting serviceinterface——Thismethodis suitable
+fordeveloperswhodevelopprint-relatedappsforthefirsttimeandhavezeroknowledgeabout
+EPSONcommands,toachievetheirrequiredprintingresultthroughmultipleprintinginterfaces
+providedby iMinprintingservices;
+•Connecttothe printervia the built-invirtualBluetooth ——This method issuitable
+fordevelopers whohavepastexperiencesin integrating Bluetooth,USBprinter,or
+developerswho haverealized Bluetooth printingin theirapplication,whichonly need to
+modifythe sourcecode inordertoachieve the desiredprinting effect;
+•Connect totheprinterJSSDKforHSwebbrowser——This method issuitable for
+accessingthe H5page of anapplication;
+
+=== PAGE 8 ===
+Connect to the printer interface via built-in printing
+serviceinterface
+1. Method to connect to the printer via built-in printing
+service interface
+1.1 Bind to remote library via jitpack implementation
+method(recommend)
+com.github.iminsoftware:IminPrinterLibrary:V1.0.0.15' //The latest version published on github
+shall prevail.
+settings.gradlefileconfigurationexample：
+
+
+=== PAGE 9 ===
+Note: Only implementation
+'com.GitHub.iminsoftware: IminPrinterLibrary: V1.0.0.15'
+V1.0.0.15 and above versions support label printing
+1.2Viajarpackageintegrationmethod
+Downloadthedeveloper iMinPrinter_SDK2_V1.0.0.jarfilefromthedevelopersdocumentation
+websiteandimportittothrapp-libsdirectory: https://oss-sg.imin.sg/docs/en/Printer.html
+Asshowninthescreenshotbelow：
+
+
+=== PAGE 10 ===
+Integrating the SDK using the two methods above, perform Sync Project clear Project build
+Projectaftertheconfiguration ofthe build.gradle fileis completed.
+2. Bind to printing service initialization utility class
+2.1Initializethebindedprintingservice
+2.1.1Bindtoaservice
+2.1.1.1PerforminitializationusingsdkPrinterHelper.classutilityclass
+Function：
+PrinterHelper.getInstance().initPrinterService(this);
+Example：
+UsingonCreate()method toreference the binding serviceintheMainActivityimplementationclassof the APKmain interface
+2.1.1.2Using NeoPrinterManager.classutilityclass toperform initialization
+Relatedfunction：NeoPrinterManager.getInstance().bindService(this,serviceConnectionCallback);
+Initialization configuration source code example：
+publicclassMainActivityextendsBaseActivity{
+ActivityMainBindingbinding;
+@Override
+protected void onCreate(Bundle savedInstanceState) {
+super.onCreate(savedInstanceState);
+binding =ActivityMainBinding.inflate(LayoutInflater.from(this));
+setContentView(binding.getRoot());
+PrinterHelper.getInstance().initPrinterService(BaseApplication.mContext.getApplicationContext());
+}
+@Override
+publicvoidfinish() {
+super.finish();
+PrinterHelper.getInstance().deInitPrinterService(BaseApplication.mContext.getApplicationContext());
+
+=== PAGE 11 ===
+}
+}
+2.2Unbindtheservicetoreleaseresources
+PrinterHelper.getInstance().deInitPrinterService(this);
+or NeoPrinterManager.getInstance().unBindService(this,serviceConnectionCallback);
+Example：
+Usingfinish() methodto reference the unbind serviceintheMainActivityimplementationclassof the APKmain interface
+或者
+NeoPrinterManager.getInstance().unBindService(this,serviceConnectionCallback);
+3. Interface Definition Description
+CallthefollowinginterfacetoachieveownprintingfunctionthroughPrinterHelper.GetInstance
+()object,
+3.1Printerinitializationandconfiguration
+3.1.1 Print initialization
+Function：intinitPrinter(String packageName,IPrinterCallback callback);
+Parameter：packageName->Currentapkpackagename;
+callback->Initializationresultcallback
+Example：
+PrinterHelper.getInstance().initPrinter(getPackageName(),new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean b)throws RemoteException {
+Log.d("printerTest_PrintFragment",b?"00000 绑定服务成功":"uuuuu 绑定服务失败");
+}
+@Override
+publicvoidonReturnString(String s) throws RemoteException {
+
+=== PAGE 12 ===
+}
+@Override
+publicvoidonRaiseException(inti,String s)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int i,String s)throws RemoteException{
+}
+});
+Notes：onRunResult(boolean b)Initialization successful /Failed b=true success；b=falsefailed
+3.1.2 Initialize，restore printing parameters
+Function ：voidinitPrinterParams(intfd);CorrespondingfunctioninPrinterHelper
+：voidinitPrinterParams();
+Parameters：fd->Eachapplicationassignedid。
+Notes：The fd is being processed in the jar file by default as we have used PrinterHelper.getInstance() utility to call
+printingmethod,theAPIiscalledbased onPrinterHelper.getInstance()utilitytool.Belowexampleforyourreference:
+Example：
+PrinterHelper.getInstance().initPrinterParams()
+Or
+//intfd:The id assigned byeach application
+intfd= BaseApplication.getNeoPrinterService().initPrinter(getPackageName(),new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+Log.d(TAG,"initPrinter onRunResultisSuccess="+isSuccess);
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+Log.d(TAG,"initPrinter onReturnString result="+result);
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+Log.d(TAG,"initPrinter onRaiseException code ="+code +"msg ="+msg);
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+Log.d(TAG,"initPrinter onPrintResultcode ="+ code+"msg="+msg);
+}
+
+=== PAGE 13 ===
+});
+}catch (RemoteException e) {
+e.printStackTrace();
+}
+3.2Toobtainprinter-relatedinformation
+3.2.1 To obtain printer board serial number
+Function：voidgetPrinterSerialNumber(IPrinterCallback callback);
+Parameters：
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+PrinterHelper.getInstance().getPrinterSerialNumber(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+Log.d(TAG," onRunResult ====> "+isSuccess);
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+Log.d(TAG," onReturnString ====> "+result);
+binding.textSerialNumber.setText(getString(R.string.printer_serial_number,result));
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+Log.d(TAG," onRaiseException ====> "+msg);
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+
+=== PAGE 14 ===
+}
+});
+3.2.2 To obtain printer model
+Function：voidgetPrinterModelName( IPrinterCallback callback);
+Parameters：callback ->onRunResult(boolean isSuccess): Returns the interface execution result (returns the result after the
+execution andprinting iscompleted true successfalse failure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+PrinterHelper.getInstance().getPrinterModelName(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+Log.d(TAG," result====> "+result);
+binding.textModelName.setText(getString(R.string.printer_model_name,result));
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+3.2.3 To obtain printer thermal head model
+Function：voidgetPrinterThermalHead( IPrinterCallbackcallback);
+
+=== PAGE 15 ===
+Parameters：
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+PrinterHelper.getInstance().getPrinterThermalHead(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+binding.textThermalHead.setText(getString(R.string.printer_thermal_head,result));
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+3.2.4 To obtain printer firmware version
+Function：voidgetPrinterFirmwareVersion( IPrinterCallbackcallback);
+Parameters：callback ->onRunResult(boolean isSuccess): Returns the interface execution result (returns the result after the
+execution andprinting iscompleted true successfalse failure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+PrinterHelper.getInstance().getPrinterFirmwareVersion(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+
+=== PAGE 16 ===
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+binding.textFirmwareVersion.setText(getString(R.string.printer_firmware_version,result)); }
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+3.2.5 To obtain printing service version number
+Function：StringgetServiceVersion();
+Returnvalue description：System printingservice current version
+Example：
+PrinterHelper.getInstance().getServiceVersion();
+3.2.6 To obtain printer hardware version
+Function：voidgetPrinterHardwareVersion(int fd,IPrinterCallback callback);
+Returnvalue description：System printer hardware currentversion
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().getPrinterHardwareVersion(intfd,new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+binding.textFirmwareVersion.setText(getString(R.string.printer_firmware_version,result));
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+Not usingPrinterHelper utility class：
+iNeoPrinterService..getPrinterHardwareVersion(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+
+=== PAGE 17 ===
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+binding.textFirmwareVersion.setText(getString(R.string.printer_firmware_version,result));
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+3.3Toobtainprinterstatus
+Function：intgetPrinterStatus();
+Returnvalue description:Printer currentstatus
+-1 ->Not connected toservice
+3->Printer dooropened
+4->Printer head overheated
+7 ->Paper missing
+0 ->Printer isnormal
+Example：
+PrinterHelper.getInstance().getPrinterStatus();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getPrinterStatus(intfd);
+3.4Printerconfiguration-related information
+3.4.1 To obtain USB connection pid vid
+Function:String getUsbPrinterVidPid();
+Returnvalue description：The pid, vidvaluesofthecurrentlyconnected USB devices
+Example：
+PrinterHelper.getInstance().getUsbPrinterVidPid();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getUsbPrinterVidPid(intfd);
+
+=== PAGE 18 ===
+3.4.2 To obtain the name of the connected USB devices
+Function： String getUsbDevicesName();
+Returnvalue description：The name of the currentlyconnected USBdevices
+Example：
+PrinterHelper.getInstance().getUsbDevicesName();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getUsbDevicesName(int fd);
+3.4.3 To obtain the printing density
+Function：intgetPrinterDensity();
+Returnvalue description：Returnthecurrentprinting densityof the printer
+PrinterHelper.getInstance().getPrinterDensity();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getPrinterDensity(intfd);
+3.4.4 To obtain printing length
+Function：voidgetPrinterPaperDistance( IPrinterCallback callback);
+Returnvalue description：callback.onReturnString(String s) sUnit:cm
+Example：
+PrinterHelper.getInstance().getPrinterPaperDistance(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean b)throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String s) throws RemoteException {
+Log.e(TAG,"getPrinterPaperDistance ==》 "+s);
+}
+@Override
+publicvoidonRaiseException(inti,String s)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int i,String s)throws RemoteException{
+}
+});
+3.4.8 To obtain the current paper type of the printer
+Function：intgetPrinterPaperType();
+Returnparameters：The currentpapertype 80/58
+
+=== PAGE 19 ===
+Example：
+PrinterHelper.getInstance().getPrinterPaperType();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getPrinterPaperType(intfd);
+3.4.10 To obtain the frequency of paper cutting
+Function：voidgetPrinterCutTimes(intfd,IPrinterCallback callback);
+Returnparameters：callback.onReturnString(String s) sUnit:n
+Example：
+PrinterHelper.getInstance().getPrinterCutTimes(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean b)throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String s) throws RemoteException {
+Log.e(TAG,"getPrinterCutTimes==》 "+s);
+}
+@Override
+publicvoidonRaiseException(inti,String s)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int i,String s)throws RemoteException{
+}
+});
+3.4.11 Configure printer mode (Only supports Swan 2, Swift 2
+Ultra supports label printers)
+Function：voidsetPrinterMode(intfd,intmode);
+Parameters：mode ->0small ticketmode;1Label mode
+Example：
+PrinterHelper.getInstance().setPrinterMode(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setPrinterMode(intfd,1);
+3.4.12 To obtain printer current mode(Not Supported)
+Function：intgetPrinterMode(int fd);
+Returnvalue：The current configured printermode 1：Normal mode
+Example：
+
+=== PAGE 20 ===
+PrinterHelper.getInstance().getPrinterMode();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getPrinterMode(intfd);
+3.4.13 To obtain printer current mode(support)(Only supports
+Swan 2, Swift 2 Ultra supports label printers)
+Function：voidlabelGetPrinterMode(intfd,IPrinterCallback callback);
+Returnvalue description：callback->onReturnString(String result) //“Label” or “Receipt”：
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().labelGetPrinterMode(intfd,new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+//result="Label" or "Receipt"
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+Not usingPrinterHelper utility class：
+iNeoPrinterService..labelGetPrinterMode(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+//result="Label" or "Receipt"
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+
+=== PAGE 21 ===
+});
+3.5CashdrawerOperation
+3.5.1 Open cash drawer
+Function：voidopenDrawer(int fd);
+Parameters：
+Example：
+PrinterHelper.getInstance().openDrawer();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.openDrawer(intfd);
+3.5.2 To obtain current cash drawer status
+Function： boolean getDrawerStatus(int fd);
+Returnvalue description：true open cashdrawer；falseclose cashdrawer
+Example：
+PrinterHelper.getInstance().getDrawerStatus();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getDrawerStatus(intfd);
+3.5.3 To obtain the number of times cash drawer was opened
+Function：intgetOpenDrawerTimes(int fd);
+Returnvalue description：int timesReturnSDK recordsofthe number oftimesthecash drawer wasopened
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().getOpenDrawerTimes();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getOpenDrawerTimes(intfd);
+3.6Printself-testpage
+Function：voidprinterSelfChecking(int fd,IPrinterCallback callback);
+Parameters： fd Package initialization return tag value of the current application; In general, there is no need to transmit
+callback
+
+=== PAGE 22 ===
+callback ->onRunResult(boolean isSuccess): Returns the interface execution result (returns the result after the
+execution andprinting iscompleted true successfalse failure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+1.PrinterHelper.getInstance().printerSelfChecking(null);
+2.PrinterHelper.getInstance().printerSelfChecking(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+Not usingPrinterHelper utility class：
+3.iNeoPrinterService.printerSelfChecking(intfd,null);
+4.iNeoPrinterService.printerSelfChecking(intfd,newINeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+}
+});
+
+=== PAGE 23 ===
+3.7ESC/POSprintingcommand
+Function：void sendRAWData(int fd,inbyte[]bytes, IPrinterCallbackcallback);
+Parameters：fd->Packageinitialization returntag value ofthecurrentapplication
+bytes->ESC/POScommand
+callback ->onRunResult(boolean isSuccess): Returns the interface execution result (returns the result after the
+execution andprinting iscompleted true successfalse failure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().sendRAWData(bytes,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.sendRAWData(intfd,bytes,null);
+3.8Paperfeedingrelated
+3.8.1 Feed one line
+Function：void printAndLineFeed(int fd);
+Parameters：fd->Packageinitialization returntag value ofthecurrentapplication
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printAndLineFeed();
+Not using：
+iNeoPrinterService.printAndLineFeed(this.fd);
+3.8.2 Self-define height if several lines feeding
+Function：void printAndFeedPaper(intfd,intvalue);
+Parameters：fd->Packageinitialization returntag value ofthecurrentapplication
+value ->0<value<1016 Ifvalue isbigger than 101,choose 1016
+Example：
+UsingPrinterHelperutilityclass：
+
+=== PAGE 24 ===
+PrinterHelper.getInstance().printAndFeedPaper(70);
+Not using：
+iNeoPrinterService.printAndFeedPaper(this.fd,value);
+3.9Cutter(Papercutting)related
+3.9.1 Cut paper (Half-cut)
+Function：void partialCut(int fd);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().partialCut();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.partialCut(intfd);
+3.9.2 Cut paper（Full cut）
+Function：void fullCut(intfd);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().fullCut();
+Not usingPrinterHelper utility class：
+iNeoPrinterService.fullCut(intfd);
+3.10Configureprintglobalalignmentmethod
+Function：void setCodeAlignment(intfd,intalignmentMode);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+alignmentMode ->0Align left 1 Center 2Alignright
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setCodeAlignment(0);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setCodeAlignment(intfd,0);
+
+=== PAGE 25 ===
+3.11Textbitmap printrelated
+3.11.1Configure print font face
+Function：void setTextBitmapTypeface(int fd,String typeface);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+typeface ->"Typeface.DEFAULT"configure defaultfont
+"Typeface.MONOSPACE"configureMonospace font
+"Typeface.DEFAULT_BOLD"configureBold font
+"Typeface.SANS_SERIF"configure Sans Seriffont
+"Typeface.SERIF"configure Seriffont
+“shaonvti.ttf” Custom font .ttf file
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapTypeface(“Typeface.DEFAULT”);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapTypeface(intfd,“Typeface.DEFAULT”);
+3.11.2 Set the font size for printing text images
+Function：void setTextBitmapSize(int fd, int size);
+Parameters：fd - >Initialize the package name to return the tag value of the current application
+size ->Set text image font size Default28
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapSize(28);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapSize(int fd,28);
+3.11.3 Configure text bitmap print style
+Function：voidsetTextBitmapStyle(int fd, intstyle);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+style->0 =Normal 1= Bold 2= Italic 3= BoldItalic
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapStyle(0);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapStyle(intfd,0);
+
+=== PAGE 26 ===
+3.11.4 Configure text Strikethrough
+Function：voidsetTextBitmapStrikeThru(intfd,boolean strikeThru);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+strikeThru->true=configure strikethrough，false=remove strikethrough
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapStrikeThru(false);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapStrikeThru(intfd,false);
+3.11.5 Configure text Underline
+Function：voidsetTextBitmapUnderline(intfd,boolean haveUnderline);
+Parameters：fd->Packagename initialization returnvalue ofthe currentapplication
+haveUnderline->true= configureunderline，false= remove underline
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapUnderline(false);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapUnderline(intfd,false);
+3.11.6 Configure text line spacing
+函数：voidsetTextBitmapLineSpacing(intfd,floatspace);
+参数：fd->Package nameinitialization returntagvalue of the currentapplication
+space->1<=space<=255
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapLineSpacing(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setTextBitmapLineSpacing(intfd,1);
+3.11.7 Configure text spacing between letters
+Function：voidsetTextBitmapLetterSpacing(intfd,float space);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+space-> 1<=space <=255
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapLetterSpacing(1);
+Not usingPrinterHelper utility class：
+
+=== PAGE 27 ===
+iNeoPrinterService.setTextBitmapLetterSpacing(intfd,1);
+3.11.8 Configure text Anti-white
+Function：voidsetTextBitmapAntiWhite(intfd,boolean antiWhite);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+antiWhite->true=configure anti-white false =cancel anti-white
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setTextBitmapAntiWhite(false);
+Not usingPrinterHelper class：
+iNeoPrinterService.setTextBitmapAntiWhite(intfd,false);
+3.11.9 Text bitmap printing
+Function：voidprintTextBitmap(intfd,Stringtext, IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+text->The contentto be printed
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printTextBitmap(“text\n”,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printTextBitmap(intfd,“text\n”,null);
+3.11.10 Text bitmap print with alignment
+Function：voidprintTextBitmapWithAli(intfd,String text,int align, IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+text->The contentto be printed
+align->Printimagealignment method 0=Align left1=Center 2=Alignright
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+
+=== PAGE 28 ===
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printTextBitmapWithAli(“text\n”,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printTextBitmapWithAli(intfd,“text\n”,0,null);
+3.12Bitmapprinting
+3.12.1 Bitmap printing
+Function：voidprintBitmap(intfd,inBitmap bitmap,IPrinterCallback callback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+bitmap- >Bitmap object
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBitmap(bitmap,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBitmap(intfd,bitmap,null);
+3.12.2 Bitmap print with alignment
+Function：voidprintBitmapWithAlign(intfd,inBitmap bitmap,int alignmentMode,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+bitmap- >Bitmap object
+alignmentMode->Printtextalignment mode0=Align left 1=Center 2=Align right
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+
+=== PAGE 29 ===
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBitmapWithAlign(bitmap,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBitmapWithAlign(intfd,bitmap,0,null);
+3.12.3 Print multiple bitmap
+Function：voidprintMultiBitmap(intfd,inList<Bitmap>bitmaps, IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+bitmaps- >List ofmultiple bitmap to beprinted
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printMultiBitmap(bitmaps,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printMultiBitmap(intfd,bitmaps,null);
+3.12.4 Print multiple bitmap with alignment
+Function：voidprintMultiBitmapWithAlign(intfd,inList<Bitmap>bitmaps, intalignmentMode,IPrinterCallback callback);
+Parameters：fd->Packagename initialization returnvalue ofthe currentapplication
+alignmentMode->Printtextalignment method0=Align left 1=Center 2=Align right
+bitmaps- >List ofmultiple bitmap to beprinted
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+
+=== PAGE 30 ===
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printMultiBitmap(bitmaps,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printMultiBitmap(intfd,bitmaps,0,null);
+3.12.5 Single colour bitmap processing and printing
+Function：voidprintBitmapColorChart(int fd,inBitmap bitmap, IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+alignmentMode->Printtextalignment method0=Align left 1=Center 2=Align right
+bitmaps- >Listof multiplebitmap to be printed
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBitmapColorChart(bitmaps,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBitmapColorChart(intfd,bitmaps,null);
+3.12.6 Single colour bitmap processing and print with
+alignment
+Function： voidprintBitmapColorChartWithAlign(int fd,inBitmap bitmap,intalignmentMode,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+alignmentMode->Printtextalignment method0=Align left 1= Center 2=Alignright
+bitmap- >The bitmap tobe printed
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+
+=== PAGE 31 ===
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBitmapColorChartWithAlign(bitmaps,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBitmapColorChartWithAlign(intfd,bitmaps,0,null);
+3.13Printtablechart
+3.13.1 Print table in propotion to width weight
+Function ： void printColumnsString(int fd, in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+colsTextArr- >Arrayoftextstrings ofeach column
+colsWidthArr- >Thewidth weightof each column,theratio of the width
+colsAlignArr- >Align method ofeach column (0alignleft，1center ，2align right)
+colsSizeArr- >Font sizeof each column
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Notes：The lengthofthe fourarrays must bethe same
+Example:
+PrinterHelper.getInstance().printColumnsString(in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printColumnsString(int fd, in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+3.13.2 Print table according to the width value
+Function ： void printColumnsText(int fd, in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+colsTextArr- >Arrayoftextstrings ofeach column
+
+=== PAGE 32 ===
+colsWidthArr- > An array of values for each column width (Based on English characters, each Chinese character is
+equivalentto two English characters,and each width isgreater than 0)
+colsAlignArr- >Alignment methodof each column (0align left，1center，2align right)
+colsSizeArr- >The font size ofeach column
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Notes：The lengthofthe fourarrays must bethe same
+Example：
+PrinterHelper.getInstance().printColumnsText(in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printColumnsText(int fd, in String[] colsTextArr, in int[] colsWidthArr, in int[] colsAlignArr, in int[]
+colsSizeArr,IPrinterCallbackcallback);
+3.141Dcodeprintrelated
+3.14.1 Configure the width of 1D code
+Function：voidsetBarCodeWidth(intfd,intwidth);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+width- >Therangeof 1D code widthvalue 2<=width<= 6
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setBarCodeWidth(2);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setBarCodeWidth(intfd,2);
+3.14.2 Configure the height of 1D code
+Function：voidsetBarCodeHeight(intfd,intheight);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+height- >The heightof 1D code，value rangefrom24<=height<= 250
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setBarCodeHeight(162);
+Not usingPrinterHelper utility class：
+
+=== PAGE 33 ===
+iNeoPrinterService.setBarCodeHeight(intfd,162);
+3.14.3 Configure the position of 1D code HRI character
+Function：voidsetBarCodeContentPrintPos(intfd,int pos);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+pos- >HRIcharacter position，valuerange from0<=height<= 3 ，
+0 donotprint，1above ofthe 1D code，2below the1D code，3aboveand below the1D code
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setBarCodeContentPrintPos(0);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setBarCodeContentPrintPos(intfd,0);
+3.14.4 Print 1D code
+Function：voidprintBarCode(int fd,String data,intbarCodeType,IPrinterCallback callback);
+Parametes：fd->Package nameinitialization returntag valueof thecurrentapplication
+data- >The contentof the 1D code
+barCodeType- >The type ofthe 1D code
+<item>0UPC-A</item>
+<item>1UPC-E</item>
+<item>2JAN13（EAN13）</item>
+<item>3JAN8（EAN8）</item>
+<item>4CODE39</item>
+<item>5ITF</item>
+<item>6CODABAR</item>
+<item>7CODE93</item>
+<item>8CODE128</item>
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBarCode(“123456”,4);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBarCode(intfd,“123456”,4);
+
+=== PAGE 34 ===
+3.14.5 1D code print with alignment
+Function：voidprintBarCodeWithAlign(intfd,String data,intbarCodeType,int alignmentMode,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+data- >The contentof the 1D code
+barCodeType- >The type ofthe 1D code
+<item>0UPC-A</item>
+<item>1UPC-E</item>
+<item>2JAN13（EAN13）</item>
+<item>3JAN8（EAN8）</item>
+<item>4CODE39</item>
+<item>5ITF</item>
+<item>6CODABAR</item>
+<item>7CODE93</item>
+<item>8CODE128</item>
+alignmentMode->1D code alignmentmode 0=Alignleft1=Center 2=Align right
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBarCodeWithAlign(“123456”,4,0);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBarCodeWithAlign(intfd,“123456”,4,0);
+3.14.6 1D code print with full parameters
+Function ： void printBarCodeWithFull(int fd, String data, int barCodeType, int width, int height, int textposition, int
+alignmentMode,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+data- >The contentof the 1D code
+barCodeType- >The type of1D code
+<item>0UPC-A</item>
+<item>1UPC-E</item>
+<item>2JAN13（EAN13）</item>
+<item>3JAN8（EAN8）</item>
+<item>4CODE39</item>
+<item>5ITF</item>
+
+=== PAGE 35 ===
+<item>6CODABAR</item>
+<item>7CODE93</item>
+<item>8CODE128</item>
+width- >1D code widthvalue rangefrom2<=width <=6
+height- >1D code height, value range from 24<=height<= 250
+textposition- >HRIcharacters position，value range from 0<=height<= 3
+alignmentMode->1D code alignmentmode 0=Alignleft 1=Center 2=Align right
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printBarCodeWithFull(“123456”,4,2, 162,0,0, null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printBarCodeWithFull(intfd,“123456”,4,2, 162,0,0, null);
+Notes：
+Barcodetype（0-6,73,8）
+Supported barcode
+Contentlength
+Supported ASCII code
+range
+0-->UPC-A
+Barcodecontent length
+=11,12
+48 ≤range≤57 All models
+1-->UPC-E
+Barcodecontent length
+=11,12
+48 ≤range≤57 All models
+2-->JAN13 /EAN13 Barcodecontent length=12,13 48 ≤range≤57 All models
+3-->JAN8/EAN8
+Barcodecontent length
+=7,8
+48 ≤range≤57 All models
+4-->CODE39
+Barcodecontent length
+>=1
+48≤range≤57,65≤range≤90,
+range= 32,36,37, 42,43,
+45, 46,47
+All models
+5-->ITF
+Barcodecontent length
+>=2
+48 ≤range≤57 All models
+6-->CODABAR
+Barcodecontent length
+>=2
+48≤range≤57,
+65≤range≤68,
+97≤range≤100,
+range=36,43, 45,46,47,
+58
+Z2seriesdon’t
+supportprinting，
+other models
+support
+
+=== PAGE 36 ===
+73 -->CODE128，
+8-->CODE128
+Barcodecontent length
+>=2
+0≤range≤127 All models
+7-->CODE93 1≤n≤255 1≤n≤255
+9 -> GS1128 条形码内容长度 >=2 0≤range≤127
+10 ->GS1DataBarOmnidirectional 条形码内容长度 =13 0≤range≤127
+11->GS1DataBarTruncated 条形码内容长度 =13 0≤range≤127
+12->GS1DataBarLimited 条形码内容长度 =13 0≤range≤127
+13->GS1DataBarExpanded 条形码内容长度 >=2 0≤range≤127
+Note: 9, 10, 11, 12, 13 only support PC80 printer firmware
+3.15QRcodeprint
+3.15.1 Configure the size of QR code
+Function：voidsetQrCodeSize(intfd,intsize);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+size- >QR code size value range from1<= size <=11
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setQrCodeSize(2);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setQrCodeSize(intfd,2);
+3.15.2 Configure QR code error correction level
+Function：voidsetQrCodeErrorCorrectionLev(intfd,int level);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+level- >QR code errorcorrection level value range from0<=level<=3
+0->Errorcorrection level L(7%)
+1->Errorcorrection level M(15%)
+2->Errorcorrection level Q(25%)
+3->Errorcorrection level H(30%)
+Example：
+USingPrinterHelper utilityclass：
+PrinterHelper.getInstance().setQrCodeErrorCorrectionLev(2);
+Not usingPrinterHelper utility class：
+
+=== PAGE 37 ===
+iNeoPrinterService.setQrCodeErrorCorrectionLev(intfd,2);
+3.15.3 Print QR code
+Function：voidprintQrCode(int fd,String data,IPrinterCallback callback);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+data - >The content ofQR code
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printQrCode(“123456”,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setQrCodeErrorCorrectionLev(intfd,“123456”,null);
+3.15.4 Print QR code with alignment
+Function：voidprintQrCodeWithAlign(intfd, Stringdata, intalignments,IPrinterCallbackcallback);
+Parameters：fd->Packagename intialization returntagvalue of the currentapplication
+data- >The contentof QR code
+alignments ->QRcode alignment mode0= align left 1=center 2= align right
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printQrCodeWithAlign(“123456”,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printQrCodeWithAlign(intfd,“123456”,null);
+
+=== PAGE 38 ===
+3.15.5QRcodeprintwithfullparameters
+Function：voidprintQRCodeWithFull(int fd,String data,int size, interrorlevel,int alignments, IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+data- >The contentof the QR code
+size- >QR code size value range from1<= size <=11
+level- >QR code error correctionlevel valuerangefrom 0<=level<= 3
+alignments ->QRcode alignment mode0= align left 1=center 2= align right
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printQRCodeWithFull(“123456”,1,2,0,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printQRCodeWithFull(intfd,“123456”,1,2,0,null);
+3.15.6. Print PDF417
+Function：voidprintPDF417(Stringdata,intdataRegionColumns,introws,intmoduleWidth,introwHeight,
+interrorLevel,intselectOptions,intalignments)
+Parameters：data->ThecontentoftheQR code
+dataRegionColumns->SetthenumberofcolumnsinthedatarangeDefault0
+Rows->Setthenumberofrows
+ModuleWidth->SetthewidthofthemoduleDefault2
+RowHeight->Setrowheightdefault 2
+errorLevel->SeterrorcorrectionlevelDefault m=49n=1[10%]
+SelectOptions->PleaseselectanoptionDefault0
+Alignments->QRcodealignmentmode0=alignleft 1=center 2=alignright
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printPDF417("122121221",0,0,6,4,1,0,1,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printPDF417(int fd,"122121221",0,0,6,4,1,0,1,null);
+
+=== PAGE 39 ===
+3.15.7. Print MaxiCode
+Function：voidprintMaxiCode(Stringdata,intmodeType,intalignments)
+Parameters：data->ThecontentoftheQRcode
+modeType->SelectmodeDefault50
+alignments->QRcodealignmentmode0=alignleft 1=center 2=alignright
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printMaxiCode("aaa11223232",50,1,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printMaxiCode(int fd,"aaa11223232",50,1,null);
+3.15.8. Print AztecCode
+Function：voidprintAztecCode(Stringdata,intmodeType,intdataLayers,intmoduleSize,interrorLevel,int
+alignments)
+Parameters：data->ThecontentoftheQRcode
+modeType,dataLayers->SetschematypeandnumberofdatalayersDefault
+modeType=0,dataLayers=0
+moduleSize->SetmodulesizeDefault3
+errorLevel->SeterrorcorrectionlevelDefault23
+alignments->QRcodealignmentmode0=alignleft 1=center 2=alignright
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printAztecCode("099878676237842dd",0,16,6,23,1,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printAztecCode(int fd,"099878676237842dd",0,16,6,23,1,null);
+3.15.9. Print DataMatrix
+Function：voidprintDataMatrix(Stringdata,intsymbolType,intcolumns,introws,intmoduleSize,int
+alignments)
+Parameters：data->ThecontentoftheQRcode
+symbolType ->Setthesymboltype,thedefault0
+columns->Numberofcolumns rows->Rows moduleSize->SetmodulesizeDefault3
+alignments->QRcodealignmentmode0=alignleft 1=center 2=alignright
+Example：
+UsingPrinterHelperutilityclass：
+
+=== PAGE 40 ===
+PrinterHelper.getInstance().printDataMatrix("9ufdsfkasdf",0,32,32,5,1,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.printDataMatrix(int fd,"9ufdsfkasdf",0,32,32,5,1,null;
+3.16Configureleftmargin
+Function：voidsetLeftMargin(intfd,intvalve);
+Parameters：fd->Packagename initialization returntag valueof thecurrentapplication
+valve- >Configure leftmargin value,rangefrom：0<=valve<=255
+Notes：This properties settings isglobal,thevalueneeds tobe manuallyrestored once set
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setLeftMargin(20);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setLeftMargin(intfd,20);
+3.17PrintdoubleQRcode
+3.17.1 Configure double QR code size
+Function：voidsetDoubleQRSize(intfd,intsize);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+size ->Double QR code size,valuerange from 1<=size <=8
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQRSize(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQRSize(intfd,1);
+3.17.2 Configure double QR code(QR1) left margin
+Function：voidsetDoubleQR1MarginLeft(intfd,int qr1Left);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr1Left->Double QR code QR1 leftmargin,valuerange from（0<=qr1Left<=255）
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR1MarginLeft(10);
+
+=== PAGE 41 ===
+Not usingPrinterHelpe utility class：
+iNeoPrinterService.setDoubleQR1MarginLeft(intfd,10);
+3.17.3 Configure QR code (QR2) left margin
+Function：voidsetDoubleQR2MarginLeft(intfd,int qr2Left);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr2Left->Double QR code QR2 leftmargin,valuerange from (0<=qr2Left<=255）
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR2MarginLeft(200);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR2MarginLeft(intfd,200);
+3.17.4 Configure double QR code (QR1) error level
+Function：voidsetDoubleQR1Level(intfd, intqr1Level);
+Parameters：fd->PAckage nameinitialization return tag valueof currentapplication
+qr1Level ->Double QR code QR1 error,value range from（0<= qr1Level<=3）
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR1Level(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR1Level(intfd,1);
+3.17.5 Configure QR code (QR2) error
+Function：voidsetDoubleQR2Level(intfd, intqr2Level);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr2Level ->Double QR code QR2 error,value range from（0<= qr2Level<=3）
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR2Level(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR2Level(intfd,1);
+3.17.6 Configure double QR code (QR1) version
+Function：voidsetDoubleQR1Version(int fd,int qr1Version);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr1Version- >Double QR codeQR1 error,valauerangefrom（0<=qr1Version<=3）
+Example：
+
+=== PAGE 42 ===
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR1Version(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR1Version(intfd,1);
+3.17.7 Configure double QR code (QR2) version
+Function：voidsetDoubleQR2Version(int fd,int qr2Version);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr2Version- >Double QR codeQR2 error,valuerange from（0<=qr2Version<=3）
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().setDoubleQR2Version(1);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR2Version(intfd,1);
+3.17.8 Print double QR code
+Function：voidprintDoubleQR(int fd,String qr1Data,String qr2Data,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+qr1Data ->The contentof QR1
+qr2Data ->The contentof QR2
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().printDoubleQR(“123456&147”,”fsdfsdfsdfsd144411444&&&&”,null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.setDoubleQR2Version(intfd,“123456&147”,”fsdfsdfsd11444&&&&”,null);
+3.18Transaction printing
+The transaction print mode is suitable for those who need to control what content is printed and obtain a return indication of
+the printed result (whether or not a receipt is printed), This mode is equivalent to creating a transaction queue buffer. When
+developer enters transaction print mode, it will establish a transaction queue and add additional printing method. At this
+moment, the printer will not print any content immediately until the transaction issubmitted to the printer,then only the printer
+
+=== PAGE 43 ===
+willexecute the printaccording tothequeue buffer.Itwill receive areturn resultwhen the transaction printing iscompleted.
+Thingstotake notefortransaction printing:
+1. When enter buffering mode (transaction), it will return a “success” result when the prints are submitted successfully.
+However, if the printer encounters abnormal scenario, such as paper missing, overheating, etc., all the instructions and
+printingtasksthathavebeensubmittedwillbeterminatedandreturnindicationshowingabnormalstatus.Thisalsoindicates
+thatwhen theprinter isabnormalbefore or during the execution of asingletask,the order willnotbe printed.
+2. When command printingand buffer(transaction) printingare used interchangeably,ifthe printerisabnormal,the content
+oftheprintinstruction will notbe cleared!
+3. Whenentertransactionprintingmode,theprinterwillnotprintimmediately,thecontentwillbequeuedandbuffered,itwill
+printonlywhenusers executeexitPrinterBuffer()or commitPrinterBuffer().
+4. The transaction print result callback is via the onPrintResult(int code, String msg) of the IPrinterCallback method (which
+can be time-consuming. It is not recommended to use transaction printing frequently for a single line, which will affect the
+printingspeed.Itisrecommended touse transaction printing forthewhole receipt.)
+Returnvalue code asbelow：
+a) 0!Itindicates thatthe“Transactionprint successful!”；
+b) 1!Itindicates that“Transactionprintfailed!”；
+3.18.1 Enter transaction print mode
+Function：voidenterPrinterBuffer(intfd,boolean clean);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+clean ->Confirmto clear transactionqueue data
+true ->Cleartransaction queue data thatare not printed yet
+false -> Do not clear transaction queue data that are not printe. It will be printed during the next transaction
+submission.
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().enterPrinterBuffer(false);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.enterPrinterBuffer(intfd,false);
+3.18.2 Submit a transaction
+Function：voidcommitPrinterBuffer(intfd);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().commitPrinterBuffer();
+Not usingPrinterHelpeu utilityclass：
+iNeoPrinterService.commitPrinterBuffer(intfd);
+
+=== PAGE 44 ===
+3.18.2 Transaction submission callback result
+Function：voidcommitPrinterBufferWithCallback(intfd,IPrinterCallbackcallback);
+Parameters：fd->Package name initializationreturn tagvalue ofcurrentapplication
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().commitPrinterBufferWithCallback(callback);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.commitPrinterBufferWithCallback(intfd,callback);
+PrinterHelper.getInstance().commitPrinterBuffer(new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+Log.d(TAG,"printTextWithAli onRunResult ====> "+isSuccess);
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+Log.d(TAG," onReturnString ====> "+result);
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+Log.d("NeoPrinterSDK_ transaction print callback"," transaction print result ===== 》onPrintResult
+====> "+"the codeof transation print=>"+code+" ,transaction printdescription ==》 "+msg);
+binding.tvResult.setText(" transaction print code=> "+code+" , transaction print description ==》
+"+msg);
+}
+})
+3.18.3 Terminate transaction print
+Function：voidexitPrinterBuffer(intfd,boolean commit);
+
+=== PAGE 45 ===
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+commit->Confirmtoremovetransactionqueuedatatruecleartransactionqueuebufferdata，falsedonotclearqueue
+buffer
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().exitPrinterBuffer(true);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.exitPrinterBuffer(intfd,true);
+3.18.4 Terminate transaction print callback result
+Function：voidexitPrinterBufferWithCallback(intfd,boolean commit,IPrinterCallbackcallback);
+Parameters：fd->Packagename initialization returntag valueof currentapplication
+commit->Confirmto clear queue bufferdata true Clear queue buffer data，falsedo notclear queuebuffer
+callback->onRunResult(boolean isSuccess):Returns the interface execution result(returnsthe resultafter the execution and
+printingiscompletedtrue success falsefailure)
+->onRaiseException(int code, String msg): The specific reason for the exception when the interface execution fails
+(the method cannotbeexecuted inthe code flow)
+->onPrintResult(int code, String msg): Return printer result code=1 success 0 failure (result returned after printing is
+completed)
+->onReturnString(String result): Returns the interface execution result (string data) (callback result when querying
+printer-relatedinformation)
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().exitPrinterBufferWithCallback(true,callback);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.exitPrinterBufferWithCallback(intfd,true,callback);
+PrinterHelper.getInstance().exitPrinterBufferWithCallback(true,new INeoPrinterCallback(){
+@Override
+publicvoidonRunResult(boolean isSuccess) throws RemoteException {
+Log.d(TAG,"printTextWithAli onRunResult ====> "+isSuccess);
+}
+@Override
+publicvoidonReturnString(String result) throws RemoteException{
+Log.d(TAG," onReturnString ====> "+result);
+}
+@Override
+publicvoidonRaiseException(intcode, Stringmsg)throws RemoteException {
+}
+@Override
+publicvoidonPrintResult(int code,String msg) throws RemoteException {
+Log.d("NeoPrinterSDK_ transaction print callback"," transaction print result ===== 》onPrintResult
+====> "+"transation printcode=> "+code+" ,transaction printdescription ==》 "+msg);
+
+=== PAGE 46 ===
+binding.tvResult.setText("transactionprintcode=>"+code+" ,transactionprintdescription==》"+msg);
+}
+})
+Whole transaction printing example：
+enterPrinterBuffer(true) //After enteringtransaction mode, the subsequentcommand will not beexecuted immediately
+printText(/*something*/)
+printBitmap(/*bitmapresource*/)
+//……Other printingrelated method—— Printsome content
+commitPrinterBuffer()/commitPrinterBufferWithCallback(callback)//Submit a transaction，the printer will begin to print, it
+willthen return theprintstatusvia callback,whether isitsuccessful or fail.
+……Waitingfor the submittedtransaction callback
+printText(/*something*/)
+printBitmap(/*bitmapresource*/)
+//…… other printing method —— can choose to wait, or not to wait for the previous submmited transaction callback and
+continune printing
+commitPrinterBuffer()/commitPrinterBufferWithCallback(callback)//Continuetosubmitthenexttransaction，theprinterwill
+continueto print
+exitPrinterBuffer(true)/exitPrinterBufferWithCallback(true, callback)//Terminate transaction printng mode，if new data is
+beingsubmittedafter the previous submission,printerwill continueto print,otherwise theprintingtaskwill stop.
+3.19Printerupgrade
+3.19.1 To obtain printer upgrade status
+Function：intgetPrinterIsUpdateStatus(int fd,IPrinterCallbackcallback);
+Returnvaluedescription：0->Printerstatusisnormal， 1->Manualupdateisinprogress 2->Automaticupdateinprogress
+Example：
+UsingPrinterHelperutilityclass：
+PrinterHelper.getInstance().getPrinterIsUpdateStatus(null);
+Not usingPrinterHelper utility class：
+iNeoPrinterService.getPrinterIsUpdateStatus(intfd,null);
+
+=== PAGE 47 ===
+4.Definition Explanation of Label Printing
+Interface (New)
+Only supports Swan 2 label printers
+4.1. Canvas Settings
+Interface：void labelInitCanvas(LabelCanvasStyle labelCanvasStyle)
+Function：Specify the canvas size and basic format for printing labels
+Note: To render and print content using a canvas, the canvas size to be drawn must
+be initialized first to ensure final printability;
+LabelCanvasStyle explain
+Available
+methods Method description Parameter
+Description Default value
+setWidth Initialize the canvas width for pre
+rendering
+Can be set to a size
+not exceeding the
+width of the
+printing paper
+Default 0 pixels
+setHeight Initialize the height of the pre
+rendered canvas
+Can be set to a size
+not exceeding the
+height of the
+printing paper
+Default 0 pixels
+setPosX Specify the starting horizontal axis of
+the canvas relative to the label
+Unit Pixel Default 0 pixels
+setPosY Specify the starting vertical axis of the
+canvas relative to the label
+Unit Pixel Default 0 pixels
+Note: setWidth and setHeight must specify sizes in order to draw content;
+4.2 Draw text content
+Interface：void labelAddText(String text, LabelTextStyle labelTestStyle)
+Function：Draw text content to a designated area on the canvas
+
+=== PAGE 48 ===
+String text explain
+The printing content drawn in the designated area
+LabelTextStyle explain
+Available methods Method description Parameter Description Default value
+setPosX
+Set the text content at
+the starting horizontal
+axis position of the
+canvas
+Unit Pixel 0
+setPosY
+Set the text content to
+the starting vertical
+coordinate position of
+the canvas
+Unit Pixel 0
+setTextSize Specify the size of text
+characters Effective range 6-96 pixels 24
+setTextWidthRatio Specify the multiple
+width size
+Effective range 0-9 0
+setTextHeightRatio Specify the multiplier
+size
+Effective range 0-9 0
+setWidth Set text width limit
+If a width limit is set,
+exceeding the width will
+automatically wrap the line
+Unrestricted
+（-1）
+setHeight Set text height limit
+If a height limit is set, the
+excess part will not be
+displayed
+Unrestricted
+（-1）
+setAlign
+Set the position of the
+text content relative to
+the starting coordinates
+Align Align.DEFAUL
+setRotate Set the direction of text
+content Rotate horizontal
+direction
+setTextSpace Set text spacing 0~100 pixels 0
+setEnableBold Set text bold Enable text bolding function Do not open
+setEnableUnderline Set text underline Enable text underline
+function
+Do not open
+setEnableStrikethrough Set text strikethrough Enable text strikethrough
+function
+Do not open
+setEnableItalics Set text italics Enable text italicization
+function
+Do not open
+
+=== PAGE 49 ===
+SetEnAntiColor Set Text Whitening Enable text whitewashing
+function
+Do not open
+4.3.Draw barcode content
+Interface：void labelAddBarCode(String codeData, LabelBarCodeStyle
+labelBarCodeStyle)
+Function：Draw barcode content to a designated area on the canvas
+String codeData explain
+The content of pre drawn barcodes varies depending on the code range required by
+different code systems
+LabelBarCodeStyle explain
+Available
+methods Method description Parameter Description Default value
+setPosX
+Set barcode content at
+the starting horizontal
+axis position of the
+canvas
+Unit Pixel 0
+setPosY
+Set barcode content at
+the starting vertical
+coordinate position of
+the canvas
+Unit Pixel 0
+setDotWidth Set code block width
+1-16 pixels
+Will affect the total width of
+the final barcode
+2
+setBarHeight Set barcode height
+1-255 pixels
+Will affect the total height of
+the final barcode
+162
+setReadable Set HRI location HumanReadable Not
+displaying
+setSymbology Set barcode type Symbology code128
+setAlign Set the relative
+starting coordinate Align Align.DEFAUL
+
+=== PAGE 50 ===
+position of the
+barcode
+setRotate Set barcode rotation
+direction Rotate horizontal
+direction
+setWidth Specify barcode scaling
+width
+When the scaling width is set, it
+will force a change in the size
+of the code content
+Do not scale
+setHeight Specify barcode scaling
+height
+When the scaling width is set, it
+will force a change in the size
+of the code content
+Do not scale
+4.4. Draw QR code content
+Interface：labelAddQrCode(String qrData, LabelQrCodeStyle labelQrCodeStyle)
+Function：Draw QR code content to a designated area on the canvas
+String qrDataexplain ：Content of pre printed QR code
+4.5. Draw an image
+Interface：void labelAddBitmap(Bitmap bitmap, LabelBitmapStyle labelBitmapStyle)
+Function：Draw an image
+Bitmap bitmap explain
+The bitmap object to be rendered
+Note: The image content requires a non transparent background image; Try to keep
+the image size within the canvas area, otherwise the content will be cropped and
+displayed
+LabelBitmapStyle explain
+Available
+methods
+Method
+description Parameter Description Default value
+setPosX
+Set the image to
+the starting
+horizontal axis
+Exceeding the canvas
+size will not print 0
+
+=== PAGE 51 ===
+position on the
+canvas
+setPosY
+Set the starting
+vertical coordinate
+position of the
+image on the
+canvas
+Exceeding the canvas
+size will not print 0
+setAlgorithm Set image
+conversion method ImageAlgorithm ImageAlgorithm.BINARIZATION
+setValue Set algorithm float
+value
+Floating values vary
+depending on the
+specific algorithm
+ImageAlgorithm
+setWidth Specify the zoom
+width of the image
+When setting the zoom
+width, the image size
+will be forcibly
+changed
+Do not scale
+setHeight Specify the zoom
+height of the image
+When setting the zoom
+width, the image size
+will be forcibly
+changed
+Do not scale
+LabelQrCodeStyle explain
+Available
+methods Method description Parameter Description Default
+value
+setPosX
+Set the QR code content at the
+starting horizontal axis position of
+the canvas
+Unit Pixel 0
+setPosY
+Set the QR code content at the
+starting vertical axis position of the
+canvas
+Unit Pixel 0
+setSize Set QR code block size
+1-16 pixels
+Ultimately, it will affect
+the size of the QR code
+4
+setErrorLevel Set the QR code error correction
+level ErrorLevel ErrorLev
+el.L
+setRotate Set QR code rotation direction Rotate
+horizont
+al
+direction
+
+=== PAGE 52 ===
+setWidth Specify the QR code scaling width
+When the scaling width is
+set, it will force a change
+in the size of the code
+content
+Do not
+scale
+setHeight Specify the QR code zoom height
+When the scaling width is
+set, it will force a change
+in the size of the code
+content
+Do not
+scale
+4.6 Draw special graphics
+Interface：void labelAddArea(LabelAreaStyle labelAreaStyle)
+Function：Draw graphics within the designated area of the canvas
+LabelAreaStyle explain
+Available
+methods Method description Parameter
+Description Default value
+setStyle Set drawing shape Shape Shape.RECT_FILL
+setWidth
+Set the width of the graphic
+Invalid when the shape is a line
+segment
+When the shape is circular, it
+represents the diameter of the
+circle
+Unit Pixel 50
+setHeight
+Set the height of the graphic
+Invalid when the shape is a line
+segment
+Invalid when the shape is circular
+Unit Pixel 50
+setPosX Set the starting x-coordinate Unit Pixel 0
+setPosY Set the starting y-coordinate Unit Pixel 0
+setEndX Set the x-coordinate of the
+endpoint of the line segment
+Unit Pixel 50
+setEndY Set the endpoint y-coordinate of
+the line segment
+Unit Pixel 50
+setThick Set stroke Unit Pixel 1
+
+=== PAGE 53 ===
+4.7 Print and draw content
+Interface：void labelPrintCanvas(int count, ILabelPrintResult iLabelPrintResult)
+Function：If the canvas content is valid, the specified printer will print the canvas
+content
+count explain
+The number of times to print, if it is a label printer, will be printed on each label
+separately, with a printing quantity greater than 0 sheets
+ILabelPrintResult explain
+ResultCode : Printing success returns 0, printing failure returns<0
+Message : Additional information upon failure
+1. Example
+Build a complete style template consisting of a title, QR code, text, and barcode for
+label printing
+50mm * 30 mm Label Template
+Code implementation：
+PrinterHelper.getInstance().labelInitCanvas(LabelCanvasStyle.getCanvasStyle()
+
+=== PAGE 54 ===
+.setWidth(50 * 8)
+.setHeight(30 * 8)
+.setPosX(48));
+PrinterHelper.getInstance().labelAddArea(LabelAreaStyle.getAreaStyle()
+.setStyle(Shape.BOX)
+.setPosX(18)
+.setPosY(2)
+.setWidth(50 * 8 - 22)
+.setHeight(30 * 8 - 24)
+.setThick(2));
+PrinterHelper.getInstance().labelAddText("POS Label Test", LabelTextStyle.getTextStyle()
+.setPosX(57)
+.setPosY(43)
+.setTextSize(40)
+.setEnableBold(true)
+.setEnAntiColor(true)
+//.setAlign(Align.CENTER)
+.setTextSpace(2));
+PrinterHelper.getInstance().labelAddArea(LabelAreaStyle.getAreaStyle()
+.setStyle(Shape.PATH)
+.setPosX(18)
+.setPosY(53)
+.setEndX(50 * 8 - 4)
+.setEndY(53)
+.setThick(2));
+PrinterHelper.getInstance().labelAddText("Price:",LabelTextStyle.getTextStyle()
+.setPosX(26)
+.setPosY(88)
+.setTextSize(28));
+PrinterHelper.getInstance().labelAddText("888",LabelTextStyle.getTextStyle()
+.setPosX(96)
+.setPosY(88)
+.setTextSize(28)
+.setEnableStrikethrough(true));
+PrinterHelper.getInstance().labelAddText("¥666",LabelTextStyle.getTextStyle()
+.setPosX(156)
+.setPosY(93)
+.setTextSize(36)
+.setEnableBold(true));
+PrinterHelper.getInstance().labelAddText("Origin:Shenzhen",LabelTextStyle.getTextStyle()
+.setPosX(26)
+.setPosY(128)
+.setTextSize(28));
+
+=== PAGE 55 ===
+PrinterHelper.getInstance().labelAddBarCode("12345678",
+LabelBarCodeStyle.getBarCodeStyle()
+.setPosX(26)
+.setPosY(138)
+.setSymbology(Symbology.CODABAR)
+.setDotWidth(2)
+.setBarHeight(45)
+.setReadable(HumanReadable.POS_TWO));
+PrinterHelper.getInstance().labelAddQrCode("123456789",
+LabelQrCodeStyle.getQrCodeStyle()
+.setPosX(255)
+.setPosY(80)
+.setSize(6)
+.setErrorLevel(ErrorLevel.H));
+PrinterHelper.getInstance().labelPrintCanvas(1,null);
+2. Printing label skills
+2-1.Printablanklabel
+When printing a test blank label, it can be achieved through the following methods
+PrinterHelper.getInstance().labelInitCanvas(LabelCanvasStyle.getCanvasStyle()
+.setWidth(50 * 8)
+.setHeight(30 * 8));
+PrinterHelper.getInstance().labelPrintCanvas(1,null);
+2-2.Printimagelabels
+When it is necessary to print the image label template generated by the customer, the following
+interface can be directly called to achieve label printing
+Interface：void labelPrintBitmap(Bitmap bitmap, int width, int height, IPrinterCallback callback){
+Example：
+PrinterHelper.getInstance().labelPrintBitmap(picBitmap,picBitmap.getWidth()/8,picBitmap.getHe
+ight() / 8, null);
+
+=== PAGE 56 ===
+3.Description of enumeration parameters
+AlignAlignmentmethod
+List content explain
+DEFAULT Default left
+LEFT Align to the left
+CENTER Center Alignment
+RIGHT Right aligned
+RotateDrawdirection
+List content explain
+ROTATE_0 Level 0 degrees
+ROTATE_90 90 degree direction
+ROTATE_180 180 degree direction
+ROTATE_270 270 degree direction
+HumanReadable Barcodecontentreadablelocation
+List content explain
+HIDE hide
+POS_ONE Bottom on the left
+POS_TWO Bottom centered
+POS_THREE Bottom on the right
+
+=== PAGE 57 ===
+SymbologyBarcode type (detailed reference: 3.14.6
+one-dimensional code printing transmission full parameters,
+commentsinside)
+List
+content explain
+UPCA
+UPC-A Barcode product barcode is a pure number with 11 digits After
+encoding, an additional checksum is added to form a 12 digit number,
+mainly used in the United States and Canada
+UPCE
+UPC-E Barcode product barcode is a pure number, reduced from
+UPC-A, with 7 digits and the first digit must be 0 After encoding, add a
+checksum to form an 8-bit number
+EAN13
+EAN13 The product barcode is a pure number, and the number of
+digits is 12
+After encoding, add a checksum to form a 13 digit number
+EAN8 EAN8 product barcode is a pure number, and the number of digits is 7
+After encoding, add a checksum to form an 8-bit number
+CODE39
+Code39 barcode generation character set includes numbers, uppercase
+letters, and -. $/+%* Characters such as spaces The '*' is only used to
+mark the beginning and end
+ITF
+Interleaved 2 of 5 barcode generation, commonly used in logistics
+management The character set consists only of numbers and has an even
+number. If it is an odd number, it will automatically be preceded by a '0'
+CODABAR
+Codabar barcode generation, character set includes numbers and - $:/+
+And characters such as ABCD ABCD is only used for the beginning or
+end, and is used as an identifier
+CODE93 Code93 barcode generation is in full ASCII mode, which can use all 128
+characters of ASCII
+CODE128 Combination code 128a code128b、code128c， Need to dynamically
+switch according to the code content
+ErrorLevelQRcodeerrorcorrectionlevel
+List content explain
+L Error correction level L 7%
+
+=== PAGE 58 ===
+M Error correction level M 15%
+Q Error correction level Q 25%
+H Error correction level H 30%
+ImageAlgorithmImageconversionalgorithm
+List content explain Reference floating value
+BINARIZATION Binary algorithm
+The binarization algorithm converts different color
+values into black by adjusting the floating value
+You can choose a general floating value of 200 based
+on the color information in the image
+DITHERING Jitter grayscale
+algorithm
+The jitter grayscale algorithm does not need to
+consider changes in floating values
+ShapeSpecialgraphics
+Special graphics explain
+RECT_FILL Fill the rectangular area with black blocks
+RECT_WHITE Erase the rectangular area into white blocks
+RECT_REVERSE Whitening rectangle: The rectangular area will be whitened
+BOX hollow rectangle
+CIRCLE Hollow circular
+OVAL hollow ellipse
+PATH line segment
+
+=== PAGE 59 ===
+==============================================================================================
+4.Integrate the printer via built-in virtual
+bluetooth connection
+2.1 Virtual Bluetooth introduction
+You are able to see a paired and ever-present Bluetooth device - "InnerPrinter" in the list of bluetooth device, this is the
+printer devicevirtualizedby the operatingsystem, whichdoesnotactuallyexists.Virtual BluetoothsupportsiMin《esc/pos》
+command,which thereare somespecial commandsare self-defined byiMin，forexample：
+Function Command
+Opencash drawer command byte［5］：0x10 0x14 0x00 0x00 0x00
+Cut paper command,complete cut byte［2］：0x1B 0x69
+Cut paper command,leavea littlespaceone theleftanddo not cut byte［2］：0x1d 0x56
+Cut paper command, complete cut ：0x1d, 0x56, 0x00(Only PC80, which is a
+self-developed printer, supports this command involving continuing D4 Pro, Swan 2, Falcon 2)
+
+=== PAGE 60 ===
+Half cut ：0x1d, 0x56, 0x01
+Half cut ：0x1d, 0x42, 0x00, 0x00 // Walk to the paper tearing position
+(recommended to use)
+2.2 Virtual Bluetooth usage
+2.2.1.EstablishaconnectionwiththeBluetoothdevice
+2.2.2.Combine the commandsand text content and transcode
+toBytes
+2.2.3.SendtoBluetoothPrinter。
+2.2.4. The underlying printing service drives the printing
+devicetocompletetheprinting
+Note: BluetoothUtel is a type of Bluetooth tool used to connect the virtual Bluetooth device
+InnerPrintertoiMinprintingdevices.
+2.2.4.1. Utility class BluetoothUtil ，is the standard Bluetooth utility
+class
+Sourcecode example：
+publicclassBluetoothUtil {
+/**
+*Isthe Bluetooth enabled?
+*/
+publicstatic booleanisBluetoothOn() {
+BluetoothAdaptermBluetoothAdapter=BluetoothAdapter.getDefaultAdapter();
+if(mBluetoothAdapter !=null)
+//Bluetoothisenabled
+if(mBluetoothAdapter.isEnabled())
+
+=== PAGE 61 ===
+returntrue;
+returnfalse;
+}
+/**
+*Selectaspecifictype of device tobe shown from the listofpaired devices
+*@param deviceClass
+*@return
+*/
+publicstatic BluetoothDevicegetDevice() {
+BluetoothDeviceinnerprinter_device =null;
+Set<BluetoothDevice>devices=BluetoothAdapter.getDefaultAdapter().getBondedDevices();
+for(BluetoothDevice device :devices) {
+if(device.getAddress().equals(Innerprinter_Address)) {
+innerprinter_device=device;
+break;
+}
+}
+return innerprinter_device;
+}
+/**
+*Pop-up adialog requestingto enable Bluetooth
+*/
+publicstatic void openBluetooth(Activityactivity) {
+IntentenableBtIntent =new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+activity.startActivityForResult(enableBtIntent,666);
+}
+publicstatic BluetoothSocketconnectDevice(BluetoothDevice device){
+//BUilt-inprinter bluetooth00001101-0000-1000-8000-00805F9B34FB
+BluetoothSocketsocket=null;
+try{
+socket=device.createRfcommSocketToServiceRecord(
+UUID.fromString("00001101-0000-1000-8000-00805f9b34fb"));//Third-party Bluetooth printer
+00000000-0000-1000-8000-00805f9b34fb00001101-0000-1000-8000-00805f9b34fb
+socket.connect();
+Log.i("imin_print_cmd_1111", "=================888888888888888= Bluetooth is connected
+successfully11111");
+}catch (IOExceptione) {
+Log.i("imin_print_cmd_1111", "=================888888888888888==================
+e.getMessage()"+e.getMessage());
+try{
+
+=== PAGE 62 ===
+socket.close();
+}catch (IOExceptioncloseException) {
+returnnull;
+}
+returnnull;
+}
+returnsocket;
+}
+private staticOutputStreamWriter mWriter =null;
+private staticOutputStream mOutputStream =null;
+publicstatic void openOutputStream(OutputStream outputStream,String encoding)throws IOException {
+mWriter =newOutputStreamWriter(outputStream, encoding);
+mOutputStream=outputStream;
+}
+publicstaticvoidsendData(byte[]bytes, BluetoothSocketsocket) throws IOException {
+if(socket!=new){
+OutputStreamout =socket.getOutputStream();
+out.write(bytes,0, bytes.length);
+out.close();
+}
+}
+}
+2.2.4.2. Bluetooth connection print service example
+1. TodeterminewhetherthesystemBluetoothfunctionisenabled
+if(BluetoothUtil.isBluetoothOn()){
+//
+}else {
+BluetoothUtil.openBluetooth(BluetoothActivity.this);
+}
+2.TodetectiMinbuilt-inBluetoothdevice
+BluetoothDevicedevice =BluetoothUtil.getDevice(btAdapter);
+if(device ==null) {
+Toast.makeText(getBaseContext(),"PleaseMake SureBluetoothhave InnterPrinter!",
+Toast.LENGTH_LONG).show();
+
+=== PAGE 63 ===
+return;
+}
+3.Receiptdatatobeprinted
+byte[] b = null;
+4.Printreceiptdataviabuilt-inBluetoothprinter
+BluetoothSocketsocket=null;socket=BluetoothUtil.getSocket(device);
+BluetoothUtil.sendData(data,socket);
+5.HowtoobtainprinterstatususingBluetooth
+5.1 Register a broadcast listener within the onCreate() method of the application
+try {
+IntentFilter intentFilter = new IntentFilter();
+intentFilter.addAction(ACTION_PRINTER_STATUS_CHANGE);
+registerReceiver(mReceiver, intentFilter);
+} catch (Exception e) {
+}
+5.2 Handle the callback of status value in broadcast mode
+private static final String ACTION_PRINTER_STATUS = "status";
+///Status value
+public static final int PRINTER_NORMAL = 0;//Normal
+public static final int PRINTER_UNCAP = 3;////Printer door open
+public static final int PRINTER_LOWER_POWER = 4;//Low power
+public static final int PRINTER_OVER_HEAT = 5;//Overheat
+public static final int PRINTER_CUTTING_ERROR = 6;//Paper cutter jam
+public static final int PRINTER_PAPER_OUT = 7;//Paper missing
+public static final int PRINTER_OTHER_ERROR = 99;//Other errors
+private TextView tv_status;
+private BroadcastReceiver mReceiver = new BroadcastReceiver() {
+@Override
+public void onReceive(Context context, Intent intent) {
+int status = intent.getIntExtra(ACTION_PRINTER_STATUS, -1);
+String PrinterStatus = "";
+switch (status) {
+case PRINTER_NORMAL:
+PrinterStatus = "Normal";
+break;
+case PRINTER_UNCAP:
+PrinterStatus = "Printer door open";
+break;
+
+=== PAGE 64 ===
+case PRINTER_OVER_HEAT:
+PrinterStatus = "Overheat";
+break;
+case PRINTER_LOWER_POWER:
+PrinterStatus = "Low power";
+break;
+case PRINTER_CUTTING_ERROR:
+PrinterStatus = "Paper cutter jam";
+break;
+case PRINTER_PAPER_OUT:
+PrinterStatus = "Paper missing";
+break;
+case PRINTER_OTHER_ERROR:
+PrinterStatus = "Other errors";
+break;
+}
+}
+};
+5.3 Registerbroadcastlistenerinapplication onDestroy()
+try {
+unregisterReceiver(mReceiver);
+} catch (Exception e) {
+}
+2.2.5. Items to take note
+Youneed toadd aBluetooth permissionstatementintheApplication projectinorder to use theBluetoothdevices:
+<uses-permissionandroid:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.MOUNT_UNMOUNT_FILESYSTEMS" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+=== PAGE 65 ===
+5.H5 Web Page integrate with printer through JS
+Bridge
+5.1H5Webpageintegratewithprinterplug-inexample
+$('#btn').click(function(){
+//Firstmethod:Nativeprint
+varmywindow =window.open('','PRINT','height=400,width=600');
+mywindow.document.write('<html><head><title>' +document.title +'</title>');
+mywindow.document.write('</head><body>');
+mywindow.document.write(document.getElementById('PrintContent').innerHTML);
+mywindow.document.write('</head><body>');
+mywindow.print();
+})
+5.2Integratewithjqueryplug-in toprint
+5.2.1、 Simplemethod tointroduce
+5.2.1.1.IntroduceprintSDKscript
+<scripttype="text/javascript"src="./imin-printer.min.js"></script>
+
+=== PAGE 66 ===
+5.2.1.2. Initialization
+var IminPrintInstance =new IminPrinter();
+5.2.1.3. Integration related
+IminPrintInstance.connect().then(async (isConnect) =>{
+if(isConnect) {
+//Initializeprinter
+IminPrintInstance.initPrinter()
+//Obtain printer status
+awaitIminPrintInstance.getPrinterStatus()
+}
+}）
+5.2.2 Implement vue-cli scarffolding in vue2
+5.2.2.1.Configureimin-printerpackageinvue.config.js
+const{defineConfig} =require("@vue/cli-service");
+constpath= require('path');
+console.log(path.join(__dirname,'src/assets/imin-printer.esm.browser.min.js'))
+module.exports=defineConfig({
+transpileDependencies: true,
+configureWebpack:{
+resolve:{
+alias:{
+'imin-printer':path.join(__dirname,'src/assets/imin-printer.esm.browser.min.js')
+}
+},
+plugins:[
+]
+},
+});
+
+=== PAGE 67 ===
+5.2.2.2. Import package to main.js
+importVuefrom 'vue'
+importApp from'./App.vue'
+importIminPrinterfrom'imin-printer';
+Vue.config.productionTip=false
+Vue.use(IminPrinter)
+new Vue({
+printer:new IminPrinter(),
+render:h =>h(App),
+}).$mount('#app')
+5.2.2.3.TouseitinApp.vueorcomponents
+exportdefault{
+name:'App',
+data() {
+return{
+isConnect: false
+}
+},
+created() {
+this.init();
+},
+methods: {
+asyncinit() {
+this.isConnect=awaitthis.$printer.connect()
+},
+asyncgetPrinterStatus(){
+returnawait this.$printer.getPrinterStatus()
+},
+handleClick(){
+if(!this.isConnect) return false
+console.log(this.getPrinterStatus());
+}
+},
+beforeDestroy() {
+this.isConnect=false
+}
+
+=== PAGE 68 ===
+}
+5.2.3、 Implement vite scarffolding in vue3
+5.2.3.1.Toconfigureimin-printerpackageinvite.config.js
+import{fileURLToPath, URL}from'node:url'
+import{defineConfig}from 'vite'
+importvue from '@vitejs/plugin-vue'
+//https://vitejs.dev/config/
+exportdefaultdefineConfig({
+plugins:[
+vue(),
+],
+resolve:{
+alias:{
+'@':fileURLToPath(new URL('./src', import.meta.url)),
+'imin-printer':fileURLToPath(new URL('./src/assets/imin-printer.esm.browser.min.js',import.meta.url))
+}
+}
+})
+5.2.3.2.Importpackagetomain.js
+importIminPrinterfrom'imin-printer';
+import{createApp} from 'vue'
+importApp from'./App.vue'
+constapp=createApp(App)
+app.config.globalProperties.$printer =new IminPrinter('10.0.21.53');
+app.mount('#app')
+
+=== PAGE 69 ===
+5.2.3.3. Use it in App.vue or components
+import{ getCurrentInstance,ref}from 'vue'
+const{proxy }=getCurrentInstance()
+constisConnect=ref(false)
+constinit=async ()=> {
+isConnect.value =awaitproxy.$printer.connect()
+}
+init();
+constgetPrinterStatus=async() =>{
+return awaitthis.$printer.getPrinterStatus()
+}
+consthandleClick=()=> {
+if(!isConnect.value) returnfalse
+console.log(getPrinterStatus());
+}
+5.3.ApiDescription
+Initialize printer (Only support SPI/USB printing)
+Function：initPrinter()
+Obtain printer status
+Function： getPrinterStatus(IminPrintInstance.PrintConnectType, callback)
+Printerstatusdescription：
+-1->Not connected toservice
+3 ->Printer door opened
+4 ->Printerheadisoverheated
+7 ->Paper ismissing
+0 ->Printer isnormal
+Example：
+IminPrintInstance.getPrinterStatus(IminPrintInstance.PrintConnectType.SPI,function(status) {2 console.log('printer
+status:'+status.value);3})
+Feed paper with one line
+Function：printAndLineFeed()
+Example：
+
+=== PAGE 70 ===
+IminPrintInstance.printAndLineFeed();
+User-defined paper feed spacing
+Function： printAndFeedPaper(value)
+Parameters：value paper feeding distance range（0<value<255）
+Example：
+IminPrintInstance.printAndFeedPaper(100);
+Cut paper
+Function：partialCut()
+Example：
+IminPrintInstance.partialCut();
+Configure alignment
+Function：setAlignment(alignment)
+Parameters：
+alignment–>
+0=Alignleft
+1=Center
+2=Alignright
+Default=0
+Example：
+IminPrintInstance.setAlignment(1);
+Configure print font size
+Function：setTextSize(size)
+Parameters：size,by default is28
+Example：
+IminPrintInstance.setTextSize(26);
+Configure print font type
+Function：setTextTypeface(typeface)
+Parameters：typeface ->0Default font 1Equal width2Bold 3Sansserif4Serif
+Example：
+IminPrintInstance.setTextTypeface(0)
+
+=== PAGE 71 ===
+Configure text style
+Function：setTextStyle(style)
+Parameters：style ->0 standardnormal 1Bold2Italic 3 BoldItalic
+Example：
+IminPrintInstance.setTextStyle(1);
+Configure print text line spacing
+Function：setTextLineSpacing(space)
+Parameters：space linespacing,range from 0<space<255,Bydefault is1.0f
+Example：IminPrintInstance.setTextLineSpacing(1.0f);
+Configure print paper width (Can ignore this)
+Function：setTextWidth(width)
+Parameters：width ->576 80mm paper width,bydefault
+->384 58mm paperwidth
+Example：
+IminPrintInstance.setTextWidth(576);
+Print text
+Function：printText(text)
+Parameters：text->The textcontentto be printed
+Example：
+IminPrintInstance.printText('testprintcentent');
+Print text and add new line
+Function：printText(text, type)
+参数：text->When the contentislessthan one or more than onelines,you needto addanewline breakindication "n"at the
+endof the contentto printimmediately,otherwiseitwill be cached inthe buffer
+type ->Can ignorethis
+Notes：Tochangetheprinttextmod(forexamplethealignmentmethod,fontsize,fonttypeandetc.),pleaseperformitbefore
+printTextcommand.
+Example：
+IminPrintInstance.printText('testprintcentent',0);
+
+=== PAGE 72 ===
+Print one row table
+Function：printColumnsText(colTextArr,colWidthArr,colAlign,width, size)
+Parameters：colTextArr–>Arrayof columntextstrings
+colWidthArr–>Arrayper column widt, basedon Englishcharacters, each Chinesecharacter isequivalentto two
+Englishcharacters, andeach widthisgreater than 0.
+colAlign–>alignmentmethod：0align left，1center，2alignright
+size–>The fontsize ofeach column stringarray
+width–>The totalwidth ofone lineprint(80mm paperwidth =576，50mm paper width=384）
+Example：
+IminPrintInstance.printColumnsText(["1","iMin","iMin"],[1,2,1],[1,0,2],[26,26,26],576);
+Configure 1D paper width
+Function：setBarCodeWidth(intwidth)
+Parameters：width–>Barcodewidth level 2<=width<=6,Ifthedefaultbarcodewidth level isnotsetto 3
+Example：
+IminPrintInstance.setBarCodeWidth(4);
+Configure 1D barcode height
+Function：setBarCodeHeight(height)
+Parameters：height–>Barcode height24<=Height<=250，every8dotsare equivalentto 1mm
+Example：
+IminPrintInstance.setBarCodeHeight(100);
+Select HRI character print position of 1D barcode
+Function：setBarCodeContentPrintPos(position)
+Parameters：position->HRIcharacter printposition
+0–>Donot print
+1–>Abovethe barcode
+2–>Below the barcode
+3–>Aboveand below the barcode
+Example：
+IminPrintInstance.setBarCodeContentPrintPos(2);
+18 Print barcode
+Function：printBarCode(barCodeType,barCodeContent) throws UnsupportedEncodingException
+Parameters：barCodeType–>barcodetype 0<=barcodetype <=6 andbarcode type =8
+
+=== PAGE 73 ===
+barCodeContent–>printbarcode string content
+Example：
+IminPrintInstance.printBarCode(8,"0123456789");//Code128
+Barcodetype
+（0-6,73,8）
+Supportedbarcode
+contentlength
+Supported ASCII source code range
+0-->UPC-A Barcode contentlength =11,12 48 ≤range≤57 Allmodels
+1-->UPC-E Barcode contentlength =11,12 48 ≤range≤57 Allmodels
+2-->JAN13 /
+EAN13
+Barcode contentlength=12,13 48 ≤range≤57 Allmodels
+3-->JAN8/EAN8 Barcode contentlength =7,8 48 ≤range≤57 Allmodels
+4-->CODE39 Barcode contentlength >=1
+48≤range≤57,65≤range≤90,
+range= 32,36,37, 42,43,45, 46,47
+Allmodels
+5-->ITF Barcode contentlength >=2 48 ≤range≤57 Allmodels
+6-->CODABAR Barcode contentlength >=2
+48≤range≤57,65≤range≤68,
+97≤range≤100,
+range=36,43, 45,46,47,58
+Doesn’tsupportprinting on Z2
+series,othersare supported
+73 -->CODE128，
+8-->CODE128
+Barcode contentlength >=2 0≤range≤127 Allmodels
+7-->CODE93 1≤n≤255 1≤n≤255
+Print barcode and configure alignment method
+Function：printBarCode(barCodeType,barCodeContent, alignmentMode)throws UnsupportedEncodingException
+Parameters：barCodeType–>barcodetype 0<=barcodetype <=6 andbarcode type =73
+barCodeContent–>printbarcodecharactercontent，ifitiscode128printing，thenhavetoadd｛A、｛Bor｛Catthefront，
+exampleas below
+alignmentMode–>0= align left,/1=Center,/2=alignright
+Example：
+IminPrintInstance.printBarCode(73,"{B0123456789",1);
+Configure QR code size
+Function：setQrCodeSize(level)
+Parameters：level->QR codesize，Unit:dot，1<= level<=11
+Example：
+IminPrintInstance.setQrCodeSize(2);
+
+=== PAGE 74 ===
+Configure QR code error level
+Function：setQrCodeErrorCorrectionLev(level)
+Parameters：level- >QR code errorcorrection level,value rangefrom 0<=level<= 3
+0 ->errorcorrection level L(7%)
+1->error correctionlevel M(15%)
+2->error correctionlevel Q(25%)
+3->error correctionlevel H(30%)
+Example：
+IminPrintInstance.setQrCodeErrorCorrectionLev(51);
+Configure left margin
+Functino：setLeftMargin(marginValue)
+Parameters：marginValue–>leftmarginvalue,0<marginValue<255
+Example：
+IminPrintInstance.setLeftMargin(100);
+Print QR code
+Function：printQrCode(qrStr)
+Parameters：qrStr–> Qrcode content
+Example：
+IminPrintInstance.printQrCode("https://www.imin.sg");
+Print QR code with alignment
+Function：printQrCode(qrStr,alignmentMode)
+Parameters：qrStr–> QRcode content
+alignmentMode–>0= align left/1= center /2= alignright
+Example：
+IminPrintInstance.printQrCode("https://www.imin.sg",1);
+Configure paper format
+Function：setPageFormat(style)
+Parameters：style –>0 80mm
+1 58mm
+Example：
+IminPrintInstance.setPageFormat(1);
+
+=== PAGE 75 ===
+Print bitmap
+Function：printSingleBitmap(imgResources)
+Parameters：imgResources-> Bitmap（base64 or url）
+Example：
+1.IminPrintInstance.printSingleBitmap("data:image/ico;base64,AAABAAEAICAAAAEAIACoEAAAFgAAACgAAAAgAAAAQA
+AAAAEAIAAAAAAAABAAAAAAAAAAAAAAAAAAA...");
+2.IminPrintInstance.printSingleBitmap('https://t7.baidu.com/it/u=1517419723,1472324058&fm=193&f=GIF')
+Trigger cash drawer
+Function：openCashBox()
+Example：
+IminPrintInstance.openCashBox();
+Configure double QR code size
+Function：setDoubleQRSize(size)
+Parameters：size –>1<=size <=8
+Example：
+IminPrintInstance.setDoubleQRSize(1)
+Configure double QR code QR1 error correction level
+Function：setDoubleQR1Level(level)
+Parameters：level –>1<=size<= 3
+Example：
+IminPrintInstance.setDoubleQR1Level(1)
+Configure double QR code QR2 error correction level
+Function：setDoubleQR2Level(level)
+Parameters：level –>1<=size<= 3
+Example：
+IminPrintInstance.setDoubleQR2Level(1)
+Configure double QR code QR1 left margin
+Function：setDoubleQR1MarginLeft(marginValue)
+Parameters：level –>0<level<255
+
+=== PAGE 76 ===
+Example：
+IminPrintInstance.setDoubleQR1Level(16)
+Configure double QR code QR2left margin
+Function：setDoubleQR2MarginLeft(marginValue)
+Parameters：level –>0<level<255
+Example：
+IminPrintInstance.setDoubleQR2Level(200)
+Configure double QR code QR1 version
+Function：setDoubleQR1Version(version)
+Parameters：version–>0<=version<=40
+Example：
+IminPrintInstance.setDoubleQR1Version(40)
+Configure double QR code QR2 version
+Function：setDoubleQR2Version(version)
+Parameters：version–>0<=version<=40
+Example：
+IminPrintInstance.setDoubleQR2Version(40)
+Print double QR code
+Function：printDoubleQR(colTextArr)
+Parameters：colTextArr->Arrayofcolumn textstrings
+Example：
+IminPrintInstance.printDoubleQR(["www.iMin.sg","www.google.com"]);
+

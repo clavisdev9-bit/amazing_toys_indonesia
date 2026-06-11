@@ -3,12 +3,6 @@
 const { withTransaction, query } = require('../../config/database');
 const { AppError }               = require('../../middlewares/error.middleware');
 
-const WALKIN_PHONE = '0000000000';
-
-async function _getWalkinCustomerId() {
-  const res = await query(`SELECT customer_id FROM customers WHERE phone_number = $1`, [WALKIN_PHONE]);
-  return res.rows[0]?.customer_id ?? null;
-}
 
 /**
  * Validate a voucher code against cart context.
@@ -56,20 +50,7 @@ async function validateVoucher({ code, customerId, cartTotal, tenantIds, items }
     if (!hasMatch) throw new AppError('VOUCHER_NOT_APPLICABLE', 400);
   }
 
-  // 6. Duplicate check — skip for Walk-in Customer
-  if (customerId) {
-    const walkinId = await _getWalkinCustomerId();
-    const isWalkin = customerId === walkinId;
-    if (!isWalkin) {
-      const usedRes = await query(
-        `SELECT 1 FROM voucher_usages WHERE voucher_code = $1 AND customer_id = $2`,
-        [v.code, customerId]
-      );
-      if (usedRes.rows.length > 0) throw new AppError('ALREADY_USED', 400);
-    }
-  }
-
-  // 7. Calculate discount_amount (pre-tax, rounded to integer IDR)
+  // 6. Calculate discount_amount (pre-tax, rounded to integer IDR)
   //    When the voucher is tenant-scoped, apply the discount ONLY to items
   //    from the restricted tenant — not to the full cart.
   let effectiveSubtotal = cartTotal; // default: full cart
@@ -117,22 +98,26 @@ async function validateVoucher({ code, customerId, cartTotal, tenantIds, items }
  */
 async function applyVoucher({ code, transactionId, customerId, discountAmount, client: sharedClient }) {
   const run = async (c) => {
-    // Idempotent insert into usage table
-    await c.query(
+    // Idempotent insert — ON CONFLICT DO NOTHING if already applied to this transaction
+    const insertRes = await c.query(
       `INSERT INTO voucher_usages (voucher_code, transaction_id, customer_id, discount_amount)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (voucher_code, transaction_id) DO NOTHING`,
       [code, transactionId, customerId || null, discountAmount]
     );
 
-    // Conditional increment — avoid over-count if race condition
-    await c.query(
-      `UPDATE vouchers
-       SET usage_count = usage_count + 1
-       WHERE code = $1
-         AND (usage_limit IS NULL OR usage_count < usage_limit)`,
-      [code]
-    );
+    // Only increment usage_count when a new row was actually inserted.
+    // If INSERT was a no-op (same voucher+transaction already recorded), skip the
+    // increment to prevent double-counting on retries or concurrent calls.
+    if (insertRes.rowCount > 0) {
+      await c.query(
+        `UPDATE vouchers
+         SET usage_count = usage_count + 1
+         WHERE code = $1
+           AND (usage_limit IS NULL OR usage_count < usage_limit)`,
+        [code]
+      );
+    }
 
     // Sync voucher_code / discount_amount onto transaction (fallback update)
     await c.query(

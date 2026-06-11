@@ -2971,3 +2971,230 @@ navigate(`/product_cart/${text}`);
 2. Fallback ke `getProductByBarcode(id)` jika gagal
 
 Sehingga QR yang berisi barcode numerik (contoh: `0887961896398`) maupun product_id tetap bisa resolve ke halaman yang benar.
+
+---
+
+### CR-060 — Ringkasan Harga di `/keranjang` Tampil Tax-Inclusive (Hapus Baris PPN Terpisah)
+
+**Date:** 2026-06-10
+**Status:** Done
+**Files:**
+- `frontend/src/pages/customer/CartPage.jsx`
+
+**Type:** Display Change (Display-only — tidak ada perubahan backend/context/checkout logic)
+
+**Background:**
+
+CR-022 sudah mengubah harga *per item* di `/keranjang` menjadi tax-inclusive. Namun **ringkasan harga di bagian bawah** (price summary) masih menampilkan:
+
+```
+Subtotal:    Rp 1.600.000   ← pre-tax
+PPN 12%:     Rp   192.000
+──────────────────────────
+Total:       Rp 1.792.000
+```
+
+Ini tidak konsisten dengan harga per item yang sudah tax-inclusive. Customer melihat harga item sudah inklusif pajak, tapi summary masih memisahkan pajak — membingungkan.
+
+**Objective:**
+
+```
+Subtotal (incl. PPN 12%):  Rp 1.792.000
+──────────────────────────────────────────
+Total:                     Rp 1.792.000
+```
+
+**Root Cause:**
+
+CR-022 hanya memperbaiki display harga per baris item (`item.price * item.quantity * (1 + ppnRate/100)`) tetapi **tidak menyentuh blok price summary** di bawah. Summary masih menggunakan variabel lama:
+- `subtotalRaw` = `totalAmount` (pre-tax base dari CartContext)
+- Menampilkan `taxRaw` sebagai baris terpisah
+
+**Perubahan:**
+
+1. **Tambah variabel display `subtotalInclTax`** di blok price breakdown:
+   ```js
+   const subtotalInclTax = Math.round(subtotalRaw * (1 + ppnRate / 100));
+   ```
+   Ini adalah display-only — `subtotalRaw`, `taxableRaw`, `taxRaw`, dan `grandTotal` tidak berubah dan tetap digunakan untuk logika checkout.
+
+2. **Ganti tampilan Subtotal** dari `subtotalRaw` → `subtotalInclTax`, dengan label "(incl. PPN X%)" kecil.
+
+3. **Hapus baris PPN** (`ppnRate > 0 && <span>PPN X%...`) — pajak sudah terwakili dalam `subtotalInclTax`.
+
+4. **Ganti tampilan Diskon** (jika ada voucher) dari `discountRaw` → `subtotalInclTax - grandTotal`:
+   - Ini adalah selisih aktual yang customer hemat (termasuk tax-saving dari potongan harga).
+   - Memastikan math tetap benar untuk customer: `subtotalInclTax − discountDisplay = grandTotal` ✓
+
+**Contoh kalkulasi (ppnRate = 12%):**
+
+| Kondisi | Sebelum | Sesudah |
+|---|---|---|
+| Tanpa voucher: Subtotal | Rp 1.600.000 (pre-tax) | Rp 1.792.000 (incl. PPN) |
+| Tanpa voucher: Baris PPN 12% | Rp 192.000 | Dihilangkan |
+| Tanpa voucher: Total | Rp 1.792.000 | Rp 1.792.000 |
+| Dengan voucher 10%: Subtotal | Rp 1.600.000 | Rp 1.792.000 |
+| Dengan voucher 10%: Diskon | − Rp 160.000 | − Rp 179.200 (incl. tax saving) |
+| Dengan voucher 10%: Baris PPN | Rp 172.800 | Dihilangkan |
+| Dengan voucher 10%: Total | Rp 1.612.800 | Rp 1.612.800 |
+
+**Yang TIDAK berubah (by design):**
+- `CartContext` — tidak disentuh
+- `grandTotal`, `subtotalRaw`, `taxRaw`, `taxableRaw` — tetap dihitung (digunakan untuk logika internal)
+- `doCheckout` / `createOrder` API call — tidak berubah; backend tetap menerima `voucherCode` dan menghitung ulang
+- Semua halaman lain (receipt, cashier, OrderTrackingPage, dll.) — tidak disentuh
+- Backend, integration, database — tidak disentuh
+
+**Konsistensi tampilan customer (tax-inclusive) setelah CR ini:**
+
+| Halaman | File | Status |
+|---|---|---|
+| `/katalog` — kartu produk | `ProductCard.jsx` | ✓ CR-022 |
+| `/katalog` — bottom sheet detail | `ProductBottomSheet.jsx` | ✓ CR-022 |
+| `/keranjang` — harga per item | `CartPage.jsx` | ✓ CR-022 |
+| `/keranjang` — ringkasan harga | `CartPage.jsx` | ✓ **CR-060 (ini)** |
+| `/product/:id` | `MockProductDetailPage.jsx` | ✓ CR-024 |
+| `/pesanan/:id` | `OrderTrackingPage.jsx` | ✓ CR-023a |
+| `/pesanan/:id/receipt` | `ReceiptPickupPage.jsx` | ✓ BUG-008 |
+| Kasir print modal | `ThermalReceipt.jsx` | ✓ CR-014 |
+
+---
+
+## CR-048 — Hide Stok (pcs) di Halaman `/product/:id` dan `/product_cart/:id`
+
+**Date:** 2026-06-11
+**Status:** Done
+**Files:**
+- `frontend/src/pages/customer/MockProductDetailPage.jsx`
+- `frontend/src/pages/customer/ProductCartPage.jsx`
+
+### Tujuan
+
+Sembunyikan chip "52 pcs / Stock" (kotak merah pada screenshot) dari spec strip di halaman detail produk. Badge status (Tersedia / Stok Terbatas / Habis) tetap tampil — hanya angka jumlah stok yang disembunyikan dari customer.
+
+### Perubahan
+
+Hapus `<SpecItem emoji="📦" value={`${stock} pcs`} label={t('product.stock')} />` dari spec strip di kedua file.
+
+| File | Baris | Perubahan |
+|---|---|---|
+| `MockProductDetailPage.jsx` | L207 | Hapus SpecItem stok |
+| `ProductCartPage.jsx` | L224 | Hapus SpecItem stok |
+
+### Yang Tetap Ada
+
+- Badge status stok (`Tersedia` / `Stok Terbatas` / `Habis`) — tetap tampil
+- Validasi qty di cart tetap menggunakan `stock` sebagai batas maksimum — tidak diubah
+- Internal variable `stock` di komponen tetap ada — hanya tampilan ke customer yang disembunyikan
+
+---
+
+## CR-047 — Urutkan Produk di `/katalog` Berdasarkan Status Stok
+
+**Date:** 2026-06-11
+**Status:** Done
+**Files:** `frontend/src/hooks/useCatalogueState.js`
+
+### Tujuan
+
+Produk di halaman `/katalog` diurutkan otomatis dari atas ke bawah berdasarkan ketersediaan stok:
+
+1. **Tersedia** — `stock > 3`
+2. **Stok Terbatas** — `stock 1–3`
+3. **Habis** — `stock = 0`
+
+Urutan ini berlaku di semua mode (product mode dan store mode), termasuk saat filter kategori atau pencarian aktif.
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | Helper `stockSortKey` | — | Fungsi lokal: `0` (available) / `1` (limited) / `2` (out) |
+| 2 | `productModeProducts` | `return result` | `return [...result].sort(...)` |
+| 3 | `storeModeProducts` | `return result` | `return [...result].sort(...)` |
+
+### Catatan
+
+- Threshold mengikuti `stockUtils.js` `getStockStatus()` — konsisten dengan badge yang tampil di `ProductCard`
+- Sort stable: urutan relatif antar produk dalam grup yang sama (misal dua produk "Tersedia") tetap seperti urutan dari API
+- Tidak ada perubahan backend atau API
+
+---
+
+## CR-046 — Auto-Refresh Approval Queue Tanpa Blink (Virtual DOM Re-rendering)
+
+**Date:** 2026-06-11
+**Status:** Done
+**Files:** `frontend/src/components/helper/ApprovalQueueTab.jsx`
+
+### Tujuan
+
+Halaman `/helper` tab "Approval Queue" harus memperbarui data secara otomatis tanpa kedipan (blink). Memanfaatkan mekanisme Virtual DOM React — hanya node yang berubah yang di-render ulang, bukan seluruh list.
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | Background refresh | `fetchQueue()` selalu `setLoading(true)` → spinner muncul | `fetchQueue(silent=true)` → tidak set loading, tidak ada spinner |
+| 2 | State update | `setQueue(data)` — replace seluruh array | `setQueue(prev => mergeQueue(prev, data))` — hanya update ref yang berubah |
+| 3 | Polling | Setiap 20 s memanggil `fetchQueue()` (non-silent) | Setiap 20 s memanggil `fetchQueue(true)` (silent) |
+| 4 | WebSocket push | `subscribe('APPROVAL_QUEUE_UPDATE', fetchQueue)` (non-silent) | `subscribe(...)` → `fetchQueue(true)` (silent) |
+| 5 | Item/order actions | `onRefresh={fetchQueue}` (non-silent) | `onRefresh={() => fetchQueue(true)}` (silent) |
+| 6 | `ItemRow` / `ApprovalCard` | Plain function component | Dibungkus `React.memo` — skip re-render jika props tidak berubah |
+| 7 | Auto-refresh indicator | Tidak ada | Pulsing green dot di header + "diperbarui HH:MM:SS" |
+
+### Detail Teknis
+
+**`mergeItems(prevItems, nextItems)`** — membandingkan setiap item berdasarkan `item_id`. Jika `approval_status`, `approved_quantity`, `rejection_reason`, dan `quantity` sama, kembalikan referensi lama (`old`). React melihat referensi yang sama → bail out dari subtree re-render.
+
+**`mergeQueue(prev, next)`** — sama untuk level transaksi. Jika seluruh `items` array tidak berubah dan `total_amount` sama, kembalikan `old` transaction object.
+
+**`fetchQueue(silent)`** — parameter baru:
+- `silent=false` (default): `setLoading(true)` + spinner. Dipakai saat mount pertama atau klik tombol Refresh manual.
+- `silent=true`: `setRefreshing(true)` (hanya indikator kecil ↻ di header). Dipakai untuk polling, WebSocket push, dan post-action refresh.
+
+**`React.memo`** pada `ItemRow` dan `ApprovalCard` — komponen hanya re-render jika props benar-benar berubah. Dikombinasikan dengan smart merge, item yang tidak disentuh sama sekali tidak masuk ke render cycle.
+
+### Catatan
+
+- Tidak ada perubahan backend atau API
+- Polling interval tetap 20 detik
+- WebSocket subscription tetap menggunakan `APPROVAL_QUEUE_UPDATE`
+- Spinner tetap muncul saat initial load (`loading && queue.length === 0`)
+
+---
+
+## CR-045 — Tambah Kolom "Stok" di Admin Master Data Tab
+
+**Date:** 2026-06-11
+**Status:** Done
+**Files:** `frontend/src/pages/admin/tabs/MasterDataTab.jsx`
+
+### Tujuan
+
+Menambahkan kolom **Stok** di tabel produk pada halaman Admin → tab Master Data, sehingga admin bisa langsung melihat jumlah stok tanpa harus membuka modal Edit tiap produk.
+
+Kolom disisipkan di antara kolom **Harga** dan **Tenant**.
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | Header tabel | `[...'Harga','Tenant',...]` | `[...'Harga','Stok','Tenant',...]` |
+| 2 | Cell baris produk | — | `<td>` berisi `p.stock_quantity` dengan warna kontekstual |
+
+### Detail Tampilan Kolom Stok
+
+Angka stok ditampilkan dengan warna berdasarkan kondisi:
+
+| Kondisi | Warna |
+|---|---|
+| `stock_quantity <= 0` | Merah (`text-red-600`) — habis |
+| `stock_quantity 1–5` | Kuning (`text-amber-600`) — hampir habis |
+| `stock_quantity > 5` | Hijau (`text-emerald-700`) — tersedia |
+
+### Catatan
+
+- Kolom "Barcode" (QR button, dari CR-043) tetap ada — tidak dihapus
+- Tidak ada perubahan API — `stock_quantity` sudah ada di response `getAdminProducts`
+- Frontend di-rebuild via `docker compose build frontend && docker compose up -d --no-deps frontend`

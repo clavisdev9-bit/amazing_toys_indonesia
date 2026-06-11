@@ -1,7 +1,7 @@
 # System Architecture — Amazing Toys SOS
 **Project:** Amazing Toys Self-Order System (SOS)  
 **Event:** Amazing Toys Fair 2026  
-**Version:** 2.1 — 2026-06-08 (updated: CR-015 s/d CR-040, BUG-016, BUG-017)  
+**Version:** 2.2 — 2026-06-11 (updated: CR-041 s/d CR-048, BUG-040 s/d BUG-047)  
 **Author:** clavis Development
 
 ---
@@ -84,7 +84,7 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 
 | Role | Halaman Utama |
 |---|---|
-| **CUSTOMER** | Browse produk, Cart + voucher, Checkout, Order tracking, Receipt pickup |
+| **CUSTOMER** | Browse produk (sort by stok), Cart + voucher, Checkout, Order tracking, Receipt pickup, Pickup status |
 | **CASHIER** | Lookup TXN + voucher input, POS Langsung + voucher, Payment processing (CASH/QRIS/EDC/TRANSFER), Recap harian |
 | **HELPER** | Buat order (browse + qty + voucher opsional), Antrian Approval (HELPER_APPROVE mode), Riwayat hari ini, Serah terima |
 | **TENANT** | Incoming orders, Fulfillment, Laporan harian |
@@ -149,8 +149,10 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 | `POST` | `/api/v1/helper/orders/:txnId/cancel` | HELPER | Batalkan order, kembalikan stok jika sudah RESERVED | CR-035/040 |
 | `POST` | `/api/v1/helper/orders/:txnId/handover` | HELPER | Konfirmasi serah terima → COMPLETED | CR-035 |
 | `GET` | `/api/v1/helper/approval-queue` | HELPER | Antrian pesanan PENDING_APPROVAL untuk booth | CR-040 |
-| `POST` | `/api/v1/helper/orders/:txnId/approve` | HELPER | Setujui pesanan → deduct stok, mulai timer, generate QR | CR-040 |
+| `POST` | `/api/v1/helper/orders/:txnId/approve` | HELPER | Setujui pesanan (semua item) → deduct stok, mulai timer, generate QR | CR-040 |
 | `POST` | `/api/v1/helper/orders/:txnId/reject` | HELPER | Tolak pesanan → CANCELLED (tanpa stok restore) | CR-040 |
+| `POST` | `/api/v1/helper/orders/:txnId/items/:itemId/approve` | HELPER | Setujui satu item; body `{ approved_quantity }` (null = full qty) — deduct stok item tersebut | CR-040 |
+| `POST` | `/api/v1/helper/orders/:txnId/items/:itemId/reject` | HELPER | Tolak satu item; body `{ reason }` (opsional) — item → REJECTED, stok tidak dipotong | CR-040 |
 | `POST` | `/api/v1/payments/scan` | CASHIER/LEADER/ADMIN | Scan QR order RESERVED → WAITING_PAYMENT | CR-038 |
 | `GET` | `/api/v1/cashier/queue` | CASHIER/LEADER/ADMIN | List semua order menunggu pembayaran (PENDING/RESERVED/WAITING_PAYMENT) | CR-038 |
 | `GET` | `/api/v1/admin/wa-gateway/waha/status` | ADMIN | Cek status sesi WAHA | CR-036 |
@@ -253,6 +255,8 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 | Kolom | Tipe | Keterangan |
 |---|---|---|
 | `approval_status` | VARCHAR(20) | `PENDING` / `APPROVED` / `REJECTED` — default `PENDING`, diupdate saat helper approve/reject |
+| `approved_quantity` | INTEGER | NULL = full qty disetujui; nilai < `quantity` = partial approval (helper isi qty saat setujui) (migration 017) |
+| `rejection_reason` | TEXT | Alasan penolakan opsional saat `approval_status = 'REJECTED'` (migration 017) |
 
 **Kolom Tambahan di `tenants` (CR-035/040):**
 
@@ -290,6 +294,8 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 | `013_cr036_qr_delivery.sql` | Kolom QR delivery di transactions + system_settings WA (CR-036) |
 | `014_cr036_waha_session.sql` | Seed `wa_waha_session` di system_settings (CR-036) |
 | `015_cr040_helper_approve.sql` | Tambah `PENDING_APPROVAL` ke enum, 4 kolom approval di transactions, `approval_status` di transaction_items, partial index (CR-040) |
+| `016_drop_expires_at_not_null.sql` | Drop NOT NULL constraint pada `transactions.expires_at` — PENDING_APPROVAL tidak punya timer sampai helper setujui (CR-041) |
+| `017_per_item_approval.sql` | Tambah `approved_quantity` INTEGER dan `rejection_reason` TEXT ke `transaction_items` — mendukung per-item partial approval (CR-040) |
 
 ---
 
@@ -606,9 +612,12 @@ total_amount   = taxable_amount + tax_amount
 | `/katalog` — bottom sheet detail (`ProductBottomSheet.jsx`) | ✓ CR-022 |
 | `/keranjang` (`CartPage.jsx`) | ✓ CR-022 |
 | `/product/:id` (`MockProductDetailPage.jsx`) | ✓ CR-024 |
+| `/product_cart/:id` (`ProductCartPage.jsx`) | ✓ CR-024 |
 | `/pesanan/:id` (`OrderTrackingPage.jsx`) | ✓ CR-023a |
-| `/pesanan/:id/receipt` (`ReceiptPickupPage.jsx`) | ✓ CR-014 |
-| Kasir print modal (`ThermalReceipt.jsx`) | ✓ CR-014 |
+| `/pesanan/:id/receipt` (`ReceiptPickupPage.jsx`) | ✓ BUG-047 |
+| `/pesanan/:id/pickup` (`PickupStatusPage.jsx`) | ✓ BUG-047 |
+| Kasir pembayaran (`PaymentPage.jsx`) | ✓ BUG-045 |
+| Kasir print modal (`ThermalReceipt.jsx`) | ✓ BUG-045 |
 
 ---
 
@@ -725,7 +734,7 @@ Diakses via `/admin` — tab-tab tersedia:
 
 | Tab | Fungsi |
 |---|---|
-| Master Data | CRUD produk, bulk upload CSV, sync Odoo, set kategori |
+| Master Data | CRUD produk, bulk upload CSV, sync Odoo, set kategori, kolom stok dengan warna kontekstual (CR-045), tombol QR Barcode per produk (CR-043) |
 | Konfigurasi | Event info, branding, printer, pajak, batas transaksi, **Mode Penjualan** (HELPER_INPUT / HELPER_APPROVE / SELF_ORDER) |
 | Booth | CRUD tenant + order_mode per booth (CR-035/040) |
 | Users | CRUD staff accounts + reset password |
@@ -851,15 +860,26 @@ Tab "Buat Order" — MODE: HELPER_INPUT:
 
 Tab "Antrian Approval" — MODE: HELPER_APPROVE:
   ├── Daftar pesanan PENDING_APPROVAL dari GET /helper/approval-queue
-  ├── Setiap kartu: info customer, daftar item, total harga
-  ├── Tombol "Setujui":
-  │     → POST /helper/orders/:txnId/approve
-  │     → deduct stok, generate QR, mulai timer
-  │     → WS ORDER_APPROVED ke customer, APPROVAL_QUEUE_UPDATE ke tenant
-  └── Tombol "Tolak" (dengan alasan opsional):
-        → POST /helper/orders/:txnId/reject → CANCELLED
-        → WS ORDER_REJECTED ke customer, APPROVAL_QUEUE_UPDATE ke tenant
-  Auto-refresh setiap 20 detik; badge bertambah via WS PENDING_APPROVAL_CREATED
+  ├── Auto-refresh setiap 20 detik (silent, tanpa blink — CR-046)
+  ├── WebSocket APPROVAL_QUEUE_UPDATE + PENDING_APPROVAL_CREATED → refresh instan
+  ├── Setiap kartu: info customer, daftar item per-baris, total harga
+  │
+  ├── Per-ITEM (CR-040 / migration 017):
+  │   ├── Tombol "✓" per item → modal konfirmasi + input qty (partial approval)
+  │   │     → POST /helper/orders/:txnId/items/:itemId/approve { approved_quantity }
+  │   │     → deduct stok qty yang disetujui saja
+  │   └── Tombol "✕" per item → modal alasan (opsional)
+  │         → POST /helper/orders/:txnId/items/:itemId/reject { reason }
+  │         → item.approval_status = REJECTED, stok tidak dipotong
+  │
+  └── Bulk (semua item sekaligus):
+      ├── Tombol "✓ Setujui Semua":
+      │     → POST /helper/orders/:txnId/approve
+      │     → deduct stok semua item, generate QR, mulai timer
+      │     → WS ORDER_APPROVED ke customer, APPROVAL_QUEUE_UPDATE ke tenant
+      └── Tombol "Tolak Semua" (dengan alasan opsional):
+            → POST /helper/orders/:txnId/reject → CANCELLED
+            → WS ORDER_REJECTED ke customer, APPROVAL_QUEUE_UPDATE ke tenant
 
 Tab "Riwayat Hari Ini":
   └── GET /helper/orders — semua order booth hari ini (semua status)
@@ -1005,3 +1025,43 @@ Odoo Setup (wajib sebelum production):
 □ Buat field x_voucher_code (Char 50) di sale.order (via Odoo Shell)
 □ Catat journal_id Kas/QRIS/EDC/Transfer di Accounting → Configuration → Journals
 ```
+
+---
+
+## 15. Changelog Arsitektur
+
+| Versi | Tanggal | Perubahan |
+|---|---|---|
+| **2.2** | 2026-06-11 | CR-041–CR-048, BUG-040–BUG-047. Per-item approval (migration 017), auto-refresh queue, sort stok di katalog, hide stock pcs di halaman produk, STANDARD.md |
+| **2.1** | 2026-06-08 | CR-015–CR-040, BUG-016–BUG-017. HELPER_APPROVE (Model D), per-order approval queue, partial order flow, WA delivery system |
+| **2.0** | 2026-05-30 | HELPER_INPUT (Model C), WAHA integration, BCA QRIS, ESC/POS printer, voucher system |
+| **1.0** | 2026-05-27 | Initial — SELF_ORDER mode, Odoo 18 sync, JWT auth, WebSocket |
+
+### Ringkasan CR-041 s/d CR-048
+
+| CR | Tanggal | Deskripsi |
+|---|---|---|
+| CR-041 | 2026-06-08 | Checkout stock gate + HELPER_APPROVE hardening: `TxnExpireJob`, `expires_at` nullable (migration 016) |
+| CR-042 | 2026-06-09 | HELPER_APPROVE mode: `ProductCard` behavior + QR Scanner di `/katalog` disesuaikan |
+| CR-043 | 2026-06-09 | Admin Master Data: kolom "Stok" diganti tombol QR Barcode per produk |
+| CR-044 | 2026-06-09 | Hide language switcher di header saat berada di `/katalog` |
+| CR-045 | 2026-06-11 | Admin Master Data: tambah kolom "Stok" dengan warna kontekstual (merah/kuning/hijau) |
+| CR-046 | 2026-06-11 | Approval queue auto-refresh tanpa blink: `silent fetch`, `mergeQueue`, `React.memo` |
+| CR-047 | 2026-06-11 | `/katalog` diurutkan by stok: Tersedia → Stok Terbatas → Habis |
+| CR-048 | 2026-06-11 | Hide chip "X pcs / Stock" di `/product/:id` dan `/product_cart/:id` — hanya badge status yang tampil |
+
+---
+
+## 16. Standarisasi Kode
+
+File `STANDARD.md` di root project mendokumentasikan standar coding yang wajib diikuti:
+
+| Standar | Topik |
+|---|---|
+| STD-001 | Tampilan qty item di halaman customer: `approved_quantity ?? quantity`, `item.subtotal`, filter REJECTED |
+| STD-002 | INSERT idempotent + UPDATE kondisional (`rowCount > 0` guard) |
+| STD-003 | `FOR UPDATE` pada PostgreSQL JOIN — pisahkan query, jangan lock dua tabel sekaligus |
+| STD-004 | Explicit type cast pada PostgreSQL parameter (`$1::integer`) |
+| STD-005 | Silent background refresh di React: `fetchData(silent)`, smart merge, `React.memo` |
+| STD-006 | Voucher usage limit: `usage_limit` adalah satu-satunya pembatas global |
+| STD-007 | Informasi stok ke customer: hanya badge status, bukan angka eksak |

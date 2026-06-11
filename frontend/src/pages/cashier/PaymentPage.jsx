@@ -324,10 +324,10 @@ export default function PaymentPage() {
                   <Badge status={txn.status} />
                 </div>
                 <div className="divide-y text-sm mt-3">
-                  {(txn.items ?? []).map((item, i) => (
+                  {(txn.items ?? []).filter(item => item.approval_status !== 'REJECTED').map((item, i) => (
                     <div key={i} className="py-1.5 flex justify-between">
-                      <span className="text-gray-700">{item.product_name} × {item.quantity}</span>
-                      <span className="font-medium">{formatRupiah(item.unit_price * item.quantity)}</span>
+                      <span className="text-gray-700">{item.product_name} × {item.approved_quantity ?? item.quantity}</span>
+                      <span className="font-medium">{formatRupiah(item.subtotal)}</span>
                     </div>
                   ))}
                 </div>

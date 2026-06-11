@@ -195,11 +195,13 @@ export default function CartPage() {
   const tenantIds = [...new Set(approvedItems.map((i) => i.tenant_id).filter(Boolean))];
 
   // ── Price breakdown (approved items only when modal triggered) ─────────────
-  const subtotalRaw = totalAmount;
-  const discountRaw = discountAmount;
-  const taxableRaw  = subtotalRaw - discountRaw;
-  const taxRaw      = Math.round(taxableRaw * ppnRate / 100);
-  const grandTotal  = taxableRaw + taxRaw;
+  const subtotalRaw     = totalAmount;
+  const discountRaw     = discountAmount;
+  const taxableRaw      = subtotalRaw - discountRaw;
+  const taxRaw          = Math.round(taxableRaw * ppnRate / 100);
+  const grandTotal      = taxableRaw + taxRaw;
+  // Display: tax-inclusive subtotal (before discount) for customer-facing summary
+  const subtotalInclTax = Math.round(subtotalRaw * (1 + ppnRate / 100));
 
   // ── WS: listen for PRODUCT_AVAILABLE ──────────────────────────────────────
   useEffect(() => {
@@ -422,7 +424,11 @@ export default function CartPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1 border rounded">
                     <button
-                      onClick={() => removeItem(item.product_id)}
+                      onClick={() =>
+                        item.quantity > 1
+                          ? updateQty(item.product_id, item.quantity - 1)
+                          : removeItem(item.product_id)
+                      }
                       className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500"
                     >
                       {item.quantity === 1 ? '🗑' : '−'}
@@ -547,21 +553,20 @@ export default function CartPage() {
 
               <div className="space-y-1 mb-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">{t('cart.subtotal')}</span>
-                  <span className="text-gray-700">{formatRupiah(subtotalRaw)}</span>
+                  <span className="text-gray-500">
+                    {t('cart.subtotal')}
+                    {ppnRate > 0 && (
+                      <span className="text-xs text-gray-400 ml-1">(incl. PPN {ppnRate}%)</span>
+                    )}
+                  </span>
+                  <span className="text-gray-700">{formatRupiah(subtotalInclTax)}</span>
                 </div>
                 {discountRaw > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-green-600">
                       {t('cart.discount')}{appliedVoucher?.code ? ` (${appliedVoucher.code})` : ''}
                     </span>
-                    <span className="text-green-600 font-medium">− {formatRupiah(discountRaw)}</span>
-                  </div>
-                )}
-                {ppnRate > 0 && (
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-500">{t('cart.taxLine', { rate: ppnRate })}</span>
-                    <span className="text-gray-700">{formatRupiah(taxRaw)}</span>
+                    <span className="text-green-600 font-medium">− {formatRupiah(subtotalInclTax - grandTotal)}</span>
                   </div>
                 )}
                 {hasWaiting && approvedItems.length > 0 && (

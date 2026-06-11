@@ -461,9 +461,11 @@ const DEFAULT_SYSTEM_CONFIG = {
   primary_color: '#2563eb',
   map_embed_url: '',
   map_image_url: '',
+  printer_type: 'TCP',          // 'TCP' | 'USB'
   printer_ip: '',
   printer_port: 9100,
-  // Per-cashier overrides: [{ user_id, printer_ip, printer_port }]
+  printer_usb_name: '',         // Windows: nama printer (mis. "EPSON TM-T82"), Linux: /dev/usb/lp0
+  // Per-cashier overrides: [{ user_id, printer_type, printer_ip, printer_port, printer_usb_name }]
   printer_assignments: [],
 };
 

@@ -61,7 +61,16 @@
       "Bash(ls \"/mnt/c/Dev/\" 2>/dev/null | head -20)",
       "Bash(npm list *)",
       "PowerShell(node -e \"require\\('docx'\\); console.log\\('ok'\\)\" 2>&1)",
-      "PowerShell(node -e \"console.log\\(require.resolve.paths\\('docx'\\)\\)\" 2>&1)"
+      "PowerShell(node -e \"console.log\\(require.resolve.paths\\('docx'\\)\\)\" 2>&1)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\frontend\\\\src\\\\components\\\\helper\\\\\" -Recurse)",
+      "Bash(find /mnt/c/Dev/amazing_toys_odoo_online -name \"ApprovalQueueTab.jsx\" 2>/dev/null)",
+      "Bash(node -e \"require\\('./src/modules/helper/helper.service.js'\\); console.log\\('OK'\\)\")",
+      "Bash(node -e \"require\\('./src/modules/helper/helper.router.js'\\); console.log\\('OK'\\)\")",
+      "Read(//c/Users/arist/Downloads/**)",
+      "Bash(python -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
+      "Bash(node -e \"require\\('./src/modules/print/print.service.js'\\); require\\('./src/modules/print/print.router.js'\\); console.log\\('OK'\\)\")",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

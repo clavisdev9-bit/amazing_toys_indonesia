@@ -55,11 +55,12 @@ export default function PickupStatusPage() {
   if (loading) return <Spinner />;
   if (!order) return <div className="p-4 text-center text-gray-500">{t('order.notFound')}</div>;
 
-  const groups = groupByTenant(order.items);
-  const totalItems  = order.items.reduce((sum, i) => sum + i.quantity, 0);
-  const doneItems   = order.items
+  const activeItems = order.items.filter(i => i.approval_status !== 'REJECTED');
+  const groups = groupByTenant(activeItems);
+  const totalItems  = activeItems.reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity), 0);
+  const doneItems   = activeItems
     .filter((i) => i.pickup_status === 'DONE')
-    .reduce((sum, i) => sum + i.quantity, 0);
+    .reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity), 0);
   const progressPct = totalItems > 0 ? Math.round((doneItems / totalItems) * 100) : 0;
   const allDone     = totalItems > 0 && doneItems === totalItems;
 
@@ -113,7 +114,7 @@ export default function PickupStatusPage() {
                 <div>
                   <p className="text-sm font-semibold text-gray-800">{item.product_name}</p>
                   <p className="text-xs text-gray-400">
-                    ×{item.quantity} · {formatRupiah(item.unit_price * item.quantity)}
+                    ×{item.approved_quantity ?? item.quantity} · {formatRupiah(item.subtotal)}
                   </p>
                 </div>
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${pickupBadgeStyle(item.pickup_status)}`}>
