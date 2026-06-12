@@ -5,7 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import DatePickerInput from '../../components/ui/DatePickerInput';
-import { useAppLogo } from '../../hooks/useAppLogo';
+import { useAppLogo, usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang } from '../../context/LangContext';
 
 const INITIAL_FORM = {
@@ -27,7 +27,9 @@ function validate(form, t) {
   else if (!/^(08|\+628)\d{8,11}$/.test(form.phone_number.trim()))
     errors.phone_number = t('register.errPhoneFormat');
 
-  if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
+  if (!form.email.trim())
+    errors.email = t('register.errEmailRequired');
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
     errors.email = t('register.errEmail');
 
   return errors;
@@ -37,8 +39,10 @@ export default function RegisterPage() {
   // All hooks must be called unconditionally before any early return.
   const { login, isAuthenticated, role } = useAuth();
   const navigate  = useNavigate();
-  const logoUrl   = useAppLogo();
-  const { t }     = useLang();
+  const logoUrl      = useAppLogo();
+  const { t }        = useLang();
+  const publicConfig = usePublicConfig();
+  const eventName    = publicConfig?.event_name || t('register.subtitle');
 
   const [form,        setForm]        = useState(INITIAL_FORM);
   const [errors,      setErrors]      = useState({});
@@ -73,9 +77,9 @@ export default function RegisterPage() {
       const payload = {
         full_name:    form.full_name.trim(),
         phone_number: form.phone_number.trim(),
+        email:        form.email.trim(),
         gender:       form.gender,
-        ...(form.email.trim()  && { email:      form.email.trim() }),
-        ...(form.birth_date    && { birth_date: form.birth_date }),
+        ...(form.birth_date && { birth_date: form.birth_date }),
       };
 
       const res = await register(payload);
@@ -105,7 +109,7 @@ export default function RegisterPage() {
             : <div className="text-4xl mb-2">🧸</div>
           }
           <h1 className="text-xl font-bold text-gray-900">{t('register.title')}</h1>
-          <p className="text-sm text-gray-500">{t('register.subtitle')}</p>
+          <p className="text-sm text-gray-500">{eventName}</p>
         </div>
 
         {/* ── Server error banner ── */}
@@ -147,6 +151,7 @@ export default function RegisterPage() {
             value={form.email}
             onChange={handleChange}
             error={errors.email}
+            required
           />
 
           {/* Gender */}

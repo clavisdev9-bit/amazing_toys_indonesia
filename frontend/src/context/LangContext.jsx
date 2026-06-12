@@ -200,6 +200,7 @@ const T = {
     'register.errName':      'Nama lengkap wajib diisi.',
     'register.errPhone':     'Nomor telepon wajib diisi.',
     'register.errPhoneFormat':'Format nomor tidak valid. Gunakan 08xxx atau +628xxx.',
+    'register.errEmailRequired': 'Email wajib diisi.',
     'register.errEmail':     'Format email tidak valid.',
 
     // Badge status labels
@@ -565,6 +566,7 @@ const T = {
     'register.errName':      'Full name is required.',
     'register.errPhone':     'Phone number is required.',
     'register.errPhoneFormat':'Invalid format. Use 08xxx or +628xxx.',
+    'register.errEmailRequired': 'Email is required.',
     'register.errEmail':     'Invalid email format.',
 
     'badge.PENDING_APPROVAL': 'Awaiting Approval',
@@ -929,6 +931,7 @@ const T = {
     'register.errName':      '全名为必填项。',
     'register.errPhone':     '手机号为必填项。',
     'register.errPhoneFormat':'格式无效，请使用 08xxx 或 +628xxx。',
+    'register.errEmailRequired': '邮箱为必填项。',
     'register.errEmail':     '邮箱格式无效。',
 
     'badge.PENDING_APPROVAL': '等待审批',

@@ -1,6 +1,6 @@
 {
   "app_env": "hybrid",
-  "event_name": "Amazing toy",
+  "event_name": "Amazing Toy Show",
   "venue": "Mall",
   "event_date_start": "2026-04-01",
   "event_date_end": "2026-04-07",
@@ -19,17 +19,20 @@
     {
       "user_id": "c02fc2eb-db4b-4410-a563-da88f62c8251",
       "printer_ip": "192.168.122.16",
-      "printer_port": 9100
+      "printer_port": 9100,
+      "printer_type": "USB"
     },
     {
       "user_id": "5e91c4c5-5005-4d9a-a47c-b56f58fea59f",
       "printer_ip": "192.168.137.242",
-      "printer_port": 9100
+      "printer_port": 9100,
+      "printer_type": "USB"
     },
     {
       "user_id": "99a6e17d-f743-45a0-8900-f6e388e2a62a",
       "printer_ip": "192.168.110.39",
-      "printer_port": 9100
+      "printer_port": 9100,
+      "printer_type": "USB"
     }
   ]
 }

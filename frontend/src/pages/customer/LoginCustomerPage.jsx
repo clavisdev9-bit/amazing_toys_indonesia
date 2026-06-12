@@ -4,7 +4,7 @@ import { loginCustomer } from '../../api/auth';
 import { useAuth } from '../../hooks/useAuth';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
-import { useAppLogo } from '../../hooks/useAppLogo';
+import { useAppLogo, usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang } from '../../context/LangContext';
 
 export default function LoginCustomerPage() {
@@ -17,8 +17,10 @@ export default function LoginCustomerPage() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const logoUrl = useAppLogo();
-  const { t } = useLang();
+  const logoUrl    = useAppLogo();
+  const { t }      = useLang();
+  const publicConfig = usePublicConfig();
+  const eventName  = publicConfig?.event_name || t('login.subtitle');
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -46,7 +48,7 @@ export default function LoginCustomerPage() {
             : <div className="text-4xl mb-2">🧸</div>
           }
           <h1 className="text-xl font-bold text-gray-900">{t('login.title')}</h1>
-          <p className="text-sm text-gray-500">{t('login.subtitle')}</p>
+          <p className="text-sm text-gray-500">{eventName}</p>
         </div>
 
         {error && (
