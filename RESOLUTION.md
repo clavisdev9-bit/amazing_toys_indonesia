@@ -59,6 +59,7 @@
 | [BUG-047](#bug-047) | 2026-06-11 | Receipt & pickup page tampilkan qty original bukan approved (ASTRO BOY ×4 harusnya ×2) | Frontend | ✅ Resolved | — |
 | [CR-047](#cr-047) | 2026-06-11 | Urutkan produk `/katalog` berdasarkan status stok: Tersedia → Terbatas → Habis | Frontend | ✅ Done | CR-047 |
 | [CR-048](#cr-048) | 2026-06-11 | Hide chip "X pcs / Stock" di halaman detail produk — hanya badge status yang tampil | Frontend | ✅ Done | CR-048 |
+| [BUG-048](#bug-048) | 2026-06-12 | Tab "Antrian Approval" di `/helper` tampilkan kosong — migration DB tidak auto-apply + error ditelan diam | Database + Backend + Frontend | ✅ Resolved | — |
 
 ---
 
@@ -3329,5 +3330,110 @@ docker compose build frontend && docker compose up -d --no-deps frontend
 |---|---|
 | Halaman customer tidak boleh menampilkan angka stok eksak — hanya badge status kategoris | Angka stok adalah informasi operasional internal, bukan informasi yang perlu diketahui customer |
 | Badge status (`getStockStatus()`) sudah cukup untuk customer: Tersedia / Stok Terbatas / Habis | Gunakan badge dari `stockUtils.js`, bukan angka raw `stock_quantity` |
+
+---
+
+## BUG-048 — Tab "Antrian Approval" di `/helper` Tampilkan Kosong Padahal Ada Data
+
+**Tanggal:** 2026-06-12
+**Layer:** Database + Backend + Frontend
+**Page:** `/helper` → tab "Antrian Approval"
+**Component:** `frontend/src/components/helper/ApprovalQueueTab.jsx`, `backend/src/app.js`
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper membuka halaman `/helper` dan klik tab "Antrian Approval". Tab tampil dengan pesan "Antrian kosong ✅ Tidak ada pesanan yang menunggu persetujuan" meskipun ada transaksi dengan status `PENDING_APPROVAL` di database. Tidak ada pesan error apapun yang ditampilkan.
+
+### Root Cause (3 lapisan)
+
+| # | Layer | Defect |
+|---|---|---|
+| 1 | **DATABASE (PRIMER)** | Migration 015 (`approval_status` di `transaction_items`) dan/atau migration 017 (`approved_quantity`, `rejection_reason` di `transaction_items`) tidak diaplikasikan ke environment Docker. Query `getApprovalQueue()` mereferensikan kolom-kolom tersebut; PostgreSQL mengembalikan error 500 "column does not exist". |
+| 2 | **FRONTEND (SEKUNDER)** | `ApprovalQueueTab.fetchQueue` menggunakan `.catch(() => {})` — error dari API sepenuhnya ditelan tanpa menampilkan pesan ke user. UI hanya melihat bahwa `queue` tetap `[]`, sehingga menampilkan empty state "Antrian kosong" yang menyesatkan. |
+| 3 | **BACKEND (TERSIER)** | Tidak ada migration auto-runner di `backend/src/app.js`. Migrations hanya diaplikasikan secara manual via `docker exec`. Environment baru (fresh container, dev baru) tidak memiliki kolom-kolom ini secara otomatis. |
+
+### Chain of Failure
+
+```
+Helper buka /helper → tab Antrian Approval
+  → fetchQueue() → GET /api/v1/helper/approval-queue
+  → getApprovalQueue() → SELECT ti.approval_status, ti.approved_quantity, ... FROM transaction_items
+  → PostgreSQL: ERROR column "ti.approval_status" does not exist (migration 015 belum diapply)
+             ATAU column "ti.approved_quantity" does not exist (migration 017 belum diapply)
+  → withTransaction: ROLLBACK + rethrow
+  → Error middleware: 500 Internal server error
+  → Frontend: .catch(() => {}) → error ditelan, queue tetap []
+  → UI: "Antrian kosong ✅" (padahal ada PENDING_APPROVAL transactions)
+```
+
+Catatan: BUG-041 (2026-06-11) memiliki root cause yang sama dan diselesaikan dengan `docker exec` manual. Fix ini memastikan recurrence tidak terjadi dengan menghapus dependency pada aplikasi manual.
+
+### Fix
+
+**Fix 1 — Frontend: Tambah error state ke `ApprovalQueueTab.jsx`**
+
+Sebelumnya:
+```js
+.catch(() => {})
+```
+
+Sesudah:
+```js
+.catch((err) => {
+  const status = err.response?.status;
+  const msg    = err.response?.data?.message;
+  setFetchError(
+    status === 500
+      ? 'Gagal memuat antrian (server error 500). Pastikan migration database 015 dan 017 sudah diaplikasikan.'
+      : msg || 'Gagal memuat antrian. Periksa koneksi atau coba refresh.'
+  );
+})
+```
+
+Tambah state `fetchError` dan banner error merah di atas list yang menampilkan pesan error beserta tombol "Coba lagi". Empty state "Antrian kosong" hanya tampil jika tidak ada error (`!fetchError && queue.length === 0`).
+
+**Fix 2 — Backend: Idempotent schema guard di `app.js` startup**
+
+Tambah di `server.listen` callback (sekarang `async`):
+```js
+const helperApproveColumns = [
+  `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'`,
+  `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_at         TIMESTAMPTZ`,
+  `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_by         UUID`,
+  `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS timer_locked_until  TIMESTAMPTZ`,
+  `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approval_note       TEXT`,
+  `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approved_quantity   INTEGER`,
+  `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS rejection_reason    TEXT`,
+];
+try {
+  for (const sql of helperApproveColumns) await dbQuery(sql);
+  logger.info('[Schema] HELPER_APPROVE columns verified (migrations 015 + 017 idempotent check done).');
+} catch (e) {
+  logger.warn('[Schema] HELPER_APPROVE column check warning:', e.message);
+}
+```
+
+Setiap `ADD COLUMN IF NOT EXISTS` bersifat idempotent: tidak ada efek jika kolom sudah ada, menambahkan kolom jika belum ada. Ini memastikan fresh environment langsung siap tanpa manual `docker exec`.
+
+### Files Changed
+
+- `frontend/src/components/helper/ApprovalQueueTab.jsx` — tambah `fetchError` state, error banner UI, ubah `.catch(() => {})` menjadi catch dengan error state yang informatif
+- `backend/src/app.js` — import `dbQuery`, tambah idempotent schema guard di `server.listen` callback
+
+### Deployment
+
+```bash
+docker compose build --no-cache backend frontend
+docker compose up -d backend frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| **Jangan pernah `.catch(() => {})` pada fetch yang mempengaruhi UI state** — selalu set error state agar user tahu ada masalah dan bisa retry | Silent catch menyembunyikan bug database/backend dan membuat user mengira "data memang kosong" padahal sebenarnya error |
+| Setiap feature yang membutuhkan migration baru **harus memiliki idempotent schema guard** di startup backend | Fresh environment (developer baru, staging baru, Docker rebuild) tidak otomatis mendapat migration kecuali ada runner |
+| Pattern `.catch(() => {})` hanya diizinkan untuk fire-and-forget side effects yang tidak mempengaruhi UI (analytics, cache warm-up, dll.) | Semua fetch yang menentukan apa yang ditampilkan ke user harus handle error secara eksplisit |
 
 ---

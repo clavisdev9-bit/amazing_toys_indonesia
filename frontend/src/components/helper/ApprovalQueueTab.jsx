@@ -338,6 +338,7 @@ export default function ApprovalQueueTab({ onCountChange }) {
   const [loading, setLoading]         = useState(true);   // initial load only
   const [refreshing, setRefreshing]   = useState(false);  // silent background tick
   const [lastRefreshed, setLastRefreshed] = useState(null);
+  const [fetchError, setFetchError]   = useState(null);   // API error message or null
   const [approvingId, setApprovingId] = useState(null);
   const [rejectingId, setRejectingId] = useState(null);
   const [toast, setToast]             = useState(null);
@@ -364,8 +365,17 @@ export default function ApprovalQueueTab({ onCountChange }) {
         setQueue((prev) => mergeQueue(prev, data));
         onCountChange?.(data.length);
         setLastRefreshed(new Date());
+        setFetchError(null);
       })
-      .catch(() => {})
+      .catch((err) => {
+        const status = err.response?.status;
+        const msg    = err.response?.data?.message;
+        setFetchError(
+          status === 500
+            ? 'Gagal memuat antrian (server error 500). Pastikan migration database 015 dan 017 sudah diaplikasikan.'
+            : msg || 'Gagal memuat antrian. Periksa koneksi atau coba refresh.'
+        );
+      })
       .finally(() => {
         setLoading(false);
         setRefreshing(false);
@@ -479,16 +489,33 @@ export default function ApprovalQueueTab({ onCountChange }) {
         <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1"/>Ditolak</span>
       </div>
 
+      {/* API error banner */}
+      {fetchError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-start gap-3">
+          <span className="text-red-500 text-lg leading-none mt-0.5">⚠</span>
+          <div>
+            <p className="text-sm font-semibold text-red-700">Gagal memuat antrian</p>
+            <p className="text-xs text-red-600 mt-0.5">{fetchError}</p>
+            <button
+              onClick={() => fetchQueue(false)}
+              className="mt-2 text-xs text-red-700 underline hover:no-underline"
+            >
+              Coba lagi
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* List — spinner only on true initial load (empty queue + loading) */}
       {loading && queue.length === 0 ? (
         <div className="flex justify-center py-10"><Spinner /></div>
-      ) : queue.length === 0 ? (
+      ) : queue.length === 0 && !fetchError ? (
         <div className="flex flex-col items-center py-12 text-center">
           <span className="text-5xl mb-3">✅</span>
           <p className="font-semibold text-gray-700">Antrian kosong</p>
           <p className="text-sm text-gray-400 mt-1">Tidak ada pesanan yang menunggu persetujuan.</p>
         </div>
-      ) : (
+      ) : queue.length > 0 ? (
         queue.map((txn) => (
           <ApprovalCard
             key={txn.transaction_id}

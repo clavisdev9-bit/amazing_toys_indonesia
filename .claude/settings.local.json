@@ -70,7 +70,9 @@
       "Bash(python -c \"import sys; sys.stdout.buffer.write\\(sys.stdin.buffer.read\\(\\)\\)\")",
       "Bash(node -e \"require\\('./src/modules/print/print.service.js'\\); require\\('./src/modules/print/print.router.js'\\); console.log\\('OK'\\)\")",
       "mcp__visualize__read_me",
-      "mcp__visualize__show_widget"
+      "mcp__visualize__show_widget",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Recurse -Directory -Depth 2)",
+      "Bash(Select-Object -First 20)"
     ]
   }
 }

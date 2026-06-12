@@ -44,6 +44,9 @@ const adminSvcScheduler = require('./modules/admin/admin.service');
 // Startup refs (Odoo tax ID cache)
 const { resolveStartupRefs } = require('./utils/startupRefs');
 
+// DB query helper — used for idempotent schema checks at startup
+const { query: dbQuery } = require('./config/database');
+
 // ── App setup ────────────────────────────────────────────────────────────────
 
 const app = express();
@@ -136,9 +139,32 @@ const PORT   = parseInt(process.env.PORT || '3000', 10);
 const server = http.createServer(app);
 setupWebSocket(server);
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   logger.info(`[Server] Amazing Toys SOS API running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   logger.info(`[Server] WebSocket available at ws://localhost:${PORT}/ws`);
+
+  // ── Idempotent schema guard (migrations 015 + 017) ───────────────────────
+  // Ensures HELPER_APPROVE columns always exist regardless of whether
+  // the migration SQL files were manually applied to this Docker environment.
+  // Uses ADD COLUMN IF NOT EXISTS so repeated startup calls are safe.
+  const helperApproveColumns = [
+    // Migration 015
+    `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'`,
+    `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_at         TIMESTAMPTZ`,
+    `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_by         UUID`,
+    `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS timer_locked_until  TIMESTAMPTZ`,
+    `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approval_note       TEXT`,
+    // Migration 017
+    `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approved_quantity   INTEGER`,
+    `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS rejection_reason    TEXT`,
+  ];
+  try {
+    for (const sql of helperApproveColumns) await dbQuery(sql);
+    logger.info('[Schema] HELPER_APPROVE columns verified (migrations 015 + 017 idempotent check done).');
+  } catch (e) {
+    logger.warn('[Schema] HELPER_APPROVE column check warning — some columns may be missing:', e.message);
+  }
+
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
 
