@@ -1,5 +1,5 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { LangProvider } from './context/LangContext';
@@ -113,6 +113,21 @@ function WSInit() {
 }
 
 function AppRoutes() {
+  const { logout } = useAuth();
+  const navigate   = useNavigate();
+
+  // SPA session-expiry handler: intercepts the 'sos:session-expired' event
+  // dispatched by api/client.js on 401. Calls logout() to clear React auth
+  // state, then navigates via React Router — no full page reload.
+  useEffect(() => {
+    const handleExpiry = () => {
+      logout();
+      navigate('/masuk', { replace: true });
+    };
+    window.addEventListener('sos:session-expired', handleExpiry);
+    return () => window.removeEventListener('sos:session-expired', handleExpiry);
+  }, [logout, navigate]);
+
   return (
     <>
       <WSInit />

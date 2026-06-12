@@ -197,13 +197,15 @@ export default function HelperOrderSuccessPage() {
       <div className="space-y-2 mb-5">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Status Pengiriman QR</p>
 
-        {/* Layer 1 — WA */}
-        <LayerChip
-          icon={waChipStatus === 'ok' ? '✅' : waChipStatus === 'error' ? '❌' : waChipStatus === 'skip' ? '➖' : '📤'}
-          label={waChipLabel}
-          sub={waChipSub}
-          status={waChipStatus}
-        />
+        {/* Layer 1 — WA (hidden while still sending; shown once outcome is known) */}
+        {waChipStatus !== 'pending' && (
+          <LayerChip
+            icon={waChipStatus === 'ok' ? '✅' : waChipStatus === 'error' ? '❌' : '➖'}
+            label={waChipLabel}
+            sub={waChipSub}
+            status={waChipStatus}
+          />
+        )}
 
         {/* Layer 2 — WS (hanya tampil jika ada customerId, kita tidak tracking dari sini) */}
         {orderData.customerId && (

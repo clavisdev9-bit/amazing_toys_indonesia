@@ -19,9 +19,12 @@ client.interceptors.response.use(
   (err) => {
     const isLoginRequest = err.config?.url?.includes('/auth/');
     if (err.response?.status === 401 && !isLoginRequest) {
+      // Clear storage immediately so any subsequent request doesn't retry
+      // the stale token. Navigation is handled via SPA event in App.jsx —
+      // no full page reload, React state and WebSocket are preserved.
       localStorage.removeItem('sos_token');
       localStorage.removeItem('sos_user');
-      window.location.href = '/masuk';
+      window.dispatchEvent(new CustomEvent('sos:session-expired'));
     }
     return Promise.reject(err);
   }

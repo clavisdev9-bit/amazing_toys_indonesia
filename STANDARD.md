@@ -250,3 +250,61 @@ Angka stok eksak adalah informasi operasional internal. Menampilkannya ke custom
 ### Referensi
 
 CR-048 — Hide chip "X pcs / Stock" di halaman detail produk.
+
+---
+
+## STD-008 — Navigasi SPA: Dilarang `window.location` untuk Routing Internal
+
+**Berlaku untuk:** Semua navigasi internal di frontend React (bukan URL eksternal).
+
+### Aturan
+
+| Kasus | Salah ❌ | Benar ✅ |
+|---|---|---|
+| Redirect setelah logout / session expired | `window.location.href = '/masuk'` | `navigate('/masuk', { replace: true })` via `useNavigate()` |
+| Navigasi antar halaman | `window.location.href = '/katalog'` | `<Link to="/katalog">` atau `navigate('/katalog')` |
+| Cek URL aktif | `window.location.pathname === '/foo'` | `useLocation().pathname === '/foo'` (lebih tepat) |
+| URL eksternal | — | Boleh pakai `window.open(url)` atau `<a href="https://...">` |
+
+### Pengecualian yang Diizinkan (Read-Only)
+
+`window.location` **boleh dibaca** untuk keperluan non-navigasi:
+- `window.location.protocol` / `window.location.host` — untuk konstruksi URL WebSocket
+- `window.location.pathname` — untuk error message atau perbandingan satu kali di luar komponen React
+- `window.location.host` — untuk display error ke user (misal: hint HTTPS)
+
+### Implementasi: Axios Interceptor 401 → SPA Navigate
+
+Satu-satunya titik di mana 401 auto-redirect terjadi adalah `api/client.js`. Karena `client.js` bukan React component (tidak bisa pakai `useNavigate`), gunakan pola **Custom DOM Event**:
+
+```js
+// api/client.js — pada interceptor 401:
+localStorage.removeItem('sos_token');
+localStorage.removeItem('sos_user');
+window.dispatchEvent(new CustomEvent('sos:session-expired'));  // ✅ SPA-safe
+
+// App.jsx — AppRoutes component (di dalam BrowserRouter + AuthProvider):
+useEffect(() => {
+  const handleExpiry = () => {
+    logout();                             // bersihkan React auth state
+    navigate('/masuk', { replace: true }); // SPA navigation, zero reload
+  };
+  window.addEventListener('sos:session-expired', handleExpiry);
+  return () => window.removeEventListener('sos:session-expired', handleExpiry);
+}, [logout, navigate]);
+```
+
+### Alasan
+
+`window.location.href = '/path'` menyebabkan **full page reload**:
+- Seluruh React virtual DOM di-destroy dan di-rebuild dari awal
+- Semua state (context, useState, cart, dll.) hilang
+- WebSocket diputus dan harus reconnect
+- Seluruh JavaScript bundle di-download ulang dari cache
+- Transisi halaman menjadi kasar / terasa seperti website lama
+
+React Router menggunakan **History API** (`pushState`/`replaceState`) — navigasi terjadi di dalam browser tab yang sama, React hanya me-render ulang komponen yang berubah.
+
+### Referensi
+
+CR-049 — SPA navigation: ganti `window.location.href` di `api/client.js` dengan `CustomEvent + useNavigate`.

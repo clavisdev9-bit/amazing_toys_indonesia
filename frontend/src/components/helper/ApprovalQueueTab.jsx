@@ -527,7 +527,7 @@ export default function ApprovalQueueTab({ onCountChange }) {
             onRefresh={() => fetchQueue(true)}
           />
         ))
-      )}
+      ) : null}
     </div>
   );
 }

@@ -60,6 +60,8 @@
 | [CR-047](#cr-047) | 2026-06-11 | Urutkan produk `/katalog` berdasarkan status stok: Tersedia → Terbatas → Habis | Frontend | ✅ Done | CR-047 |
 | [CR-048](#cr-048) | 2026-06-11 | Hide chip "X pcs / Stock" di halaman detail produk — hanya badge status yang tampil | Frontend | ✅ Done | CR-048 |
 | [BUG-048](#bug-048) | 2026-06-12 | Tab "Antrian Approval" di `/helper` tampilkan kosong — migration DB tidak auto-apply + error ditelan diam | Database + Backend + Frontend | ✅ Resolved | — |
+| [BUG-049](#bug-049) | 2026-06-12 | Semua screen blank — ternary chain tidak lengkap di `ApprovalQueueTab.jsx` (missing `: null`) | Frontend | ✅ Resolved | — |
+| [CR-049](#cr-049) | 2026-06-12 | SPA navigation: ganti `window.location.href` di `api/client.js` dengan `CustomEvent + useNavigate` | Frontend | ✅ Done | — |
 
 ---
 
@@ -3435,5 +3437,178 @@ docker compose up -d backend frontend
 | **Jangan pernah `.catch(() => {})` pada fetch yang mempengaruhi UI state** — selalu set error state agar user tahu ada masalah dan bisa retry | Silent catch menyembunyikan bug database/backend dan membuat user mengira "data memang kosong" padahal sebenarnya error |
 | Setiap feature yang membutuhkan migration baru **harus memiliki idempotent schema guard** di startup backend | Fresh environment (developer baru, staging baru, Docker rebuild) tidak otomatis mendapat migration kecuali ada runner |
 | Pattern `.catch(() => {})` hanya diizinkan untuk fire-and-forget side effects yang tidak mempengaruhi UI (analytics, cache warm-up, dll.) | Semua fetch yang menentukan apa yang ditampilkan ke user harus handle error secara eksplisit |
+
+---
+
+## BUG-049 — Semua Screen Blank Setelah Fix BUG-048
+
+**Tanggal:** 2026-06-12
+**Layer:** Frontend
+**Component:** `frontend/src/components/helper/ApprovalQueueTab.jsx`
+**Introduced by:** Fix BUG-048 (perubahan ternary chain di conditional render)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Setelah deploy fix BUG-048, seluruh halaman aplikasi (customer, helper, cashier, admin) menjadi blank — tidak ada konten yang tampil sama sekali. Tidak ada error di UI, hanya layar putih kosong.
+
+### Root Cause
+
+Saat mengubah ternary chain di `ApprovalQueueTab.jsx` untuk mendukung kondisi `fetchError`, kondisi terakhir dibiarkan tidak lengkap:
+
+```jsx
+// SEBELUM fix BUG-048 (benar):
+) : (
+  queue.map(...)
+)}
+
+// SESUDAH fix BUG-048 (SALAH — ternary tidak lengkap):
+) : queue.length > 0 ? (
+  queue.map(...)
+)}   ← missing ': null'
+```
+
+Ternary operator `A ? B : C` selalu harus memiliki ketiga bagian. Jika bagian `C` (fallback) hilang, JavaScript/JSX mengalami syntax error. Vite membangun bundle meskipun ada JSX syntax error tertentu, tapi React crash saat runtime ketika mencoba merender komponen tersebut — menyebabkan seluruh React tree yang memuat `ApprovalQueueTab` (dan karena ini dimuat via lazy/import chain dari `App.jsx`) crash dengan white screen.
+
+### Why ALL screens were affected
+
+`ApprovalQueueTab.jsx` diimpor ke `HelperPage.jsx`, yang diimpor ke `App.jsx`. Saat React mencoba merender component tree, error JavaScript melempar exception yang tidak tertangkap di level provider/router, menyebabkan seluruh `<BrowserRouter>` crash — semua route ikut blank.
+
+### Fix
+
+Tambahkan `: null` sebagai fallback terakhir ternary:
+
+```jsx
+// Sebelum:
+) : queue.length > 0 ? (
+  queue.map(...)
+)}
+
+// Sesudah:
+) : queue.length > 0 ? (
+  queue.map(...)
+) : null}
+```
+
+### Files Changed
+
+- `frontend/src/components/helper/ApprovalQueueTab.jsx` — tambah `: null` pada akhir ternary chain
+
+### Deployment
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| **Setiap ternary `A ? B` yang bukan bagian dari `A ? B : C` adalah syntax error** — selalu pastikan ada `: fallback` di akhir | Jika kondisi terakhir bisa false tanpa output, gunakan `condition ? <jsx> : null` bukan `condition ? <jsx>` |
+| Saat mengubah ternary chain (menambah kondisi di tengah), periksa seluruh chain dari atas ke bawah sebelum commit | Perubahan dari `(A ? X : Y)` menjadi `(A ? X : B ? Y : Z)` tanpa fallback `Z` adalah pola yang paling sering salah |
+| Gunakan error boundary di top-level router untuk mencegah satu komponen crash membuat semua screen blank | Tanpa error boundary, satu syntax/runtime error di satu komponen bisa mematikan seluruh aplikasi |
+
+---
+
+## CR-049 — SPA Navigation: Ganti `window.location.href` dengan React Router `useNavigate`
+
+**Date:** 2026-06-12
+**CR Terkait:** —
+**STD Baru:** STD-008
+**Status:** ✅ Done
+
+### Permintaan
+
+Pastikan semua module/page menggunakan teknologi Virtual DOM dan Single Page Application (SPA) — tidak ada navigasi yang menyebabkan full page reload.
+
+### Temuan Audit
+
+Aplikasi sudah dibangun sebagai React SPA menggunakan React Router v6 dengan benar di semua halaman. Hanya **satu** pola yang melanggar SPA:
+
+| File | Baris | Masalah |
+|---|---|---|
+| `frontend/src/api/client.js` | 24 | `window.location.href = '/masuk'` pada interceptor 401 — full page reload |
+
+Semua `window.location` lainnya bersifat **read-only** dan tidak melanggar SPA:
+- `useWebSocket.js`: baca `protocol` dan `host` untuk konstruksi URL WebSocket
+- `CustomerShell.jsx`: baca `pathname` untuk cek kondisi, navigasi tetap via `navigate()`
+- `TourProvider.jsx`: baca `pathname` untuk cek kondisi, navigasi tetap via `navigate()`
+- `QrScannerModal.jsx`: baca `host`/`pathname` untuk error message display
+
+### Root Cause Pelanggaran
+
+`api/client.js` adalah modul biasa (bukan React component), sehingga **tidak bisa menggunakan `useNavigate()`** langsung. Solusi lama: `window.location.href` — berfungsi tapi mematikan SPA.
+
+**Dampak negatif `window.location.href`:**
+- Seluruh React virtual DOM di-destroy dan di-rebuild (state hilang)
+- Cart, notifikasi, tour state — semua reset
+- WebSocket diputus, harus reconnect dari awal
+- JS bundle di-download ulang (meski dari cache, masih lebih lambat)
+- User melihat layar putih sebentar (flash of blank)
+
+### Solusi: Custom DOM Event Pattern
+
+Karena `client.js` tidak bisa menggunakan React hooks, gunakan **window custom event** sebagai bridge antara Axios interceptor dan React Router:
+
+```
+401 terjadi
+  → client.js: localStorage.clear + dispatchEvent('sos:session-expired')
+  → AppRoutes (useEffect listener): logout() + navigate('/masuk', replace)
+  → React Router: SPA navigate, zero page reload
+```
+
+### Fix
+
+**`frontend/src/api/client.js`**
+
+```diff
+- localStorage.removeItem('sos_token');
+- localStorage.removeItem('sos_user');
+- window.location.href = '/masuk';
++ localStorage.removeItem('sos_token');
++ localStorage.removeItem('sos_user');
++ window.dispatchEvent(new CustomEvent('sos:session-expired'));
+```
+
+**`frontend/src/App.jsx`**
+
+1. Tambah `useEffect` ke React import, `useNavigate` ke react-router-dom import
+2. Tambah di `AppRoutes`:
+
+```js
+const { logout } = useAuth();
+const navigate   = useNavigate();
+
+useEffect(() => {
+  const handleExpiry = () => {
+    logout();
+    navigate('/masuk', { replace: true });
+  };
+  window.addEventListener('sos:session-expired', handleExpiry);
+  return () => window.removeEventListener('sos:session-expired', handleExpiry);
+}, [logout, navigate]);
+```
+
+### Files Changed
+
+- `frontend/src/api/client.js`
+- `frontend/src/App.jsx`
+- `STANDARD.md` — tambah STD-008 (SPA navigation rules)
+
+### Deployment
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention (STD-008)
+
+| Rule | Context |
+|---|---|
+| **Dilarang `window.location.href = '/path'`** untuk routing internal | Gunakan `useNavigate()` atau pattern Custom Event jika di luar komponen React |
+| Modul non-React yang butuh trigger navigasi harus pakai `window.dispatchEvent(new CustomEvent('sos:...'))`; handler di `AppRoutes` | Pattern ini tetap pure SPA, React state tidak terganggu |
+| Baca `window.location.*` (tanpa assignment) untuk keperluan non-navigasi masih diizinkan | WebSocket URL, display, kondisi check — tidak menyebabkan reload |
 
 ---
