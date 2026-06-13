@@ -24,6 +24,8 @@ import StaffShell from './components/layout/StaffShell';
 import LoginCustomerPage from './pages/customer/LoginCustomerPage';
 import RegisterPage from './pages/customer/RegisterPage';
 import LoginStaffPage from './pages/staff/LoginStaffPage';
+import OTPVerificationPage from './pages/staff/OTPVerificationPage';
+import TrustedDevicesPage from './pages/staff/TrustedDevicesPage';
 import NotFound from './pages/public/NotFound';
 import MaintenancePage from './pages/public/MaintenancePage';
 
@@ -64,10 +66,7 @@ import LeaderDashboardPage from './pages/leader/LeaderDashboardPage';
 import SalesReportPage from './pages/leader/SalesReportPage';
 import VisitorStatsPage from './pages/leader/VisitorStatsPage';
 import ReturnsPage from './pages/leader/ReturnsPage';
-
-const HELPER_NAV = [
-  { to: '/helper', icon: '🏪', label: 'Booth Order' },
-];
+import LeaderDeleteApprovalPage from './pages/leader/LeaderDeleteApprovalPage';
 
 const CASHIER_NAV = [
   { to: '/cashier', icon: '💳', label: 'Pembayaran' },
@@ -91,6 +90,7 @@ const LEADER_NAV = [
   { to: '/leader/penjualan', icon: '💰', label: 'Laporan Penjualan' },
   { to: '/leader/pengunjung', icon: '👥', label: 'Pengunjung' },
   { to: '/leader/retur', icon: '↩️', label: 'Retur' },
+  { to: '/leader/hapus-approval', icon: '🗑️', label: 'Hapus Approval' },
 ];
 
 // Root redirect based on role
@@ -138,6 +138,7 @@ function AppRoutes() {
       <Routes>
         {/* Always-accessible — staff login & the maintenance page itself */}
         <Route path="/staff/masuk" element={<LoginStaffPage />} />
+        <Route path="/staff/otp"   element={<OTPVerificationPage />} />
         <Route path="/maintenance" element={<MaintenancePage />} />
 
         {/* ── Maintenance guard — blocks ALL roles except ADMIN ─────────────── */}
@@ -153,6 +154,7 @@ function AppRoutes() {
           {/* Receipt page — standalone, accessible to all authenticated roles */}
           <Route element={<RequireAuth />}>
             <Route path="/pesanan/:transactionId/receipt" element={<ReceiptPickupPage />} />
+            <Route path="/settings/devices" element={<TrustedDevicesPage />} />
           </Route>
 
           {/* CR-036: public order tracking — accessible without login via ?token= */}
@@ -177,8 +179,8 @@ function AppRoutes() {
 
           {/* Helper routes */}
           <Route element={<RequireRole allowedRoles={['HELPER']} />}>
-            <Route element={<StaffShell navItems={HELPER_NAV} title="Helper" />}>
-              <Route path="/helper"               element={<HelperPage />} />
+            <Route path="/helper" element={<HelperPage />} />
+            <Route element={<StaffShell navItems={[]} title="Helper" />}>
               <Route path="/helper/order-success" element={<HelperOrderSuccessPage />} />
             </Route>
           </Route>
@@ -210,6 +212,7 @@ function AppRoutes() {
               <Route path="/leader/penjualan" element={<SalesReportPage />} />
               <Route path="/leader/pengunjung" element={<VisitorStatsPage />} />
               <Route path="/leader/retur" element={<ReturnsPage />} />
+              <Route path="/leader/hapus-approval" element={<LeaderDeleteApprovalPage />} />
             </Route>
           </Route>
 

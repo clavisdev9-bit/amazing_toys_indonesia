@@ -41,7 +41,7 @@ async function lookupTransaction(transactionId) {
   }
 
   const itemsResult = await query(
-    `SELECT ti.quantity, ti.approved_quantity, ti.approval_status,
+    `SELECT ti.product_id, ti.quantity, ti.approved_quantity, ti.approval_status,
             ti.unit_price, ti.subtotal,
             p.product_name, p.image_url,
             ten.tenant_id, ten.tenant_name, ten.booth_location
@@ -135,13 +135,14 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       ? parseFloat(cashReceived) - parseFloat(txn.total_amount)
       : null;
 
-    // Mark as PAID
+    // Mark as PAID; freeze amount_charged = total_amount at this moment (fraud protection)
     await client.query(
       `UPDATE transactions
        SET status = 'PAID', payment_method = $1, payment_reference = $2,
-           cash_received = $3, cash_change = $4, cashier_id = $5, paid_at = NOW()
-       WHERE transaction_id = $6`,
-      [paymentMethod, paymentRef || null, cashReceived || null, cashChange, cashierId, transactionId]
+           cash_received = $3, cash_change = $4, cashier_id = $5, paid_at = NOW(),
+           amount_charged = $6
+       WHERE transaction_id = $7`,
+      [paymentMethod, paymentRef || null, cashReceived || null, cashChange, cashierId, txn.total_amount, transactionId]
     );
 
     // Update cashier session recap

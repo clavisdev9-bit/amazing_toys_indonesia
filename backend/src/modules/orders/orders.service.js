@@ -323,14 +323,25 @@ async function cancelOrder(transactionId, customerId) {
     // Restore stock only if it was already deducted (PENDING, not PENDING_APPROVAL)
     if (txn.status === 'PENDING') {
       const items = await client.query(
-        `SELECT product_id, quantity FROM transaction_items WHERE transaction_id = $1`,
+        `SELECT product_id, quantity, approval_status, approved_quantity
+         FROM transaction_items WHERE transaction_id = $1`,
         [transactionId]
       );
       for (const item of items.rows) {
-        await client.query(
-          `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
-          [item.quantity, item.product_id]
-        );
+        // BUG-059: use approved_quantity for APPROVED items — only that portion was
+        // deducted when helper called approveItem(). The rejected portion (quantity -
+        // approved_quantity) was never deducted in the PENDING_APPROVAL flow.
+        // For pure self-order items (approval_status='PENDING', approved_quantity=NULL),
+        // full quantity was deducted at order creation → restore quantity.
+        const restoreQty = item.approval_status === 'REJECTED'
+          ? 0
+          : (item.approved_quantity !== null ? item.approved_quantity : item.quantity);
+        if (restoreQty > 0) {
+          await client.query(
+            `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+            [restoreQty, item.product_id]
+          );
+        }
       }
     }
 
@@ -775,9 +786,16 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
     );
 
     await writeAuditLog({
-      action: 'TXN_ITEM_ADDED', actorId: cashierId, actorRole: 'CASHIER',
+      action: 'ADD_ITEM', actorId: cashierId, actorRole: 'CASHIER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { productId, quantity, total_amount: newTotal },
+      newValue: {
+        product_id:   productId,
+        product_name: product.product_name,
+        qty:          quantity,
+        subtotal:     product.price * quantity,
+        total_before: parseFloat(txn.total_amount),
+        total_after:  newTotal,
+      },
     });
 
     return { transactionId, total_amount: newTotal };

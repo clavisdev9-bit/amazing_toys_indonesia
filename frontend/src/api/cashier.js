@@ -12,3 +12,8 @@ export const addItemToTransaction = (transactionId, productId, quantity) =>
   client.post(`/cashier/orders/${transactionId}/items`, { product_id: productId, quantity });
 export const applyVoucherToOrder = (transactionId, voucherCode) =>
   client.post(`/cashier/orders/${transactionId}/voucher`, { voucherCode });
+
+export const getExpiredTransactions = (params) => client.get('/cashier/expired', { params });
+
+export const createDeleteRequest = (data) => client.post('/cashier/delete-requests', data);
+export const getPendingDeleteRequests = () => client.get('/cashier/delete-requests/pending');

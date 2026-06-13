@@ -1,24 +1,84 @@
 'use strict';
 
-const { query } = require('../../../config/database');
+const { query, withTransaction } = require('../../../config/database');
 const { writeAuditLog } = require('../../../utils/auditLog');
 const logger = require('../../../config/logger');
 
 const JOB_NAME = 'txn.expire.sweep';
 
 /**
- * Sweep PENDING transactions whose expires_at has passed and mark them EXPIRED.
+ * Restore stock for a single transaction (non-fatal per-item).
+ * Used when RESERVED or WAITING_PAYMENT orders expire — stock was
+ * deducted at creation and must be returned.
+ */
+async function restoreStock(client, transactionId) {
+  try {
+    await client.query(
+      `UPDATE products p
+          SET stock_quantity = stock_quantity + ti.quantity
+         FROM transaction_items ti
+        WHERE ti.transaction_id = $1
+          AND ti.product_id = p.product_id
+          AND ti.approval_status != 'REJECTED'`,
+      [transactionId],
+    );
+  } catch (err) {
+    logger.warn(`[${JOB_NAME}] stock restore failed for ${transactionId}`, { error: err.message });
+  }
+}
+
+/**
+ * Sweep transactions whose expires_at has passed and mark them EXPIRED.
  *
- * Safety rules:
- * - Only touches status = 'PENDING' (never PENDING_APPROVAL — those have expires_at = NULL)
- * - Requires expires_at IS NOT NULL (avoids NULL comparison edge cases)
- * - Does NOT restore stock — stock was deducted when the transaction became PENDING;
- *   a separate Odoo cancel sync handles downstream cleanup.
+ * Statuses swept:
+ *  - RESERVED        → stock deducted at creation → must restore stock on expire
+ *  - WAITING_PAYMENT → inherited from RESERVED    → must restore stock on expire
+ *  - PENDING         → legacy self-order          → stock handled by Odoo cancel sync, no restore here
+ *
+ * Never touches PENDING_APPROVAL (expires_at = NULL), PAID, CANCELLED, COMPLETED.
  */
 async function execute() {
   logger.info(`[${JOB_NAME}] sweep starting`);
 
-  let expired = [];
+  // ── Step 1: Expire RESERVED + WAITING_PAYMENT and restore their stock ──────
+  let stockStatuses = [];
+  try {
+    const result = await query(`
+      UPDATE transactions
+         SET status = 'EXPIRED'
+       WHERE status IN ('RESERVED', 'WAITING_PAYMENT')
+         AND expires_at IS NOT NULL
+         AND expires_at < NOW()
+      RETURNING transaction_id, status AS new_status
+    `);
+    stockStatuses = result.rows;
+  } catch (err) {
+    logger.error(`[${JOB_NAME}] sweep RESERVED/WAITING_PAYMENT failed`, { error: err.message });
+  }
+
+  if (stockStatuses.length > 0) {
+    logger.info(`[${JOB_NAME}] expired ${stockStatuses.length} RESERVED/WAITING_PAYMENT transaction(s)`, {
+      ids: stockStatuses.map(r => r.transaction_id),
+    });
+
+    // Restore stock + audit (each in its own transaction, non-fatal)
+    for (const row of stockStatuses) {
+      try {
+        await withTransaction(async (client) => {
+          await restoreStock(client, row.transaction_id);
+          await writeAuditLog({
+            action: 'TXN_EXPIRED', actorId: null, actorRole: 'SYSTEM',
+            entityType: 'TRANSACTION', entityId: row.transaction_id,
+            oldValue: { status: 'RESERVED' },
+            newValue: { status: 'EXPIRED', stockRestored: true },
+          });
+        });
+      } catch { /* non-critical */ }
+    }
+  }
+
+  // ── Step 2: Expire PENDING — no stock restore (Odoo cancel sync handles it) ─
+  let pendingExpired = [];
   try {
     const result = await query(`
       UPDATE transactions
@@ -28,19 +88,16 @@ async function execute() {
          AND expires_at < NOW()
       RETURNING transaction_id
     `);
-    expired = result.rows;
+    pendingExpired = result.rows;
   } catch (err) {
-    logger.error(`[${JOB_NAME}] DB update failed`, { error: err.message });
-    return { expired: 0, error: err.message };
+    logger.error(`[${JOB_NAME}] sweep PENDING failed`, { error: err.message });
   }
 
-  if (expired.length > 0) {
-    logger.info(`[${JOB_NAME}] expired ${expired.length} transaction(s)`, {
-      ids: expired.map(r => r.transaction_id),
+  if (pendingExpired.length > 0) {
+    logger.info(`[${JOB_NAME}] expired ${pendingExpired.length} PENDING transaction(s)`, {
+      ids: pendingExpired.map(r => r.transaction_id),
     });
-
-    // Audit each expired transaction (non-fatal)
-    for (const row of expired) {
+    for (const row of pendingExpired) {
       try {
         await writeAuditLog({
           action: 'TXN_EXPIRED', actorId: null, actorRole: 'SYSTEM',
@@ -50,11 +107,12 @@ async function execute() {
         });
       } catch { /* non-critical */ }
     }
-  } else {
-    logger.debug(`[${JOB_NAME}] no expired transactions found`);
   }
 
-  return { expired: expired.length };
+  const total = stockStatuses.length + pendingExpired.length;
+  if (total === 0) logger.debug(`[${JOB_NAME}] no expired transactions found`);
+
+  return { expired: total, withStockRestore: stockStatuses.length, pendingOnly: pendingExpired.length };
 }
 
 module.exports = { JOB_NAME, execute };

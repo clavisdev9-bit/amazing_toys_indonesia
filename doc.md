@@ -603,3 +603,99 @@ Route `/cashier/pos` menampilkan 404. Nav item "🛒 POS Langsung" tidak ada di 
 6. Klik **💳 Bayar** → redirect ke halaman pembayaran normal
 
 **Catatan:** Di mode `HELPER_INPUT`, kasir tidak bisa membuat order baru (backend return 403). POS Langsung hanya aktif di mode `SELF_ORDER`.
+
+---
+
+## Peta Lengkap: Status Transaksi vs Stok
+
+### Konteks
+
+Kolom `stock_quantity` di tabel `products` adalah satu-satunya sumber kebenaran stok SOS. Setiap pemesanan atau pembatalan harus mencerminkan perubahannya di sini. Peta ini mendokumentasikan **kapan**, **oleh siapa**, dan **event apa** yang mempengaruhi nilai `stock_quantity`.
+
+---
+
+### Deduction — Stok Dikurangi
+
+| Event | Status Sebelum → Sesudah | File | Detail |
+|---|---|---|---|
+| Helper membuat order baru | `(baru)` → `RESERVED` | `helper.service.js` · `createHelperOrder()` | `UPDATE products SET stock_quantity = stock_quantity - $qty WHERE product_id = $id` per item, di dalam `withTransaction`. Dilakukan **sebelum** transaksi disimpan. |
+| Kasir membuat order langsung (POS) | `(baru)` → `PENDING` | `cashier.service.js` · `createCashierOrder()` | Sama seperti di atas — deduction per item dalam transaction block. |
+| Leader membuat order internal | `(baru)` → `RESERVED` | `leader.service.js` · `createOrder()` | Deduction per item dalam transaction block. |
+| Kasir menambah item ke transaksi existing | tetap `RESERVED` / `PENDING` | `cashier.service.js` · `addItemToTransaction()` | `UPDATE products SET stock_quantity = stock_quantity - $qty` untuk item baru yang ditambahkan. |
+
+---
+
+### Restoration — Stok Dikembalikan
+
+| Event | Status Sebelum → Sesudah | File | Detail |
+|---|---|---|---|
+| TxnExpireJob — RESERVED kadaluarsa | `RESERVED` → `EXPIRED` | `TxnExpireJob.js` · Step 1 | `UPDATE products SET stock_quantity = stock_quantity + ti.quantity FROM transaction_items ti WHERE ti.transaction_id = $id AND ti.approval_status != 'REJECTED'` — per transaksi dalam `withTransaction`. |
+| TxnExpireJob — WAITING_PAYMENT kadaluarsa | `WAITING_PAYMENT` → `EXPIRED` | `TxnExpireJob.js` · Step 1 | Sama seperti RESERVED — restore stok per item yang tidak REJECTED. |
+| Kasir membatalkan (CANCEL) | `RESERVED` / `WAITING_PAYMENT` / `PENDING` → `CANCELLED` | `cashier.service.js` · `cancelTransaction()` | `UPDATE products SET stock_quantity = stock_quantity + ti.quantity FROM transaction_items ti WHERE ...` dalam transaction block. |
+| Leader membatalkan order | `RESERVED` → `CANCELLED` | `leader.service.js` · `cancelOrder()` | Restore stok per item dalam transaction block. |
+| Helper menolak item (REJECT item) | item `approval_status = 'REJECTED'` | `helper.service.js` · `rejectItem()` | `UPDATE products SET stock_quantity = stock_quantity + $qty WHERE product_id = $id` — hanya untuk item yang di-reject, bukan seluruh transaksi. |
+| Sync Odoo — PENDING dibatalkan di Odoo | `PENDING` → `CANCELLED` | (sync job / webhook Odoo) | Stok dikembalikan via Odoo cancel event — SOS menerima callback dan restore stok. TxnExpireJob **tidak** melakukan restore untuk PENDING karena Odoo yang handle. |
+
+---
+
+### Tidak Ada Perubahan Stok
+
+| Event | Status | Alasan |
+|---|---|---|
+| Transaksi berhasil dibayar | `WAITING_PAYMENT` / `RESERVED` → `PAID` | Stok sudah dikurangi saat order dibuat — tidak ada perubahan tambahan saat pembayaran. |
+| Status berubah `RESERVED` → `WAITING_PAYMENT` | `RESERVED` → `WAITING_PAYMENT` | Perubahan status saja, stok tidak berubah — barang sudah direservasi. |
+| TxnExpireJob — PENDING kadaluarsa | `PENDING` → `EXPIRED` | Odoo bertanggung jawab atas stok PENDING. SOS tidak restore stok secara langsung untuk PENDING. |
+| Helper membaca antrian / detail transaksi | — | Read-only query, tidak ada efek stok. |
+
+---
+
+### Ringkasan Per Status
+
+| Status | Stok Dikurangi? | Stok Dikembalikan? | Siapa yang Restore? |
+|---|---|---|---|
+| `PENDING` | Ya (saat create) | Ya (jika cancelled atau expired) | Odoo (cancel) / tidak (expire, Odoo handle) |
+| `RESERVED` | Ya (saat create) | Ya (jika cancelled atau expired) | SOS langsung (`cancelTransaction` / `TxnExpireJob`) |
+| `WAITING_PAYMENT` | Ya (carry dari RESERVED) | Ya (jika cancelled atau expired) | SOS langsung (`cancelTransaction` / `TxnExpireJob`) |
+| `PAID` | Tidak berubah | Tidak | — |
+| `CANCELLED` | Tidak berubah | Ya (saat cancel) | SOS langsung |
+| `EXPIRED` | Tidak berubah | Ya (saat expire) | SOS langsung (via `TxnExpireJob` Step 1) |
+
+---
+
+### Diagram Alur Stok
+
+```
+Order Dibuat
+     │
+     ├── RESERVED / PENDING
+     │        │  (stock_quantity -= qty per item)
+     │        │
+     │   ┌────┴─────────────────────┐
+     │   │                         │
+     │  Dibatalkan              Kadaluarsa
+     │  (CANCELLED)             (EXPIRED)
+     │   │                         │
+     │   └──── stock_quantity ──────┘
+     │         += qty per item
+     │         (SOS langsung, kecuali
+     │          PENDING expired → Odoo)
+     │
+     └── WAITING_PAYMENT
+              │  (stok sudah terkunci dari RESERVED)
+              │
+         ┌────┴──────────────────────┐
+         │                          │
+        PAID                   Dibatalkan / Kadaluarsa
+        (tidak ada               stock_quantity += qty
+         perubahan stok)         (SOS langsung)
+```
+
+---
+
+### Gap yang Diketahui
+
+| ID | Deskripsi | Status |
+|---|---|---|
+| G-001 | PENDING yang expire tidak di-restore stok oleh SOS — bergantung penuh pada Odoo. Jika Odoo tidak mengirim callback, stok tidak kembali. | Accepted risk — Odoo cancel sync dianggap reliable. |
+| G-002 | Item yang `approval_status = 'REJECTED'` di-restore satuan per item, tapi transaksi induk tetap jalan. Jika seluruh item di-reject, transaksi tidak otomatis dibatalkan. | By design — kasir harus cancel manual jika semua item ditolak. |
+| G-003 | `addItemToTransaction` tidak punya fallback restore jika gagal di tengah jalan (partial deduction). | Mitigated by `withTransaction` — rollback otomatis jika error. |

@@ -10,6 +10,7 @@ RUN npm ci --omit=dev
 COPY src ./src
 COPY migrations ./migrations
 COPY add-admin.js ./add-admin.js
+COPY data ./data
 
 RUN mkdir -p public/uploads
 

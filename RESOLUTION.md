@@ -62,6 +62,19 @@
 | [BUG-048](#bug-048) | 2026-06-12 | Tab "Antrian Approval" di `/helper` tampilkan kosong — migration DB tidak auto-apply + error ditelan diam | Database + Backend + Frontend | ✅ Resolved | — |
 | [BUG-049](#bug-049) | 2026-06-12 | Semua screen blank — ternary chain tidak lengkap di `ApprovalQueueTab.jsx` (missing `: null`) | Frontend | ✅ Resolved | — |
 | [CR-049](#cr-049) | 2026-06-12 | SPA navigation: ganti `window.location.href` di `api/client.js` dengan `CustomEvent + useNavigate` | Frontend | ✅ Done | — |
+| [CR-041](#cr-041) | 2026-06-12 | OTP Login + Trusted Device: Email OTP untuk perangkat baru, skip OTP 30 hari, refresh token per device | Backend + Frontend | ✅ Done | — |
+| [BUG-050](#bug-050) | 2026-06-12 | Serah Terima Outstanding tampilkan qty original bukan approved | Backend | ✅ Resolved | — |
+| [BUG-051](#bug-051) | 2026-06-13 | Admin Master Data field "Kategori *" tidak ada menu tambah kategori | Backend + Frontend | ✅ Resolved | STD-009 |
+| [CR-053](#cr-053) | 2026-06-13 | Delete Item Approval Workflow: kasir ajukan hapus item → leader approve/reject real-time via WebSocket | Backend + Frontend | ✅ Done | — |
+| [BUG-052](#bug-052) | 2026-06-13 | `/daftar` & `/masuk` selalu tampil "Amazing Toys Fair 2026" hardcoded setelah rebuild — Docker image tidak meng-copy `data/`, tidak ada volume | Infra/Docker | ✅ Resolved | — |
+| [CR-061](#cr-061) | 2026-06-13 | Fraud Protection: block delete item pada TRX PAID, amount_charged, ADD_ITEM audit log, fraud WS alert, discrepancy endpoint | Backend | ✅ Done | — |
+| [BUG-053](#bug-053) | 2026-06-13 | QR Scanner tidak bekerja pada perangkat lama — tidak ada legacy getUserMedia polyfill, constraint cascade, play() guard, srcObject fallback | Frontend | ✅ Resolved | — |
+| [BUG-054](#bug-054) | 2026-06-13 | Hapus item via CR-053/CR-061 tidak mengembalikan stok; PaymentPage delete button tidak dapat `product_id` dari API | Backend + Backend | ✅ Resolved | CR-053, CR-061 |
+| [BUG-055](#bug-055) | 2026-06-13 | Page `/masuk` klik login → Internal server error — `customer_otps` & `customer_trusted_devices` belum ada di DB (tipe FK salah: `INTEGER` bukan `UUID`) | Database + Backend | ✅ Resolved | — |
+| [BUG-056](#bug-056) | 2026-06-13 | TXN-20260613-00070 status `RESERVED` melewati `expires_at` tapi tidak otomatis EXPIRED — `TxnExpireJob` hanya sweep `PENDING`, tidak `RESERVED`/`WAITING_PAYMENT` | Backend/Scheduler | ✅ Resolved | — |
+| [BUG-057](#bug-057) | 2026-06-13 | Tombol 🗑️ di `/cashier/bayar/:id` → Internal Server Error — `item_delete_requests.product_id` bertipe `INTEGER` sedangkan `products.product_id` adalah `VARCHAR(20)` | Database + Backend | ✅ Resolved | — |
+| [BUG-058](#bug-058) | 2026-06-13 | Klik "Setujui" di `/leader/hapus-approval` → Internal Server Error — menghapus item terakhir transaksi menyebabkan `total_amount = 0`, melanggar `transactions_total_amount_check (total_amount > 0)` | Backend | ✅ Resolved | — |
+| [BUG-059](#bug-059) | 2026-06-13 | Customer cancel transaksi yang sudah di-approve parsial oleh helper → stok kembali +4 (seharusnya +2) — `cancelOrder()` menggunakan `item.quantity` (original) bukan `item.approved_quantity` (yang benar-benar dikurangi) | Backend | ✅ Resolved | — |
 
 ---
 
@@ -3612,3 +3625,1061 @@ docker compose up -d --no-deps frontend
 | Baca `window.location.*` (tanpa assignment) untuk keperluan non-navigasi masih diizinkan | WebSocket URL, display, kondisi check — tidak menyebabkan reload |
 
 ---
+
+## CR-041 — OTP Login + Trusted Device
+
+**Implemented:** 2026-06-12
+
+**Feature:**
+Login staff sekarang menggunakan OTP verifikasi saat login dari perangkat baru. Setelah OTP berhasil, perangkat dipercaya selama 30 hari — login berikutnya langsung tanpa OTP.
+
+**Flow:**
+1. Staff input username + password di `/staff/masuk`
+2. Frontend kirim `deviceId` (UUID stabil dari localStorage) + `fingerprintHash` (FingerprintJS)
+3. Backend cek:
+   - Jika `otp_enabled = FALSE` atau `email` kosong → issue JWT langsung (backward compatible)
+   - Jika device sudah trusted → skip OTP, issue JWT + refresh token
+   - Jika device baru → generate OTP 6-digit, kirim ke email, return `{ requiresOtp: true, tempToken, maskedEmail }`
+4. Frontend redirect ke `/staff/otp` dengan `tempToken` via route state
+5. User input OTP → `POST /api/v1/auth/verify-otp` → device registered as trusted → JWT + refresh token issued
+6. Email notifikasi perangkat baru dikirim setelah OTP berhasil
+
+**Files Modified:**
+- `backend/src/modules/auth/auth.service.js` — OTP flow, `verifyOtpAndLogin`, `refreshAccessToken`, device management
+- `backend/src/modules/auth/auth.router.js` — endpoint `/verify-otp`, `/refresh`, `/logout`, `/devices`, `/devices/:id`
+- `backend/src/app.js` — schema guard untuk tabel OTP (CREATE TABLE IF NOT EXISTS)
+
+**Files Created:**
+- `backend/migrations/018_cr041_alter_users_otp.sql` — kolom `email`, `otp_enabled` di tabel `users`
+- `backend/migrations/019_cr041_login_otps.sql` — tabel `login_otps`
+- `backend/migrations/020_cr041_trusted_devices.sql` — tabel `trusted_devices`
+- `backend/migrations/021_cr041_refresh_tokens.sql` — tabel `refresh_tokens`
+- `backend/src/modules/auth/otp.service.js` — generate, hash, store, verify OTP
+- `backend/src/modules/auth/device.service.js` — checkTrustedDevice, registerTrustedDevice, list/revoke, refresh tokens
+- `backend/src/services/email.service.js` (extended) — `sendOTPEmail`, `sendNewDeviceAlert`
+- `frontend/src/utils/deviceFingerprint.js` — stable device UUID + FingerprintJS hash
+- `frontend/src/pages/staff/OTPVerificationPage.jsx` — 6-digit OTP input dengan paste support
+- `frontend/src/pages/staff/TrustedDevicesPage.jsx` — daftar & revoke perangkat terpercaya (`/settings/devices`)
+- `frontend/src/api/auth.js` (extended) — `verifyOtp`, `refreshToken`, `logoutStaff`, `getDevices`, `revokeDevice`
+- `frontend/src/pages/staff/LoginStaffPage.jsx` (modified) — kirim deviceId/fingerprint, handle `requiresOtp` redirect
+
+**OTP Spec:**
+- 6 digit, TTL 5 menit, max 3 percobaan, bcrypt-hashed di DB
+- Device trust: 30 hari TTL, UUID stable per browser + FingerprintJS entropy
+- Refresh token: per-device, SHA-256 hashed, TTL 30 hari
+
+**Backward Compatibility:**
+- User tanpa `email` atau `otp_enabled = FALSE` tetap login langsung tanpa OTP
+- Existing JWT format tidak berubah; `deviceId` ditambahkan sebagai optional field
+
+**Schema Guard:**
+Tabel OTP dibuat via `CREATE TABLE IF NOT EXISTS` di startup `app.js` sehingga tidak bergantung pada manual migration untuk environment yang sudah ada.
+
+---
+
+## BUG-050 — Serah Terima Outstanding Tampilkan Qty Original, Bukan Qty Approved (TXN-20260612-00086)
+
+**Tanggal:** 2026-06-13
+**Layer:** Backend
+**Page:** `/helper` → Serah Terima → Outstanding → HandoverDetailView
+**Transaction:** TXN-20260612-00086 ("barbie dream house x 5" seharusnya "x 3")
+**CR Terkait:** CR-040 (HELPER_APPROVE, per-item approved_quantity)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Helper membuka detail handover untuk TXN-20260612-00086. Panel menampilkan:
+
+```
+barbie dream house × 5
+```
+
+Padahal item tersebut sudah diapprove partial (approved_quantity = 3), seharusnya tampil:
+
+```
+barbie dream house × 3
+```
+
+### Root Cause
+
+`getBoothOrder` di `backend/src/modules/helper/helper.service.js` (line 566–573) tidak menyertakan `ti.approved_quantity` dalam SELECT items:
+
+```sql
+-- SEBELUM (salah):
+SELECT ti.product_id, p.product_name, ti.quantity, ti.unit_price, ti.subtotal,
+       ti.pickup_status, ti.tenant_id
+FROM transaction_items ti
+JOIN products p ON p.product_id = ti.product_id
+WHERE ti.transaction_id = $1 AND ti.tenant_id = $2
+```
+
+Frontend `HandoverDetailView` menggunakan pola:
+
+```jsx
+×{item.approved_quantity ?? item.quantity}
+```
+
+Karena `approved_quantity` tidak ada di response, `item.approved_quantity === undefined`. Operator `??` (nullish coalescing) mengevaluasi `undefined ?? item.quantity` → jatuh ke `item.quantity` (nilai ordered = 5), bukan approved = 3.
+
+Bandingkan dengan `getApprovalQueue` (line 638–646) yang sudah benar mencantumkan `ti.approved_quantity` — konsistensi ini tidak direplikasi saat `getBoothOrder` ditulis.
+
+### Fix
+
+Tambahkan `ti.approved_quantity` (dan `p.barcode` untuk display) ke SELECT items di `getBoothOrder`:
+
+**`backend/src/modules/helper/helper.service.js` — line 567:**
+
+```diff
+- SELECT ti.product_id, p.product_name, ti.quantity, ti.unit_price, ti.subtotal,
+-        ti.pickup_status, ti.tenant_id
++ SELECT ti.product_id, p.product_name, p.barcode, ti.quantity, ti.approved_quantity,
++        ti.unit_price, ti.subtotal, ti.pickup_status, ti.tenant_id
+```
+
+Frontend display `×{item.approved_quantity ?? item.quantity}` sudah benar — tidak perlu diubah.
+
+### Files Changed
+
+- `backend/src/modules/helper/helper.service.js` — tambah `ti.approved_quantity, p.barcode` ke SELECT di `getBoothOrder`
+
+### Deployment
+
+```bash
+docker compose restart backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Setiap query yang mengembalikan `transaction_items` untuk keperluan **display ke helper/kasir** wajib menyertakan `ti.approved_quantity` | Kolom ini ditambahkan di CR-040 (migration 017). Qty yang relevan untuk ditampilkan adalah approved_quantity (apa yang benar-benar disediakan), bukan quantity (apa yang dipesan) |
+| Saat menulis fungsi query baru yang mengambil items, selalu cross-check dengan `getApprovalQueue` sebagai reference — ia sudah memiliki kolom yang lengkap | `getApprovalQueue` adalah contoh canonical SELECT transaction_items yang benar |
+| Frontend `??` (nullish coalescing) adalah fallback yang benar untuk `approved_quantity`, tapi ia hanya bisa bekerja jika backend mengirim field tersebut | Pastikan backend mengembalikan field, bukan mengandalkan frontend untuk "menebak" nilai default |
+
+---
+
+## BUG-051 — Field "Kategori *" di Admin Master Data Tidak Ada Menu Tambah Kategori
+
+**Tanggal:** 2026-06-13
+**Layer:** Frontend + Backend
+**Page:** `/admin` → Master Data → modal Tambah Produk / Edit Produk → field "Kategori *"
+**Status:** ✅ Resolved
+
+### Symptom
+
+Admin membuka form tambah/edit produk dan mengisi field "Kategori *". Dropdown `CategoryCombobox` hanya menampilkan kategori yang sudah ada. Tidak ada cara untuk mendaftarkan kategori baru langsung dari form tersebut — admin harus menutup modal, menambahkan kategori lewat cara lain (tidak ada), lalu kembali.
+
+### Root Cause
+
+Dua lapisan yang saling absen:
+
+1. **Backend** — `product_categories` table sudah ada (migration 007) namun tidak ada endpoint untuk menambah baris baru. `listCategories()` hanya membaca, tidak ada `createCategory()`.
+
+2. **Frontend** — `CategoryCombobox` hanya menampilkan suggestions dari list yang ada. Tidak ada affordance "Tambahkan '{teks}'" untuk nilai yang belum terdaftar. Prop `onAddNew` tidak pernah didefinisikan.
+
+### Fix
+
+**`backend/src/modules/products/products.service.js`**
+Tambah fungsi `createCategory(name)`:
+```js
+async function createCategory(name) {
+  // INSERT INTO product_categories ... ON CONFLICT DO NOTHING
+}
+```
+
+**`backend/src/modules/products/products.router.js`**
+Tambah endpoint `POST /api/v1/products/categories` (auth: LEADER, ADMIN).
+
+**`frontend/src/api/products.js`**
+Tambah `createCategory(name)` → `POST /products/categories`.
+
+**`frontend/src/components/ui/CategoryCombobox.jsx`**
+- Tambah prop `onAddNew?: (name: string) => Promise<void>`
+- Saat `value` tidak kosong dan tidak ada exact match, tampilkan item `➕ Tambahkan "{value}"` di bagian bawah dropdown
+- Saat diklik: jalankan `onAddNew(value.trim())` dengan loading state (`adding`)
+
+**`frontend/src/pages/admin/tabs/MasterDataTab.jsx`**
+- Import `createCategory` dari `api/products`
+- Tambah `handleAddCategory(name)`: call API → refresh `categories` state → toast sukses/gagal
+- Tambah prop `onAddCategory` di `FormFields` → forward ke `CategoryCombobox` sebagai `onAddNew`
+- Wire ke kedua `<FormFields>` (Create Modal + Edit Modal)
+
+### Files Changed
+
+- `backend/src/modules/products/products.service.js` — tambah `createCategory`
+- `backend/src/modules/products/products.router.js` — tambah `POST /categories`
+- `frontend/src/api/products.js` — tambah `createCategory`
+- `frontend/src/components/ui/CategoryCombobox.jsx` — tambah prop `onAddNew` + UI "Tambahkan"
+- `frontend/src/pages/admin/tabs/MasterDataTab.jsx` — import, handler, wire ke FormFields
+
+### Deployment
+
+```bash
+docker compose restart backend
+docker compose build --no-cache frontend && docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+Lihat STD-009 di STANDARD.md — setiap field admin yang referensi list konfigurasi wajib punya affordance tambah nilai baru inline.
+
+
+---
+
+## CR-053 — Delete Item Approval Workflow (Kasir → Leader)
+
+**Date:** 2026-06-13  
+**Type:** CR (Change Request)  
+**Layer:** Backend + Frontend  
+**Status:** ✅ Done
+
+### Deskripsi
+
+Kasir tidak bisa langsung menghapus item dari keranjang POS — setiap permintaan hapus item wajib disetujui oleh Leader secara real-time via WebSocket.
+
+### Flow
+
+1. **Kasir ajukan hapus** — Kasir tap ikon 🗑️ pada item di keranjang → permintaan PENDING dikirim ke backend → item di-dim dengan badge "⏳ Menunggu persetujuan leader..." → notifikasi real-time ke semua Leader via WS event `delete_request:new`
+2. **Leader review** — Leader buka halaman `/leader/hapus-approval` → melihat kartu permintaan dengan detail produk, qty, subtotal, nama kasir, dan waktu → pilih Setujui atau Tolak (dengan alasan opsional)
+3. **Keputusan** — Backend update status + (jika disetujui dan ada transaction_id) hapus item dari `transaction_items` + recalculate total → emit WS event `delete_request:resolved` ke cashier yang bersangkutan → UI kasir update otomatis
+
+### Root Cause (Pre-existing Gap)
+
+Belum ada workflow kontrol perubahan keranjang POS. Kasir bisa hapus item sembarangan tanpa oversight dari leader, membuka risiko manipulasi transaksi.
+
+### Fix
+
+**Database:**
+- Tabel `item_delete_requests` dibuat via idempotent schema guard di `app.js` startup
+- Kolom: `request_id` SERIAL PK, `transaction_id` VARCHAR FK, `product_id` INT, `product_name` TEXT, `qty` INT, `subtotal` NUMERIC, `cashier_id` UUID FK, `cashier_name` TEXT, `status` TEXT (PENDING/APPROVED/REJECTED), `reason` TEXT, `reviewed_by` UUID FK, `created_at` TIMESTAMPTZ, `reviewed_at` TIMESTAMPTZ
+
+**WebSocket (`backend/src/ws/websocket.js`):**
+- Tambah `leaderClients: Set<WebSocket>` — semua LEADER/ADMIN yang terkoneksi
+- Tambah `cashierClients: Map<cashierId, Set<WebSocket>>` — per kasir by UUID
+- Tambah `broadcastToLeaders(payload)` dan `broadcastToCashier(cashierId, payload)`
+- AUTH handler sekarang register LEADER/ADMIN ke leaderClients dan CASHIER ke cashierClients
+
+**Backend Service:**
+- `cashier.service.js`: `createDeleteRequest()`, `getPendingDeleteRequests(cashierId)`
+- `leader.service.js`: `listDeleteRequests(status)`, `reviewDeleteRequest(requestId, leaderId, action, reason)` — dengan hapus transaction_item + recalculate total jika disetujui dan ada transaction_id
+
+**Backend Router:**
+- `POST /api/v1/cashier/delete-requests` (CASHIER) — buat request + emit WS ke leaders
+- `GET /api/v1/cashier/delete-requests/pending` (CASHIER) — restore pending state setelah reload
+- `GET /api/v1/leader/delete-requests?status=PENDING` (LEADER/ADMIN)
+- `PATCH /api/v1/leader/delete-requests/:id` (LEADER/ADMIN) — approve/reject + emit WS ke cashier
+
+**Frontend:**
+- `api/cashier.js`: `createDeleteRequest`, `getPendingDeleteRequests`
+- `api/leader.js`: `getDeleteRequests`, `reviewDeleteRequest`
+- `CashierPOSPage.jsx`: state `pendingDeleteIds` (Set), load pending on mount, WS listener `delete_request:resolved`, tombol 🗑️ → kirim request, item pending = dim + badge + disable qty controls
+- Halaman baru `LeaderDeleteApprovalPage.jsx` di `/leader/hapus-approval` — panel real-time dengan `RequestCard` per permintaan (Setujui/Tolak + alasan), WS listener `delete_request:new`
+- `App.jsx`: import + nav item "🗑️ Hapus Approval" + route `/leader/hapus-approval`
+
+### Files Changed
+
+- `backend/src/ws/websocket.js`
+- `backend/src/app.js` — schema guard
+- `backend/src/modules/cashier/cashier.service.js`
+- `backend/src/modules/cashier/cashier.router.js`
+- `backend/src/modules/leader/leader.service.js`
+- `backend/src/modules/leader/leader.router.js`
+- `frontend/src/api/cashier.js`
+- `frontend/src/api/leader.js`
+- `frontend/src/pages/cashier/CashierPOSPage.jsx`
+- `frontend/src/pages/leader/LeaderDeleteApprovalPage.jsx` (new)
+- `frontend/src/App.jsx`
+
+### Deployment
+
+```bash
+docker compose restart backend
+docker compose build --no-cache frontend && docker compose up -d --no-deps frontend
+```
+
+---
+
+## BUG-052 — Halaman `/daftar` dan `/masuk` Selalu Tampil "Amazing Toys Fair 2026" Hardcoded Setelah Rebuild
+
+**Tanggal:** 2026-06-13
+
+### Symptom
+
+Halaman `/daftar` (RegisterPage) dan `/masuk` (LoginCustomerPage) menampilkan `"Amazing Toys Fair 2026"` secara permanen, bahkan setelah admin mengubah nama event via Admin → Konfigurasi. Setiap kali `docker compose up --build` dijalankan, perubahan admin hilang dan halaman kembali ke nilai hardcoded.
+
+### Root Cause (3 lapis)
+
+**Layer 1 — Dockerfile tidak meng-copy `data/`:**
+Backend Dockerfile hanya meng-copy `src/`, `migrations/`, dan `add-admin.js`. Direktori `backend/data/` (tempat `system-config.json` disimpan) **tidak pernah masuk ke Docker image**. Akibatnya, setiap kali container dibuat ulang, `/app/data/` kosong.
+
+**Layer 2 — Tidak ada Docker volume untuk `/app/data`:**
+Karena tidak ada named volume, `/app/data/system-config.json` hanya hidup di writable layer container. Setiap `docker compose up --build` → container baru → writable layer kosong → file hilang.
+
+**Layer 3 — Fallback ganda yang masking bug:**
+Saat `/app/data/system-config.json` tidak ada, backend mengembalikan `DEFAULT_SYSTEM_CONFIG` yang juga hardcode `event_name: 'Amazing Toys Fair 2026'`. Di frontend, fallback `t('login.subtitle')` / `t('register.subtitle')` di `LangContext.jsx` juga bernilai `'Amazing Toys Fair 2026'`. Kedua fallback ini menghasilkan tampilan yang sama dengan nilai admin yang benar, sehingga bug tidak terdeteksi secara visual — tampak normal padahal koneksi ke admin config sudah putus.
+
+### Fix
+
+**1. `backend/Dockerfile` — tambah `COPY data ./data`:**
+```dockerfile
+COPY src ./src
+COPY migrations ./migrations
+COPY add-admin.js ./add-admin.js
+COPY data ./data          # ← added
+```
+Menjamin `system-config.json` dari git selalu ada di image sebagai initial default.
+
+**2. `docker-compose.yml` — tambah named volume `hybrid_config_data`:**
+```yaml
+backend:
+  volumes:
+    - hybrid_uploads_data:/app/public/uploads
+    - hybrid_config_data:/app/data    # ← added
+
+volumes:
+  hybrid_config_data:                 # ← added
+```
+Volume ini berperilaku: saat volume baru/kosong + image punya file di path yang sama → Docker meng-copy file dari image ke volume (Docker's named-volume seeding). Setelah itu, perubahan admin via UI tersimpan di volume dan **tidak hilang** meski container di-rebuild.
+
+**3. `backend/data/system-config.json` — sinkronisasi dengan config admin:**
+Diperbarui dari `"Amazing Toy Show"` → `"Amazing Toys Fair 2026"` dan struktur field diselaraskan dengan versi production (field `txn_timeout_checkout`, `printer_type`, dll.).
+
+### Behavior Setelah Fix
+
+| Skenario | Sebelum | Sesudah |
+|---|---|---|
+| Fresh install (`docker compose up`) | `/app/data/` kosong → DEFAULT_SYSTEM_CONFIG | Volume dibuat, Docker seed dari image → `system-config.json` tersedia |
+| Admin ubah event name via UI | Tersimpan di writable layer container | Tersimpan di volume `hybrid_config_data` |
+| `docker compose up --build` (rebuild) | Writable layer hilang → config hilang → kembali ke hardcoded | Volume dipertahankan → config admin tetap ada |
+| Reset config ke default | — | `docker volume rm hybrid_hybrid_config_data` lalu `docker compose up -d --build` |
+
+### Files Changed
+
+- `backend/Dockerfile`
+- `docker-compose.yml`
+- `backend/data/system-config.json`
+
+### Deployment
+
+```bash
+docker compose up -d --build backend
+```
+
+> **Catatan:** Volume `hybrid_config_data` dibuat otomatis saat pertama kali. Jika volume sudah ada dari run sebelumnya, data di volume tetap dipakai (tidak di-overwrite oleh image).
+
+### Invariant untuk Mencegah Regresi
+
+- **Setiap kali ada field baru di `DEFAULT_SYSTEM_CONFIG`**, tambahkan juga ke `backend/data/system-config.json` agar fresh install mendapat nilai yang benar.
+- **Jangan hapus `COPY data ./data` dari Dockerfile** — ini adalah mekanisme seeding untuk volume kosong.
+- **Jangan ubah `/daftar` dan `/masuk` hanya untuk cosmetic** — halaman ini sudah benar menggunakan `usePublicConfig()`. Jika event name tidak muncul dari admin config, cek volume dan endpoint `/config/public`, bukan source page.
+
+---
+
+## CR-061 — Fraud Protection: Sistem Proteksi pada Fitur Hapus Item Kasir
+
+**Tanggal:** 2026-06-13
+
+### Latar Belakang
+
+Skenario fraud: kasir tambah item X → customer bayar EDC (total sudah include X) → kasir submit delete request setelah PAID → leader approve → nominal EDC tidak cocok total akhir → selisih digelapkan.
+
+### Root Cause
+
+Tidak ada guard yang mencegah approval delete request pada transaksi yang sudah PAID. `reviewDeleteRequest()` di `leader.service.js` langsung melakukan `DELETE FROM transaction_items` tanpa mengecek status transaksi.
+
+Selain itu, tidak ada mekanisme untuk membekukan nominal yang ditagih saat pembayaran, sehingga perubahan total setelah PAID tidak bisa dideteksi.
+
+### Fix
+
+**FIX 1 — Block delete pada TRX PAID** (`leader.service.js`):
+`reviewDeleteRequest()` query status transaksi sebelum approve. Jika `PAID` → throw `AppError` 409.
+
+**FIX 2 — Kolom `amount_charged`** (migration `023_cr061_fraud_protection.sql`):
+`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amount_charged NUMERIC(14,2);`
+Set atomik saat `processPayment()` (`payments.service.js`) dan `groupCheckout()` (`cashier.service.js`) mengubah status ke PAID.
+
+**FIX 3 — Audit log ADD_ITEM** (`orders.service.js`):
+`addItemToTransaction()` — upgrade ke action `ADD_ITEM` dengan `product_name`, `qty`, `subtotal`, `total_before`, `total_after`.
+
+**FIX 4 — Fraud alert WS** (`leader.service.js`):
+Sebelum throw 409, broadcast `fraud_alert:delete_on_paid` ke semua leader online. Payload: `{ cashier_id, cashier_name, transaction_id, product_name, qty, subtotal, attempted_at }`.
+
+**FIX 5 — Discrepancy endpoint** (`leader.router.js` + `leader.service.js`):
+`GET /api/v1/leader/discrepancies?date=YYYY-MM-DD` → PAID transactions hari ini dengan `amount_charged ≠ total_amount`. Require LEADER/ADMIN.
+
+### Files Changed
+
+| File | Perubahan |
+|---|---|
+| `backend/src/modules/leader/leader.service.js` | Import `broadcastToLeaders`; guard PAID; fraud WS broadcast; `getDiscrepancies()` |
+| `backend/src/modules/leader/leader.router.js` | `GET /discrepancies` endpoint |
+| `backend/src/modules/payments/payments.service.js` | `amount_charged = total_amount` saat PAID |
+| `backend/src/modules/cashier/cashier.service.js` | `amount_charged = total_amount` di group checkout |
+| `backend/src/modules/orders/orders.service.js` | Audit log `ADD_ITEM` diperkaya |
+| `backend/migrations/023_cr061_fraud_protection.sql` | Tambah kolom `amount_charged` |
+
+### Deployment
+
+```bash
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid \
+  -c "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amount_charged NUMERIC(14,2);"
+docker compose restart backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Selalu cek status TRX sebelum mutasi item — terutama pada approval flow | DELETE/UPDATE item harus guard `status != 'PAID'` |
+| Setiap payment path harus set `amount_charged` | `processPayment` dan `groupCheckout` adalah dua path yang ada — audit jika ditambah path baru |
+| `ADD_ITEM` audit log wajib mencatat `total_before` dan `total_after` | Tanpa ini kronologi fraud tidak bisa direkonstruksi |
+
+---
+
+## BUG-053 — QR Scanner Tidak Bekerja pada Perangkat Lama
+
+**Tanggal:** 2026-06-13
+
+### Symptom
+
+QR Scanner modal tidak bisa membuka kamera atau kamera terbuka tapi tidak pernah mendeteksi QR code pada perangkat dengan browser lama (Android Chrome < 53, iOS Safari < 11, Firefox lama).
+
+### Root Cause (6 lapis)
+
+**1. Tidak ada legacy `getUserMedia` polyfill:**
+`QrScannerModal` hanya memanggil `navigator.mediaDevices.getUserMedia`. Perangkat dengan Android 4.x / Chrome lama menggunakan `navigator.webkitGetUserMedia` (callback-based). Hasilnya: error `NotSupportedError` atau `navigator.mediaDevices` adalah `undefined` → scanner langsung tampilkan pesan error.
+
+**2. Tidak ada constraint cascade — `OverconstrainedError` mematikan scanner:**
+Constraint `{ width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: { ideal: 'environment' } }` bisa menyebabkan `OverconstrainedError` pada kamera lama. Tanpa fallback, scanner langsung mati meski kamera tersedia.
+
+**3. `video.play()` tidak mengembalikan Promise pada browser lama:**
+`await video.play()` — jika `play()` mengembalikan `undefined` (pre-2017 behavior), `await undefined` berhasil tapi error kamera tidak pernah terpropagasi. Kalau `play()` gagal secara silent, `setStarting(false)` tidak terpanggil dan scanner stuck di loading.
+
+**4. `video.srcObject` tidak ada di iOS Safari < 11:**
+iOS Safari lama hanya mendukung `video.src = URL.createObjectURL(stream)`. Tanpa fallback, kamera tidak pernah ditampilkan.
+
+**5. `video.videoWidth / videoHeight = 0` pada old Android:**
+Android Chrome lama melaporkan `0×0` meski `readyState === 4 (HAVE_ENOUGH_DATA)`. `jsQR` menerima array pixel kosong → tidak pernah mendeteksi QR code.
+
+**6. Error name berbeda di browser lama:**
+`NotAllowedError` (modern) vs `PermissionDeniedError` (lama), `NotFoundError` vs `DevicesNotFoundError`, `NotReadableError` vs `TrackStartError` — pesan error yang ditampilkan ke user selalu "unknown".
+
+### Fix
+
+`frontend/src/components/ui/QrScannerModal.jsx`:
+
+1. **Helper `getMediaStream(constraints)`** — coba `mediaDevices.getUserMedia` → fallback ke `webkitGetUserMedia` → `mozGetUserMedia` via Promise wrapper
+2. **Constraint cascade** — 3 level: ideal constraints → bare `facingMode: 'environment'` → `{ video: true }`
+3. **`play()` Promise guard** — `const p = video.play(); if (p !== undefined) await p;`
+4. **`srcObject` fallback** — `if ('srcObject' in video) { video.srcObject = stream } else { video.src = URL.createObjectURL(stream) }`
+5. **`videoWidth/Height > 0` guard di `scanLoop`** — skip frame jika dimensi belum ready
+6. **`canvas.getContext()` null guard** — defensive check setelah getContext
+7. **Error name mapping diperluas** — tambah `PermissionDeniedError`, `DevicesNotFoundError`, `TrackStartError`
+
+### Files Changed
+
+- `frontend/src/components/ui/QrScannerModal.jsx`
+
+### Deployment
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| Selalu sediakan legacy `getUserMedia` polyfill saat mengakses kamera | `mediaDevices` API tidak ada di Android < Chrome 53 |
+| Constraint getUserMedia harus punya fallback cascade | `OverconstrainedError` harus ditangkap dan dicoba ulang dengan constraint lebih longgar |
+| `video.play()` harus di-guard `!== undefined` sebelum `await` | Pre-2017 browser tidak return Promise dari media element methods |
+| Cek `videoWidth > 0 && videoHeight > 0` sebelum memproses frame | Old Android Chrome laporkan `0×0` meski readyState sudah HAVE_ENOUGH_DATA |
+
+---
+
+## BUG-054 — Hapus Item (CR-053/CR-061) Tidak Mengembalikan Stok + PaymentPage Delete Button Tidak Dapat `product_id`
+
+**Tanggal:** 2026-06-13
+**Layer:** Backend (2 titik)
+**CR Terkait:** CR-053, CR-061
+**Status:** ✅ Resolved
+
+### Symptom
+
+1. Kasir submit delete request → Leader setujui → item hilang dari transaksi, tapi **stok produk tidak bertambah kembali** — stok "hilang permanen" setiap kali item dihapus via approval.
+2. Tombol hapus (🗑️) yang baru ditambahkan di PaymentPage mengirim `product_id: undefined` ke backend → backend menolak dengan "product_id wajib diisi" — karena `lookupTransaction()` tidak menyertakan `product_id` di query items.
+
+### Root Cause
+
+**Root Cause 1 — `reviewDeleteRequest()` tidak ada stock restoration:**
+
+`leader.service.js` `reviewDeleteRequest()` saat action `approve`:
+- ✅ Menghapus item dari `transaction_items`
+- ✅ Merecalculate `total_amount` transaksi
+- ❌ **Tidak memanggil `UPDATE products SET stock_quantity = stock_quantity + qty`**
+
+Saat CR-053 diimplementasikan, workflow hapus item difokuskan pada audit trail dan total recalculation. Bagian stock restoration terlewat — padahal setiap flow lain yang menghapus item selalu mengembalikan stok (`cancelOrder`, `cancelHelperOrder`, `removeOrderItem` semua memiliki stock restore).
+
+**Root Cause 2 — `lookupTransaction()` tidak include `product_id` di SELECT items:**
+
+`payments.service.js` `lookupTransaction()` query items:
+```sql
+SELECT ti.quantity, ti.approved_quantity, ti.approval_status,
+       ti.unit_price, ti.subtotal, p.product_name, p.image_url, ...
+```
+
+Kolom `ti.product_id` tidak disertakan. PaymentPage yang baru menggunakan `item.product_id` untuk `pendingDeleteIds.has(item.product_id)` dan `handleDeleteRequest(item)` — semua hasilnya `undefined`. Delete request dikirim dengan `product_id: undefined`, diblokir oleh validasi backend.
+
+**Root Cause 3 — `reviewDeleteRequest()` hanya recalculate `total_amount`, tidak `subtotal_amount` dan `tax_amount`:**
+
+Query recalculate hanya mengupdate kolom `total_amount`. Setelah item dihapus, `subtotal_amount` dan `tax_amount` di tabel `transactions` tetap di nilai lama — inconsisten dengan `total_amount` yang baru.
+
+### Fix
+
+**Fix 1 — `backend/src/modules/leader/leader.service.js`**
+
+Tambah stock restoration SEBELUM DELETE, dalam blok `action === 'approve'`:
+```js
+// Restore stock — item is leaving the transaction so stock comes back
+await client.query(
+  `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+  [req.qty, req.product_id],
+);
+```
+
+**Fix 2 — `backend/src/modules/payments/payments.service.js`**
+
+Tambah `ti.product_id` ke SELECT items di `lookupTransaction()`:
+```diff
+-SELECT ti.quantity, ti.approved_quantity, ti.approval_status,
++SELECT ti.product_id, ti.quantity, ti.approved_quantity, ti.approval_status,
+        ti.unit_price, ti.subtotal, p.product_name, ...
+```
+
+**Fix 3 — `backend/src/modules/leader/leader.service.js`**
+
+Ganti recalculate `total_amount` saja dengan recalculate 3 kolom sekaligus (subtotal, tax, total):
+```sql
+UPDATE transactions t
+SET subtotal_amount = COALESCE(sub.s, 0),
+    tax_amount      = ROUND(COALESCE(sub.s, 0) * t.tax_rate / 100),
+    total_amount    = COALESCE(sub.s, 0) + ROUND(COALESCE(sub.s, 0) * t.tax_rate / 100)
+FROM (
+  SELECT COALESCE(SUM(subtotal), 0) AS s
+  FROM transaction_items
+  WHERE transaction_id = $1 AND approval_status != 'REJECTED'
+) sub
+WHERE t.transaction_id = $1
+```
+
+### Files Changed
+
+- `backend/src/modules/leader/leader.service.js` — stock restoration + full recalculate (3 kolom)
+- `backend/src/modules/payments/payments.service.js` — tambah `ti.product_id` ke SELECT items
+
+### Deployment
+
+```bash
+docker compose restart backend
+```
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| **Setiap fungsi yang menghapus item dari transaksi WAJIB mengembalikan stok** — `cancelOrder`, `cancelHelperOrder`, `removeOrderItem` sudah benar; pattern ini harus selalu diikuti | Stock adalah sumber kebenaran inventory — setiap penghapusan item = stok kembali |
+| Saat membuat query items baru (untuk endpoint yang belum ada), cross-check kolom dengan `getTransaction()` di `orders.service.js` sebagai referensi lengkap | `lookupTransaction()` ditulis sebelum CR-053/CR-061 dan tidak membutuhkan `product_id` saat itu — tapi setiap penambahan fitur yang butuh `product_id` harus update query ini |
+| Recalculate setelah hapus item = 3 kolom: `subtotal_amount`, `tax_amount`, `total_amount` — bukan hanya `total_amount` | Inconsistency antara 3 kolom ini bisa menyebabkan discrepancy report CR-061 melaporkan false positive |
+
+---
+
+## BUG-055 — Page `/masuk` Klik Login → Internal Server Error
+
+**Tanggal:** 2026-06-13
+**Layer:** Database + Backend
+**Page:** `/masuk` (LoginCustomerPage)
+**Status:** ✅ Resolved
+
+### Symptom
+
+Customer membuka halaman `/masuk`, mengisi nomor HP, klik tombol "Masuk" → halaman menampilkan pesan error "Internal server error." (HTTP 500). Login tidak bisa dilanjutkan.
+
+### Root Cause (3 lapisan)
+
+| # | Layer | Defect |
+|---|---|---|
+| 1 | **DATABASE (PRIMER)** | Tabel `customer_otps` dan `customer_trusted_devices` tidak ada di DB. `loginCustomer()` di `auth.service.js` memanggil `customerDeviceSvc.checkTrustedDevice()` dan `customerOtpSvc.storeOTP()` → PostgreSQL mengembalikan `ERROR: relation "customer_otps" does not exist` (atau `customer_trusted_devices`) → 500. |
+| 2 | **BACKEND (SEKUNDER)** | Migration `024_customer_otp_devices.sql` tidak pernah berjalan karena DB volume sudah ada. `docker-entrypoint-initdb.d` script hanya berjalan saat volume kosong pertama kali. Tabel tidak pernah dibuat. |
+| 3 | **BACKEND (TERSIER — BLOCKER GANDA)** | Migration 024 mendefinisikan `customer_id INTEGER` pada kedua tabel (`customer_otps` dan `customer_trusted_devices`). Tabel `customers.customer_id` bertipe `UUID`. Tipe FK yang salah menyebabkan `CREATE TABLE` gagal dengan `ERROR: foreign key constraint cannot be implemented — Key columns "customer_id" and "customer_id" are of incompatible types: integer and uuid`. Bahkan jika schema guard berjalan, tabel tetap tidak terbuat. |
+
+### Chain of Failure
+
+```
+Customer klik "Masuk" → POST /api/v1/auth/customer/login
+  → loginCustomer() → customerDeviceSvc.checkTrustedDevice(customer_id, deviceId)
+  → SELECT FROM customer_trusted_devices WHERE customer_id = $1
+  → PostgreSQL: ERROR relation "customer_trusted_devices" does not exist
+     (atau jika guard sudah berjalan dengan INTEGER: FK type mismatch → tabel tidak terbuat)
+  → error middleware: 500 Internal server error
+  → Frontend: "Internal server error."
+```
+
+### Fix
+
+**Fix 1 — Idempotent schema guard di `backend/src/app.js`**
+
+Tambah blok migration 024 di `server.listen` callback, menggunakan tipe `UUID` yang benar untuk `customer_id` di kedua tabel:
+
+```js
+const migration024Statements = [
+  `CREATE TABLE IF NOT EXISTS customer_otps (
+     id            SERIAL PRIMARY KEY,
+     customer_id   UUID        NOT NULL REFERENCES customers(customer_id) ON DELETE CASCADE,
+     otp_hash      TEXT        NOT NULL,
+     expires_at    TIMESTAMPTZ NOT NULL,
+     used_at       TIMESTAMPTZ,
+     attempt_count INTEGER     NOT NULL DEFAULT 0,
+     ip_address    INET,
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_customer_otps_customer_id ON customer_otps (customer_id)`,
+  `CREATE TABLE IF NOT EXISTS customer_trusted_devices (
+     id           SERIAL PRIMARY KEY,
+     customer_id  UUID         NOT NULL REFERENCES customers(customer_id) ON DELETE CASCADE,
+     device_id    UUID         NOT NULL,
+     device_name  VARCHAR(200),
+     browser      VARCHAR(200),
+     ip_address   INET,
+     last_seen_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+     expires_at   TIMESTAMPTZ  NOT NULL,
+     created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+     UNIQUE (customer_id, device_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_customer_trusted_devices_lookup
+     ON customer_trusted_devices (customer_id, device_id)`,
+];
+try {
+  for (const sql of migration024Statements) await dbQuery(sql);
+  logger.info('[Schema] Migration 024 verified — customer_otps + customer_trusted_devices ready.');
+} catch (e) {
+  logger.warn('[Schema] Migration 024 schema check warning:', e.message);
+}
+```
+
+**Fix 2 — `backend/migrations/024_customer_otp_devices.sql`**
+
+Ubah kedua `customer_id INTEGER` → `customer_id UUID` agar migration file konsisten dengan tipe sebenarnya di tabel `customers`.
+
+**Verifikasi:** Log startup menampilkan `[Schema] Migration 024 verified — customer_otps + customer_trusted_devices ready.` tanpa warning.
+
+### Files Changed
+
+- `backend/src/app.js` — tambah idempotent schema guard migration 024 dengan tipe `UUID` yang benar
+- `backend/migrations/024_customer_otp_devices.sql` — fix tipe FK: `INTEGER` → `UUID` pada kedua tabel
+
+### Deployment
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+> **Catatan:** `docker compose restart backend` tidak cukup karena hanya merestart container yang ada — kode baru tidak masuk. Harus `build` → `up --no-deps` karena backend tidak memiliki source code volume mount.
+
+### Recurrence Prevention
+
+| Rule | Context |
+|---|---|
+| **Setiap tabel baru yang dibutuhkan feature wajib memiliki idempotent schema guard di `backend/src/app.js`** | Migration SQL di `docker-entrypoint-initdb.d` hanya berjalan pada volume kosong pertama kali. Environment yang sudah ada tidak mendapat tabel baru dari migration tanpa guard. Lihat STD-010. |
+| **Tipe FK harus sama persis dengan tipe PK tabel yang direferensikan** — selalu cek tipe PK sebelum menulis migration | `customers.customer_id` adalah `UUID`. Menulis `customer_id INTEGER` akan selalu gagal dengan `incompatible types` tanpa pesan error yang jelas di startup log jika logger format objek tidak benar. |
+| Setelah menambah schema guard, selalu rebuild image (`docker compose build backend`) dan verifikasi log `[Schema] ... verified` saat startup | `docker compose restart` memakai image lama — perubahan kode tidak terpakau sampai image direbuild. |
+| Saat schema guard gagal dengan warning kosong (`[Schema] xxx schema check warning:`), jalankan SQL langsung di container untuk melihat error aslinya: `docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c "CREATE TABLE ..."` | `logger.warn('[Schema] ... warning:', e.message)` — jika `e` adalah objek error tanpa `message` string, outputnya kosong. |
+
+---
+
+## BUG-056 — Transaksi RESERVED/WAITING_PAYMENT Tidak Otomatis Kadaluarsa
+
+**Tanggal:** 2026-06-13
+**Layer:** Backend / Scheduler
+**Transaction:** TXN-20260613-00070 (status RESERVED, `expires_at` sudah lewat)
+**Status:** ✅ Resolved
+
+### Symptom
+
+QC test: transaksi TXN-20260613-00070 dengan status `RESERVED` memiliki `expires_at = 2026-06-13 08:01:32+00` (sudah lewat 1.5 jam). Transaksi tetap di status `RESERVED` dan masih bisa diproses kasir seolah-olah masih valid.
+
+### Root Cause
+
+`TxnExpireJob.js` — job scheduler yang berjalan setiap 5 menit — hanya men-sweep transaksi dengan `status = 'PENDING'`:
+
+```sql
+-- SEBELUM (hanya PENDING):
+UPDATE transactions SET status = 'EXPIRED'
+WHERE status = 'PENDING'
+  AND expires_at IS NOT NULL
+  AND expires_at < NOW()
+```
+
+Padahal `RESERVED` dan `WAITING_PAYMENT` juga memiliki `expires_at` yang di-set saat Helper membuat order (2 jam dari waktu pembuatan). Keduanya legal bertransisi ke `EXPIRED` menurut `status.machine.js`:
+```js
+RESERVED:         new Set(['WAITING_PAYMENT', 'CANCELLED', 'EXPIRED']),  // ✅ EXPIRED ada
+WAITING_PAYMENT:  new Set(['PAID', 'CANCELLED', 'EXPIRED']),              // ✅ EXPIRED ada
+```
+
+Selain itu, `PENDING` di-sweep tanpa stock restoration karena flow lamanya bergantung pada Odoo cancel sync. Tapi `RESERVED` dan `WAITING_PAYMENT` adalah Helper orders — stock diambil atomik saat `createHelperOrder()` dan **tidak ada Odoo cancel sync**. Jika expire tanpa stock restore, stok hilang permanen.
+
+### Chain of Failure
+
+```
+createHelperOrder() → INSERT RESERVED, expires_at = NOW() + 2h, stock deducted
+→ TxnExpireJob runs every 5 min → WHERE status = 'PENDING' → RESERVED tidak tersentuh
+→ expires_at lewat → transaksi tetap RESERVED
+→ cashier lookupTransaction() → isCashierProcessable('RESERVED') = true → tetap bisa diproses
+→ customer / helper tidak mendapat notifikasi bahwa order sudah kadaluarsa
+→ stok tetap terkunci (tidak dikembalikan)
+```
+
+### Fix
+
+**`backend/src/modules/scheduler/jobs/TxnExpireJob.js`** — 2 tahap sweep:
+
+**Tahap 1 — RESERVED + WAITING_PAYMENT dengan stock restoration:**
+```sql
+UPDATE transactions SET status = 'EXPIRED'
+WHERE status IN ('RESERVED', 'WAITING_PAYMENT')
+  AND expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING transaction_id
+```
+Setelah update, untuk setiap transaksi yang di-expire:
+```sql
+UPDATE products p
+   SET stock_quantity = stock_quantity + ti.quantity
+  FROM transaction_items ti
+ WHERE ti.transaction_id = $1
+   AND ti.product_id = p.product_id
+   AND ti.approval_status != 'REJECTED'
+```
+
+**Tahap 2 — PENDING (tanpa stock restoration, sama seperti sebelumnya):**
+```sql
+UPDATE transactions SET status = 'EXPIRED'
+WHERE status = 'PENDING'
+  AND expires_at IS NOT NULL AND expires_at < NOW()
+RETURNING transaction_id
+```
+
+**Hotfix transaksi yang sudah stuck:**
+```sql
+BEGIN;
+UPDATE products p SET stock_quantity = stock_quantity + ti.quantity
+  FROM transaction_items ti
+ WHERE ti.transaction_id = 'TXN-20260613-00070' AND ti.product_id = p.product_id;
+UPDATE transactions SET status = 'EXPIRED'
+ WHERE transaction_id = 'TXN-20260613-00070' AND status = 'RESERVED';
+COMMIT;
+```
+
+**Frontend — Tab "Kadaluarsa" di `/cashier`:**
+- `cashier.service.js`: fungsi `getExpiredQueue(date)` — query EXPIRED hari ini
+- `cashier.router.js`: `GET /api/v1/cashier/expired` (CASHIER/LEADER/ADMIN)
+- `frontend/src/api/cashier.js`: `getExpiredTransactions(params)`
+- `CashierDashboardPage.jsx`: tab baru "Kadaluarsa" dengan badge merah jumlah, list transaksi non-clickable (read-only), tombol refresh
+
+### Files Changed
+
+| File | Perubahan |
+|---|---|
+| `backend/src/modules/scheduler/jobs/TxnExpireJob.js` | Expand sweep: RESERVED+WAITING_PAYMENT dengan stock restore, PENDING tetap tanpa restore |
+| `backend/src/modules/cashier/cashier.service.js` | Tambah `getExpiredQueue(date)` |
+| `backend/src/modules/cashier/cashier.router.js` | Tambah `GET /expired` |
+| `frontend/src/api/cashier.js` | Tambah `getExpiredTransactions()` |
+| `frontend/src/pages/cashier/CashierDashboardPage.jsx` | Tambah tab "Kadaluarsa" |
+
+### Deployment
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+docker compose build frontend && docker compose up -d --no-deps frontend
+```
+
+### Recurrence Prevention
+
+Lihat STD-011 di STANDARD.md — setiap status non-terminal dengan `expires_at` wajib di-cover oleh TxnExpireJob.
+
+---
+
+## BUG-057 — Tombol 🗑️ di `/cashier/bayar/:id` → Internal Server Error
+
+**Tanggal:** 2026-06-13
+**Dilaporkan dari:** QC manual — cashier klik tombol 🗑️ pada item di halaman `/cashier/bayar/:id`
+**Severity:** High — cashier tidak bisa mengajukan delete request sama sekali
+
+### Gejala
+
+Setiap kali kasir menekan tombol 🗑️ (hapus item) di halaman pembayaran (`/cashier/bayar/:transactionId`), respons dari server adalah:
+
+```
+HTTP 500 Internal Server Error
+"Internal server error."
+```
+
+Tidak ada pesan error spesifik yang tampil ke user — hanya toast generic.
+
+### Root Cause
+
+**Tipe kolom `product_id` di tabel `item_delete_requests` salah: `INTEGER`, seharusnya `VARCHAR(20)`.**
+
+Rantai masalah:
+
+1. `products.product_id` adalah `VARCHAR(20)` — dikonfirmasi dari FK di `migrations/008_wishlists.sql` dan data seed di `004_mock_catalogue_products.sql` (`'p1'`, `'p2'`, `'T001'`, dll.)
+2. Schema guard di `app.js` mendefinisikan `item_delete_requests.product_id` sebagai `INTEGER NOT NULL` — tipe yang salah.
+3. Saat kasir klik 🗑️, frontend mengirim `product_id` seperti `'p1'` (string) ke `POST /api/v1/cashier/delete-requests`.
+4. Service melakukan `INSERT INTO item_delete_requests (..., product_id, ...) VALUES (..., 'p1', ...)` — PostgreSQL mencoba memasukkan string ke kolom `INTEGER` → error `invalid input syntax for type integer`.
+5. Error tidak tertangkap secara specific → `errorHandler` merespons dengan HTTP 500.
+
+**Mengapa tidak terdeteksi lebih awal?**
+- `CREATE TABLE IF NOT EXISTS` hanya berjalan satu kali (saat tabel belum ada) — jika tabel sudah terlanjur dibuat dengan tipe salah, guard tidak akan memperbaikinya.
+- Tidak ada FK eksplisit antara `item_delete_requests.product_id` dan `products.product_id`, sehingga kesalahan tipe tidak tertangkap saat CREATE TABLE.
+- Tabel berhasil dibuat (tidak ada error saat startup) karena `INTEGER` adalah tipe valid — error hanya muncul saat INSERT dengan nilai non-numerik.
+
+### Perubahan File
+
+#### 1. `backend/src/app.js` — Schema guard fix
+
+Ubah tipe `product_id` dari `INTEGER` ke `VARCHAR(20)` di blok `CREATE TABLE IF NOT EXISTS item_delete_requests`. Tambahkan statement `DO $$ ... ALTER COLUMN` untuk memperbaiki tabel yang sudah terlanjur dibuat salah di deployment existing:
+
+```js
+// SEBELUM (salah):
+product_id     INTEGER       NOT NULL,
+
+// SESUDAH (benar):
+product_id     VARCHAR(20)   NOT NULL,
+```
+
+Dan tambahan guard ALTER:
+```sql
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'item_delete_requests'
+      AND column_name = 'product_id'
+      AND data_type = 'integer'
+  ) THEN
+    ALTER TABLE item_delete_requests ALTER COLUMN product_id TYPE VARCHAR(20) USING product_id::text;
+  END IF;
+END $$
+```
+
+#### 2. `backend/migrations/026_fix_delete_requests_product_id.sql` — Migration file baru
+
+File migration idempotent untuk memperbaiki tipe kolom di deployment yang sudah running. Menggunakan `DO $$ ... IF EXISTS` agar aman dijalankan berulang kali.
+
+### Deployment
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+Saat startup, backend akan:
+1. Menjalankan schema guard → `DO $$` akan mendeteksi kolom `INTEGER` dan mengubahnya ke `VARCHAR(20)`
+2. Log: `[Schema] item_delete_requests table verified (idempotent check done).`
+
+Setelah deploy, tombol 🗑️ berfungsi normal — insert `product_id = 'p1'` berhasil masuk ke kolom `VARCHAR(20)`.
+
+### Recurrence Prevention
+
+Lihat STD-012 di STANDARD.md — setiap FK atau referensi ke kolom tabel lain wajib memverifikasi tipe data sebelum schema guard ditulis.
+
+---
+
+## BUG-058 — Klik "Setujui" di `/leader/hapus-approval` → Internal Server Error
+
+**Tanggal:** 2026-06-13
+**Test case:** TXN-20260613-00075
+**Dilaporkan dari:** QC manual — leader klik tombol "Setujui" pada permintaan hapus item di `/leader/hapus-approval`
+**Severity:** High — seluruh fitur approval hapus item tidak bisa digunakan
+
+### Gejala
+
+Setiap kali leader menekan tombol "Setujui" pada `RequestCard` di halaman `/leader/hapus-approval`, respons dari server adalah:
+
+```
+HTTP 500 Internal Server Error
+"Internal server error."
+```
+
+Error spesifik dari log Docker:
+```
+error: new row for relation "transactions" violates check constraint "transactions_total_amount_check"
+    at /app/src/modules/leader/leader.service.js:270:7
+    at async withTransaction
+    at async /app/src/modules/leader/leader.router.js:149:22
+```
+
+### Root Cause
+
+**`transactions` tabel memiliki check constraint `total_amount > 0`. Saat leader menyetujui penghapusan item terakhir dalam transaksi, recalculate menghasilkan `total_amount = 0` → constraint violated → 500.**
+
+Rantai masalah:
+
+1. Kasir mengajukan delete request untuk satu-satunya item di transaksi TXN-20260613-00075.
+2. Leader klik "Setujui" → `PATCH /api/v1/leader/delete-requests/3` → `reviewDeleteRequest()` di `leader.service.js`.
+3. Fungsi melakukan `DELETE FROM transaction_items WHERE transaction_id = $1 AND product_id = $2` — item terhapus.
+4. Recalculate: `SELECT COALESCE(SUM(subtotal), 0) AS s FROM transaction_items WHERE transaction_id = $1 AND approval_status != 'REJECTED'` → `s = 0` (tidak ada item tersisa).
+5. `UPDATE transactions SET total_amount = 0 + 0 = 0` → melanggar `CHECK (total_amount > 0::numeric)`.
+6. PostgreSQL throws constraint violation → `withTransaction` rollback → HTTP 500.
+
+**Mengapa tidak terdeteksi lebih awal?**
+- Check constraint `transactions_total_amount_check` ada di schema original DB, tapi tidak pernah diuji pada skenario "hapus item terakhir".
+- Skenario normal: sebuah transaksi biasanya memiliki lebih dari satu item, jadi recalculate selalu menghasilkan nilai > 0.
+- Tidak ada guard "minimum 1 item" sebelum DELETE di kode approval.
+
+### Perubahan File
+
+#### `backend/src/modules/leader/leader.service.js` — Tambah guard "last item check"
+
+Sebelum melakukan DELETE, cek apakah item yang akan dihapus adalah satu-satunya item non-rejected yang tersisa:
+
+```js
+// SEBELUM (tidak ada guard):
+await client.query(
+  `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+  [req.qty, req.product_id],
+);
+await client.query(`DELETE FROM transaction_items ...`);
+
+// SESUDAH (dengan guard):
+const remainingRes = await client.query(
+  `SELECT COUNT(*) AS cnt
+   FROM transaction_items
+   WHERE transaction_id = $1
+     AND approval_status != 'REJECTED'
+     AND product_id != $2`,
+  [req.transaction_id, req.product_id],
+);
+if (parseInt(remainingRes.rows[0].cnt, 10) === 0) {
+  throw new AppError(
+    'Tidak dapat menghapus semua item dari transaksi. Batalkan transaksi terlebih dahulu jika tidak ada item yang tersisa.',
+    422,
+  );
+}
+// baru lanjut stock restore + DELETE + recalculate
+```
+
+Jika ini adalah item terakhir, endpoint mengembalikan HTTP 422 dengan pesan yang actionable — `withTransaction` rollback, `item_delete_requests.status` tetap `PENDING`.
+
+### Deployment
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+### Recurrence Prevention
+
+Lihat STD-013 di STANDARD.md — setiap operasi yang mengubah nilai agregat tabel yang memiliki check constraint wajib memvalidasi hasil kalkulasi sebelum UPDATE.
+
+---
+
+## BUG-059 — Cancel Transaksi Partial-Approval Mengembalikan Stok Berlebih
+
+**Tanggal:** 2026-06-13
+**Test case:** TXN-2026613-00076, produk P0001-001 (stok awal 16)
+**Dilaporkan dari:** QC manual — customer cancel dari Page `/pesanan/TXN-...-00076` setelah helper approve parsial
+**Severity:** High — stok tidak akurat setiap kali customer cancel transaksi yang sudah di-approve parsial
+
+### Skenario yang Direproduksi
+
+| Langkah | Event | Stock | Penjelasan |
+|---|---|---|---|
+| Awal | — | 16 | Stok awal P0001-001 |
+| 1 | Customer order 4 pcs → `PENDING_APPROVAL` | 16 | PENDING_APPROVAL: stok TIDAK dikurangi saat order |
+| 2 | Helper `approveItem(qty=2)` dari 4 | 14 | `approveItem` deduct `approved_quantity = 2` → 16-2=14 |
+| 3 | Transaksi → `PENDING` (setelah semua item resolved) | 14 | `_resolveAfterItemAction` transition status |
+| 4 | Customer cancel → `cancelOrder()` | **18** ❌ | Restore `quantity = 4` bukan `approved_quantity = 2` |
+| **Expected** | Customer cancel | **16** ✓ | Seharusnya restore `approved_quantity = 2` → 14+2=16 |
+
+### Root Cause
+
+**`cancelOrder()` di `orders.service.js` menggunakan `item.quantity` (jumlah original yang dipesan) sebagai restore quantity untuk SEMUA item — tidak mempertimbangkan `item.approved_quantity` dan `item.approval_status`.**
+
+```js
+// SEBELUM (salah):
+const items = await client.query(
+  `SELECT product_id, quantity FROM transaction_items WHERE transaction_id = $1`,
+  [transactionId]
+);
+for (const item of items.rows) {
+  await client.query(
+    `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+    [item.quantity, item.product_id]  // ← selalu pakai quantity (original), SALAH
+  );
+}
+```
+
+**Perbedaan stock accounting antara dua flow:**
+
+| Flow | Kapan stok dikurangi | Berapa yang dikurangi | Yang harus di-restore saat cancel |
+|---|---|---|---|
+| **SELF_ORDER** (PENDING) | Saat order dibuat | `quantity` | `quantity` |
+| **PENDING_APPROVAL → PENDING** | Saat helper `approveItem()` | `approved_quantity` (bisa < quantity) | `approved_quantity` |
+| Item REJECTED | Tidak pernah dikurangi | 0 | 0 |
+
+`cancelOrder()` tidak membedakan kedua flow ini — selalu menggunakan `quantity` untuk semua item.
+
+**Mengapa tidak terdeteksi lebih awal?**
+
+- CR-040 menambahkan PENDING_APPROVAL flow dengan komentar di `cancelOrder()`: "Restore stock only if it was already deducted (PENDING, not PENDING_APPROVAL)" — tapi asumsinya PENDING = self-order (full quantity deducted).
+- Tidak ada test case yang mencakup skenario PENDING_APPROVAL → PENDING → cancel.
+- Per-item `approval_status` dan `approved_quantity` tidak pernah di-cross-check di `cancelOrder()`.
+
+### Perubahan File
+
+#### `backend/src/modules/orders/orders.service.js` — Fix `cancelOrder()`
+
+```js
+// SESUDAH (benar):
+const items = await client.query(
+  `SELECT product_id, quantity, approval_status, approved_quantity
+   FROM transaction_items WHERE transaction_id = $1`,
+  [transactionId]
+);
+for (const item of items.rows) {
+  // BUG-059: use approved_quantity for APPROVED items
+  const restoreQty = item.approval_status === 'REJECTED'
+    ? 0
+    : (item.approved_quantity !== null ? item.approved_quantity : item.quantity);
+  if (restoreQty > 0) {
+    await client.query(
+      `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+      [restoreQty, item.product_id]
+    );
+  }
+}
+```
+
+**Tabel restore quantity per kasus:**
+
+| `approval_status` | `approved_quantity` | Restore qty | Alasan |
+|---|---|---|---|
+| `REJECTED` | any | 0 | Stok tidak pernah dikurangi |
+| `APPROVED` | 2 (from qty=4) | 2 | Hanya 2 yang pernah dikurangi (PENDING_APPROVAL flow) |
+| `PENDING` | NULL | `quantity` | Full deduction saat order (SELF_ORDER flow) |
+
+### Deployment
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+### Gap yang Diketahui
+
+**Gap-001** (tidak di-fix sekarang): Transaksi PENDING yang berasal dari PENDING_APPROVAL flow juga memiliki `expires_at`. Jika expired via TxnExpireJob Step 2 (PENDING), stok tidak dikembalikan — TxnExpireJob berasumsi Odoo yang handle, tapi untuk transaksi PENDING_APPROVAL→PENDING, stock dikurangi oleh SOS bukan Odoo. Ini mitigated by the fact that pelanggan biasanya cancel sebelum expire.
+
+### Recurrence Prevention
+
+Lihat STD-014 di STANDARD.md — setiap fungsi yang merestorasi stok dari cancel/expire wajib mempertimbangkan `approval_status` dan `approved_quantity`.

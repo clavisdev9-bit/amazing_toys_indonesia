@@ -7,8 +7,10 @@ const { body, query: qv } = require('express-validator');
 const { authenticate, authorize } = require('../../middlewares/auth.middleware');
 const { validate }  = require('../../middlewares/validate.middleware');
 const cashierSvc    = require('./cashier.service');
+const paymentsSvc   = require('../payments/payments.service');
 const ordersSvc     = require('../orders/orders.service');
 const { AppError }  = require('../../middlewares/error.middleware');
+const { broadcastToLeaders } = require('../../ws/websocket');
 
 const _SYSTEM_CONFIG_PATH = path.join(__dirname, '../../../data/system-config.json');
 
@@ -125,6 +127,126 @@ router.get('/queue',
   async (req, res, next) => {
     try {
       const data = await cashierSvc.getPaymentQueue(req.query.date);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// GET /api/v1/cashier/expired — list EXPIRED transactions for a given date (default today)
+router.get('/expired',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [qv('date').optional().isDate()],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.getExpiredQueue(req.query.date);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// POST /api/v1/cashier/delete-requests — cashier submits a delete request
+router.post('/delete-requests',
+  authenticate, authorize('CASHIER'),
+  [
+    body('product_id').notEmpty().withMessage('product_id wajib diisi.'),
+    body('product_name').trim().notEmpty().withMessage('product_name wajib diisi.'),
+    body('qty').isInt({ min: 1 }).withMessage('qty harus angka positif.'),
+    body('subtotal').isNumeric().withMessage('subtotal harus angka.'),
+    body('transaction_id').optional().isString(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const { product_id, product_name, qty, subtotal, transaction_id } = req.body;
+      const cashierName = req.user.name || req.user.username || 'Kasir';
+      const request = await cashierSvc.createDeleteRequest(req.user.userId, cashierName, {
+        transaction_id, product_id, product_name, qty, subtotal,
+      });
+      broadcastToLeaders({ event: 'delete_request:new', data: request });
+      res.status(201).json({ success: true, data: { request_id: request.request_id, status: 'PENDING' } });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Group Checkout endpoints ──────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/cashier/customer-transactions
+ * Cari TRX aktif milik customer berdasarkan nomor HP atau nama.
+ * Query: ?phone=08xx atau ?name=Budi (bisa keduanya)
+ */
+router.get('/customer-transactions',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [
+    qv('phone').optional().isString(),
+    qv('name').optional().isString(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.getCustomerActiveTrx({
+        phone: req.query.phone || null,
+        name:  req.query.name  || null,
+      });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
+ * POST /api/v1/cashier/group-checkout
+ * Merge satu atau beberapa TRX (multi-booth) lalu proses pembayaran sekaligus.
+ * Jika hanya 1 TRX, diperlakukan sebagai pembayaran tunggal (Jalur A).
+ */
+router.post('/group-checkout',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [
+    body('transaction_ids').isArray({ min: 1 }).withMessage('Pilih minimal 1 transaksi.'),
+    body('transaction_ids.*').isUUID().withMessage('transaction_id tidak valid.'),
+    body('payment_method')
+      .isIn(['CASH', 'QRIS', 'EDC', 'TRANSFER'])
+      .withMessage('Metode pembayaran tidak valid.'),
+    body('cash_received').optional().isFloat({ gt: 0 }),
+    body('payment_ref').optional().isString(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const { transaction_ids, payment_method, cash_received, payment_ref } = req.body;
+      const data = await cashierSvc.groupCheckout({
+        transactionIds: transaction_ids,
+        cashierId:      req.user.userId,
+        paymentMethod:  payment_method,
+        cashReceived:   cash_received,
+        paymentRef:     payment_ref,
+      });
+      res.json({ success: true, message: 'Pembayaran berhasil.', data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
+ * GET /api/v1/cashier/groups/:groupId
+ * Detail group beserta semua TRX dan item-nya.
+ * groupId bisa berupa UUID atau group_code (GRP-xxx).
+ */
+router.get('/groups/:groupId',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.getGroupDetail(req.params.groupId);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+);
+
+// GET /api/v1/cashier/delete-requests/pending — list this cashier's pending delete requests
+router.get('/delete-requests/pending',
+  authenticate, authorize('CASHIER'),
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.getPendingDeleteRequests(req.user.userId);
       res.json({ success: true, data });
     } catch (err) { next(err); }
   }

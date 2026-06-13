@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fingerprintjs/fingerprintjs": "^5.2.0",
     "axios": "^1.7.2",
     "jsqr": "^1.4.0",
     "qrcode.react": "^4.2.0",

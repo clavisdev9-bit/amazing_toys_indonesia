@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { useAppLogo } from '../../hooks/useAppLogo';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
@@ -111,6 +111,12 @@ export default function StaffShell({ navItems = [], title = '' }) {
             <div className="font-medium">{user?.name || user?.username}</div>
             <div className="text-xs text-gray-400">{role}</div>
           </div>
+          <Link
+            to="/settings/devices"
+            className="block w-full text-left text-xs text-gray-400 hover:text-gray-600 mb-2"
+          >
+            🖥️ Perangkat Saya
+          </Link>
           <button
             onClick={handleLogout}
             className="w-full text-left text-sm text-red-500 hover:text-red-600 font-medium"

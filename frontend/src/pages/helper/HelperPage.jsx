@@ -1,48 +1,332 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { formatRupiah, formatDate } from '../../utils/format';
-import Badge from '../../components/ui/Badge';
-import Button from '../../components/ui/Button';
-import Input from '../../components/ui/Input';
-import Spinner from '../../components/ui/Spinner';
 import { useWebSocket } from '../../hooks/useWebSocket';
-import { useLang } from '../../context/LangContext';
+import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
+import { useAuth } from '../../hooks/useAuth';
+import { useAppLogo } from '../../hooks/useAppLogo';
 import ApprovalQueueTab from '../../components/helper/ApprovalQueueTab';
+import QrScannerModal from '../../components/ui/QrScannerModal';
+import MapModal from '../../components/ui/MapModal';
+import Spinner from '../../components/ui/Spinner';
 import {
   getBoothProducts,
   getBoothOrders,
+  getBoothOrder,
   createHelperOrder,
-  cancelHelperOrder,
   handoverOrder,
 } from '../../api/helper';
 
-// STATUS_LABEL is built dynamically using t() inside each component.
+// ─── Design tokens ────────────────────────────────────────────────────────────
+const C = {
+  gold: '#C9A227', goldLight: '#F5EAB7', goldDark: '#7A6010',
+  crimson: '#C4283A', crimsonLight: '#F9E4E6', crimsonDark: '#7A0F1C',
+  olive: '#6B7A2A', oliveLight: '#E8EDD0', oliveDark: '#3A4210',
+  warmBg: '#FBF7F0', border: '#E8E2D5', soft: '#F4EEE2', muted: '#9B8E7E',
+};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAB: BUAT ORDER
-// ─────────────────────────────────────────────────────────────────────────────
-function OrderTab() {
+// ─── Sidebar menu config ──────────────────────────────────────────────────────
+const MENUS = [
+  {
+    id: 'order', label: 'Buat Order', dot: C.olive,
+    subs: [
+      { id: 'membuat', label: 'Membuat Order' },
+      { id: 'outstanding', label: 'Outstanding' },
+      { id: 'paid', label: 'Paid' },
+    ],
+  },
+  {
+    id: 'approval', label: 'Approval', dot: C.gold, hasBadge: 'approval',
+    subs: [
+      { id: 'belum_approve', label: 'Belum Approve' },
+      { id: 'sudah_approve', label: 'Sudah Approve' },
+    ],
+  },
+  { id: 'history', label: 'History', dot: C.muted, subs: null },
+  {
+    id: 'handover', label: 'Serah Terima', dot: C.crimson, hasBadge: 'handover',
+    subs: [
+      { id: 'handover_outstanding', label: 'Outstanding' },
+      { id: 'sudah_handover', label: 'Sudah Serah Terima' },
+    ],
+  },
+];
+
+// ─── Panel metadata ───────────────────────────────────────────────────────────
+const PANEL_META = {
+  'order/membuat':             { title: 'Membuat Order',       subtitle: 'Buat pesanan baru untuk customer walk-in',    showScan: true,  scanPlaceholder: 'Cari produk / scan barcode...' },
+  'order/outstanding':         { title: 'Order Outstanding',   subtitle: 'Pesanan yang belum selesai pembayaran',       showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'order/paid':                { title: 'Order Paid',          subtitle: 'Pesanan yang sudah dibayar',                  showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'approval/belum_approve':    { title: 'Antrian Approval',    subtitle: 'Pesanan customer menunggu persetujuan',       showScan: true,  scanPlaceholder: 'Cari / scan QR order...' },
+  'approval/sudah_approve':    { title: 'Sudah Disetujui',     subtitle: 'Pesanan yang telah disetujui',                showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'history':                   { title: 'History',             subtitle: 'Semua transaksi booth hari ini',              showScan: false },
+  'handover/handover_outstanding': { title: 'Serah Terima',   subtitle: 'Pesanan PAID siap diserahkan ke customer',    showScan: true,  scanPlaceholder: 'Scan QR atau ketik nomor order...' },
+  'handover/sudah_handover':   { title: 'Sudah Serah Terima', subtitle: 'Serah terima telah selesai dilakukan',        showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+};
+
+// ─── Status helpers ───────────────────────────────────────────────────────────
+function statusDot(status) {
+  if (['PAID', 'APPROVED', 'HANDED_OVER', 'COMPLETED'].includes(status)) return C.olive;
+  if (['PENDING', 'CREATED', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL'].includes(status)) return C.gold;
+  return C.crimson;
+}
+
+function statusLabel(status) {
+  const MAP = {
+    PAID: 'Paid', APPROVED: 'Approved', HANDED_OVER: 'Diserahkan', COMPLETED: 'Selesai',
+    PENDING: 'Pending', CREATED: 'Created', RESERVED: 'Reserved',
+    WAITING_PAYMENT: 'Menunggu Bayar', PENDING_APPROVAL: 'Menunggu Approval',
+    CANCELLED: 'Dibatalkan', REJECTED: 'Ditolak', EXPIRED: 'Kedaluwarsa',
+  };
+  return MAP[status] || status;
+}
+
+// ─── Shared sub-components ────────────────────────────────────────────────────
+function Banner({ type, children }) {
+  const S = {
+    amber: { bg: '#FEF3C7', color: '#92400E', border: '#FDE68A' },
+    green: { bg: '#D1FAE5', color: '#065F46', border: '#6EE7B7' },
+    red:   { bg: C.crimsonLight, color: C.crimsonDark, border: '#FECACA' },
+  };
+  const s = S[type] || S.amber;
+  return (
+    <div style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color, borderRadius: 8, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, marginBottom: 12 }}>
+      {children}
+    </div>
+  );
+}
+
+function OrderCard({ order, action }) {
+  const name = order.customer_name || order.customer_reg_phone || order.customer_phone || 'Walk-in';
+  return (
+    <div style={{ background: '#fff', borderRadius: 10, border: `1px solid ${C.border}`, padding: '12px 14px', marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: action ? 8 : 0 }}>
+        <div style={{ minWidth: 0, flex: 1, paddingRight: 8 }}>
+          <p style={{ margin: 0, fontFamily: 'monospace', fontWeight: 700, fontSize: 13, color: '#2a1e10' }}>{order.transaction_id}</p>
+          <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>{name} · {formatDate(order.created_at)}</p>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: C.goldDark }}>{formatRupiah(order.total_amount)}</p>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#5a4e3e', marginTop: 2 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot(order.status), display: 'inline-block', flexShrink: 0 }} />
+            {statusLabel(order.status)}
+          </span>
+        </div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function RefreshBtn({ onClick }) {
+  return (
+    <button onClick={onClick} style={{ fontSize: 12, color: C.gold, fontWeight: 700, cursor: 'pointer', border: 'none', background: 'none', fontFamily: 'inherit', padding: '2px 4px' }}>
+      ↺ Refresh
+    </button>
+  );
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────────────
+function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCount, boothName, user, role, onLogout, lang, setLang, onOpenMap }) {
+  const [expanded, setExpanded] = useState(activeMenu);
+  const logoUrl = useAppLogo();
+
+  function toggle(menu) {
+    if (menu.subs) {
+      const willExpand = expanded !== menu.id;
+      setExpanded(willExpand ? menu.id : null);
+      if (willExpand) onNavigate(menu.id, menu.subs[0].id);
+    } else {
+      setExpanded(menu.id);
+      onNavigate(menu.id, null);
+    }
+  }
+
+  return (
+    <aside style={{ width: 200, minWidth: 200, background: '#fff', borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+      {/* Brand header */}
+      <div style={{ background: C.crimson, padding: '14px 12px 12px', color: '#fff', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 9 }}>
+          {logoUrl
+            ? <img src={logoUrl} alt="" style={{ width: 26, height: 26, objectFit: 'contain', borderRadius: 4 }} />
+            : <span style={{ fontSize: 20 }}>🧸</span>
+          }
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 12.5, letterSpacing: 0.3 }}>Amazing Toys</div>
+            <span style={{ fontSize: 9, fontWeight: 700, background: 'rgba(255,255,255,0.25)', padding: '1px 5px', borderRadius: 3, letterSpacing: 0.8 }}>HYBRID</span>
+          </div>
+        </div>
+        {/* Map + Language row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 9 }}>
+          <button
+            onClick={onOpenMap}
+            style={{ display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px', borderRadius: 99, border: '1px solid rgba(255,255,255,0.45)', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', flexShrink: 0 }}
+          >
+            📍 Map
+          </button>
+          <div style={{ display: 'flex', borderRadius: 5, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.35)' }}>
+            {SUPPORTED_LANGS.map(({ code, label }) => (
+              <button
+                key={code}
+                onClick={() => setLang(code)}
+                style={{
+                  padding: '3px 6px', fontSize: 10, fontWeight: 700, cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                  background: lang === code ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.15)',
+                  color: lang === code ? C.crimsonDark : '#fff',
+                  borderLeft: code !== SUPPORTED_LANGS[0].code ? '1px solid rgba(255,255,255,0.3)' : 'none',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Booth subtitle */}
+        <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.88, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Helper · {boothName}
+        </div>
+      </div>
+
+      {/* Nav */}
+      <nav style={{ flex: 1, paddingTop: 4, paddingBottom: 8 }}>
+        {MENUS.map(menu => {
+          const isMenuActive = activeMenu === menu.id;
+          const isExpanded = expanded === menu.id;
+          const badge = menu.hasBadge === 'approval' ? approvalCount : menu.hasBadge === 'handover' ? handoverCount : 0;
+
+          return (
+            <div key={menu.id}>
+              <div
+                onClick={() => toggle(menu)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 7, padding: '9px 11px',
+                  cursor: 'pointer',
+                  background: isMenuActive && !menu.subs ? C.crimson : 'transparent',
+                  color: isMenuActive && !menu.subs ? '#fff' : '#3a2e25',
+                  fontWeight: 700, fontSize: 13, userSelect: 'none',
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: isMenuActive && !menu.subs ? 'rgba(255,255,255,0.75)' : menu.dot, flexShrink: 0 }} />
+                <span style={{ flex: 1, lineHeight: 1.35 }}>{menu.label}</span>
+                {badge > 0 && (
+                  <span style={{ background: C.crimson, color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 9, padding: '1px 5px', minWidth: 16, textAlign: 'center', lineHeight: '14px', flexShrink: 0 }}>
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
+                {menu.subs && (
+                  <span style={{ fontSize: 9, color: isMenuActive ? C.crimson : '#bbb', flexShrink: 0 }}>{isExpanded ? '▼' : '▶'}</span>
+                )}
+              </div>
+
+              {menu.subs && isExpanded && menu.subs.map(sub => {
+                const isSubActive = isMenuActive && activeSub === sub.id;
+                return (
+                  <div
+                    key={sub.id}
+                    onClick={() => onNavigate(menu.id, sub.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6,
+                      padding: '7px 10px 7px 26px', cursor: 'pointer',
+                      background: isSubActive ? C.goldLight : '#fafaf7',
+                      color: isSubActive ? C.goldDark : '#5a5248',
+                      fontWeight: isSubActive ? 700 : 500, fontSize: 12.5, userSelect: 'none',
+                    }}
+                  >
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: isSubActive ? C.gold : '#d0c8bc', flexShrink: 0 }} />
+                    {sub.label}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Footer: user + logout */}
+      <div style={{ padding: '10px 12px', borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {user?.name || user?.username}
+        </div>
+        <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, marginBottom: 6 }}>{role}</div>
+        <Link to="/settings/devices" style={{ display: 'block', fontSize: 11, color: C.muted, textDecoration: 'none', marginBottom: 5 }}>
+          🖥️ Perangkat Saya
+        </Link>
+        <button onClick={onLogout} style={{ fontSize: 12, fontWeight: 700, color: C.crimson, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit' }}>
+          Keluar
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+// ─── TopBar ───────────────────────────────────────────────────────────────────
+function TopBar({ meta, searchQuery, setSearchQuery }) {
+  const [scannerOpen, setScannerOpen] = useState(false);
+  if (!meta) return null;
+
+  return (
+    <div style={{ padding: '14px 20px 12px', borderBottom: `1px solid ${C.border}`, background: '#fff', flexShrink: 0 }}>
+      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#2a1e10' }}>{meta.title}</h2>
+      {meta.subtitle && <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted, fontWeight: 500 }}>{meta.subtitle}</p>}
+      {meta.showScan && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder={meta.scanPlaceholder || 'Ketik atau scan...'}
+            style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', background: C.warmBg, color: '#2a1e10', outline: 'none' }}
+          />
+          <button
+            onClick={() => setScannerOpen(true)}
+            style={{ padding: '7px 12px', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontSize: 12.5, fontWeight: 700, color: '#3a2e25', whiteSpace: 'nowrap', fontFamily: 'inherit' }}
+          >
+            📷 Scan QR
+          </button>
+        </div>
+      )}
+      {scannerOpen && (
+        <QrScannerModal
+          title="Scan QR"
+          hint="Arahkan kamera ke QR code"
+          resultParser={raw => raw?.trim() || null}
+          onResult={val => { setSearchQuery(val); setScannerOpen(false); }}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Panel: Membuat Order ─────────────────────────────────────────────────────
+function MembuatOrderPanel({ searchQuery }) {
   const navigate = useNavigate();
-  const { t } = useLang();
   const [products, setProducts] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [cart, setCart]         = useState({});   // { productId: qty }
-  const [phone, setPhone]       = useState('');
-  const [search, setSearch]     = useState('');
+  const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState([]);
+  const [activeCategory, setActiveCategory] = useState(null);
+  const [cart, setCart] = useState({});
+  const [phone, setPhone] = useState('');
+  const [confirmModal, setConfirmModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError]       = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     getBoothProducts()
-      .then(r => setProducts(r.data.data || []))
-      .catch(() => setError(t('helper.loadError')))
+      .then(r => {
+        const prods = r.data.data || [];
+        setProducts(prods);
+        const cats = [...new Set(prods.map(p => p.category).filter(Boolean))];
+        setCategories(cats);
+      })
+      .catch(() => setError('Gagal memuat produk. Coba refresh.'))
       .finally(() => setLoading(false));
   }, []);
 
   function setQty(productId, delta) {
     setCart(prev => {
       const current = prev[productId] || 0;
-      const next    = Math.max(0, current + delta);
+      const next = Math.max(0, current + delta);
       if (next === 0) {
         const { [productId]: _, ...rest } = prev;
         return rest;
@@ -51,9 +335,12 @@ function OrderTab() {
     });
   }
 
-  const filtered = products.filter(p =>
-    !search || p.product_name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search)
-  );
+  const filtered = products.filter(p => {
+    const q = searchQuery.toLowerCase();
+    const matchSearch = !searchQuery || p.product_name.toLowerCase().includes(q) || p.barcode?.includes(q);
+    const matchCat = !activeCategory || p.category === activeCategory;
+    return matchSearch && matchCat;
+  });
 
   const cartItems = Object.entries(cart)
     .filter(([, qty]) => qty > 0)
@@ -62,12 +349,12 @@ function OrderTab() {
       return { product_id: pid, qty, product_name: p?.product_name, price: p?.price };
     });
 
-  const subtotal = cartItems.reduce((s, i) => s + (i.price * i.qty), 0);
-  const taxAmt   = Math.round(subtotal * 0.12);   // approximate; backend recalculates
-  const total    = subtotal + taxAmt;
+  const subtotal = cartItems.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
+  const taxAmt = Math.round(subtotal * 0.12);
+  const total = subtotal + taxAmt;
 
-  async function handleApprove() {
-    if (cartItems.length === 0) { setError(t('helper.minOneProduct')); return; }
+  async function handleCreateOrder() {
+    if (cartItems.length === 0) return;
     setError('');
     setSubmitting(true);
     try {
@@ -77,316 +364,676 @@ function OrderTab() {
       });
       setCart({});
       setPhone('');
-      // CR-036: navigate ke halaman sukses dengan data order (Option B)
+      setConfirmModal(false);
       navigate('/helper/order-success', { state: res.data.data });
     } catch (err) {
-      setError(err.response?.data?.message || t('helper.createOrderError'));
+      setError(err.response?.data?.message || 'Gagal membuat order');
     } finally {
       setSubmitting(false);
     }
   }
 
-  if (loading) return <Spinner />;
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {/* Product list */}
-      <div className="lg:col-span-2 space-y-3">
-        <Input
-          placeholder={t('helper.searchBarcode')}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        {filtered.length === 0 && (
-          <p className="text-gray-400 text-sm text-center py-8">{t('helper.noProducts')}</p>
-        )}
-        <div className="space-y-2">
-          {filtered.map(p => {
-            const qty = cart[p.product_id] || 0;
-            const restricted = p.is_display_only || p.is_on_hold || p.stock_quantity === 0;
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      {error && <Banner type="red">{error}</Banner>}
+
+      {/* Category pills */}
+      {categories.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {['Semua', ...categories].map(cat => {
+            const isAll = cat === 'Semua';
+            const active = isAll ? !activeCategory : activeCategory === cat;
             return (
-              <div
-                key={p.product_id}
-                className={`bg-white rounded-lg border p-3 flex items-center gap-3 ${restricted ? 'opacity-60' : ''}`}
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(isAll ? null : (activeCategory === cat ? null : cat))}
+                style={{ padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', border: `1.5px solid ${active ? C.gold : C.border}`, background: active ? C.goldLight : '#fff', color: active ? C.goldDark : '#5a5248' }}
               >
-                {p.image_url && (
-                  <img src={p.image_url} alt="" className="w-12 h-12 object-cover rounded" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm text-gray-800 truncate">{p.product_name}</p>
-                  <p className="text-xs text-gray-500">{formatRupiah(p.price)}</p>
-                  <div className="flex gap-1 mt-0.5 flex-wrap">
-                    {p.is_display_only && <span className="text-xs text-red-600 bg-red-50 px-1.5 rounded">{t('helper.displayOnly')}</span>}
-                    {p.is_on_hold && <span className="text-xs text-orange-600 bg-orange-50 px-1.5 rounded">{t('helper.onHold')}</span>}
-                    {p.stock_quantity === 0 && <span className="text-xs text-gray-500 bg-gray-100 px-1.5 rounded">{t('badge.OUT_OF_STOCK')}</span>}
-                    {p.max_per_customer && <span className="text-xs text-blue-600 bg-blue-50 px-1.5 rounded">{t('helper.maxPerPerson', { n: p.max_per_customer })}</span>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setQty(p.product_id, -1)}
-                    disabled={qty === 0 || restricted}
-                    className="w-7 h-7 rounded-full border flex items-center justify-center text-gray-600 disabled:opacity-40"
-                  >−</button>
-                  <span className="w-6 text-center text-sm font-mono">{qty}</span>
-                  <button
-                    onClick={() => setQty(p.product_id, 1)}
-                    disabled={restricted || qty >= p.stock_quantity || (p.max_per_customer && qty >= p.max_per_customer)}
-                    className="w-7 h-7 rounded-full border flex items-center justify-center text-gray-600 disabled:opacity-40"
-                  >+</button>
-                </div>
-              </div>
+                {cat}
+              </button>
             );
           })}
         </div>
-      </div>
+      )}
 
-      {/* Cart summary */}
-      <div className="space-y-3">
-        <div className="bg-white rounded-xl border p-4">
-          <h3 className="font-semibold text-gray-700 mb-3">{t('helper.orderSummary')}</h3>
-
-          {cartItems.length === 0 ? (
-            <p className="text-gray-400 text-sm">{t('helper.noItemSelected')}</p>
-          ) : (
-            <div className="space-y-1.5 text-sm mb-3">
-              {cartItems.map(i => (
-                <div key={i.product_id} className="flex justify-between">
-                  <span className="text-gray-600">{i.product_name} ×{i.qty}</span>
-                  <span>{formatRupiah(i.price * i.qty)}</span>
-                </div>
-              ))}
-              <div className="border-t pt-1.5 flex justify-between text-gray-500">
-                <span>PPN ~12%</span>
-                <span>≈ {formatRupiah(taxAmt)}</span>
-              </div>
-              <div className="flex justify-between font-bold text-base">
-                <span>Total</span>
-                <span>{formatRupiah(total)}</span>
+      {/* Product list */}
+      {filtered.length === 0 && (
+        <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada produk ditemukan</p>
+      )}
+      {filtered.map(p => {
+        const qty = cart[p.product_id] || 0;
+        const oos = p.stock_quantity === 0;
+        const restricted = p.is_display_only || p.is_on_hold || oos;
+        const inCart = qty > 0;
+        return (
+          <div
+            key={p.product_id}
+            style={{
+              background: inCart ? C.oliveLight : '#fff',
+              border: `1.5px solid ${inCart ? C.olive : C.border}`,
+              borderRadius: 10, padding: '10px 12px', marginBottom: 8,
+              display: 'flex', alignItems: 'center', gap: 10,
+              opacity: restricted ? 0.6 : 1,
+            }}
+          >
+            {p.image_url ? (
+              <img src={p.image_url} alt="" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+            ) : (
+              <div style={{ width: 44, height: 44, borderRadius: 8, background: C.soft, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>🧸</div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</p>
+              <p style={{ margin: '1px 0', fontSize: 12, fontWeight: 800, color: C.goldDark }}>{formatRupiah(p.price)}</p>
+              <p style={{ margin: 0, fontSize: 11, color: C.muted }}>Stok {p.stock_quantity}{p.sku || p.barcode ? ` · ${p.sku || p.barcode}` : ''}</p>
+              <div style={{ display: 'flex', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
+                {oos && <span style={{ fontSize: 10, background: C.crimsonLight, color: C.crimsonDark, padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>Habis</span>}
+                {p.is_display_only && <span style={{ fontSize: 10, background: '#FFF3E0', color: '#BF6000', padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>Display Only</span>}
+                {p.is_on_hold && <span style={{ fontSize: 10, background: '#FEF3C7', color: '#92400E', padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>On Hold</span>}
               </div>
             </div>
-          )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <button
+                onClick={() => setQty(p.product_id, -1)}
+                disabled={qty === 0 || restricted}
+                style={{ width: 28, height: 28, borderRadius: '50%', border: `1.5px solid ${C.border}`, background: '#fff', cursor: qty === 0 || restricted ? 'not-allowed' : 'pointer', fontSize: 18, opacity: qty === 0 || restricted ? 0.35 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, padding: 0 }}
+              >−</button>
+              <span style={{ width: 24, textAlign: 'center', fontFamily: 'monospace', fontWeight: 800, fontSize: 14, color: inCart ? C.oliveDark : '#3a2e25' }}>{qty}</span>
+              <button
+                onClick={() => setQty(p.product_id, 1)}
+                disabled={restricted || qty >= p.stock_quantity || (p.max_per_customer && qty >= p.max_per_customer)}
+                style={{ width: 28, height: 28, borderRadius: '50%', border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontSize: 18, opacity: restricted || qty >= p.stock_quantity ? 0.35 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, padding: 0 }}
+              >+</button>
+            </div>
+          </div>
+        );
+      })}
 
-          <Input
-            placeholder={t('helper.customerPhone')}
+      {/* Cart summary */}
+      {cartItems.length > 0 && (
+        <div style={{ marginTop: 8, background: '#fff', border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 14 }}>
+          <h3 style={{ margin: '0 0 10px', fontSize: 14, fontWeight: 800, color: '#2a1e10' }}>🛒 Ringkasan Pesanan</h3>
+          {cartItems.map(i => (
+            <div key={i.product_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4, color: '#5a4e3e' }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, paddingRight: 8 }}>{i.product_name} ×{i.qty}</span>
+              <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatRupiah((i.price || 0) * i.qty)}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: `1px dashed ${C.border}`, margin: '8px 0 6px', paddingTop: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.muted, marginBottom: 4 }}>
+              <span>PPN ~12%</span>
+              <span>≈ {formatRupiah(taxAmt)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, color: '#2a1e10' }}>
+              <span>Total</span>
+              <span style={{ color: C.goldDark }}>{formatRupiah(total)}</span>
+            </div>
+          </div>
+          <input
+            type="text"
+            placeholder="No. HP customer (opsional)"
             value={phone}
             onChange={e => setPhone(e.target.value)}
-            className="mb-3"
+            style={{ width: '100%', boxSizing: 'border-box', marginTop: 10, padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', background: C.warmBg, color: '#2a1e10', outline: 'none' }}
           />
-
-          {error && <p className="text-red-600 text-xs mb-2">{error}</p>}
-
-          <Button
-            onClick={handleApprove}
-            loading={submitting}
-            disabled={cartItems.length === 0}
-            className="w-full"
+          <button
+            onClick={() => { setError(''); setConfirmModal(true); }}
+            style={{ width: '100%', marginTop: 10, padding: '10px 0', borderRadius: 10, background: C.olive, color: '#fff', border: 'none', fontWeight: 800, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}
           >
-            {t('helper.approveGenerateQR')}
-          </Button>
+            🎫 Buat Order
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Confirm modal */}
+      {confirmModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 340, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 16, color: '#2a1e10' }}>Konfirmasi Order</h3>
+            <p style={{ margin: '0 0 4px', fontSize: 13, color: '#5a4e3e' }}>Buat order senilai <strong>{formatRupiah(total)}</strong>?</p>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: C.muted }}>
+              {phone ? `QR akan dikirim ke ${phone}` : 'Tidak ada nomor HP — customer scan langsung di layar'}
+            </p>
+            {error && <p style={{ margin: '0 0 12px', fontSize: 12, color: C.crimson, fontWeight: 600 }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setConfirmModal(false); setError(''); }}
+                disabled={submitting}
+                style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleCreateOrder}
+                disabled={submitting}
+                style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: C.olive, color: '#fff', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 13, fontFamily: 'inherit', opacity: submitting ? 0.7 : 1 }}
+              >
+                {submitting ? 'Memproses...' : 'Ya, Buat'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAB: RIWAYAT
-// ─────────────────────────────────────────────────────────────────────────────
-function HistoryTab() {
-  const { t } = useLang();
-  const [orders, setOrders]   = useState([]);
+// ─── Panel: Outstanding Orders ────────────────────────────────────────────────
+function OutstandingOrderPanel({ searchQuery }) {
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState('');
+  const OUTSTANDING = ['PENDING', 'CREATED', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL'];
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getBoothOrders()
+      .then(r => setOrders((r.data.data || []).filter(o => OUTSTANDING.includes(o.status))))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = orders.filter(o => !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
+
+  return (
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <Banner type="amber">⏳ {orders.length} pesanan belum selesai pembayaran</Banner>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada order outstanding</p>}
+      {filtered.map(o => <OrderCard key={o.transaction_id} order={o} />)}
+    </div>
+  );
+}
+
+// ─── Panel: Paid Orders ───────────────────────────────────────────────────────
+function PaidOrderPanel({ searchQuery }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getBoothOrders({ status: 'PAID' })
+      .then(r => setOrders(r.data.data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = orders.filter(o => !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
+
+  return (
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <Banner type="green">✅ {orders.length} pesanan sudah dibayar</Banner>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada order paid</p>}
+      {filtered.map(o => <OrderCard key={o.transaction_id} order={o} />)}
+    </div>
+  );
+}
+
+// ─── Panel: Sudah Approve ─────────────────────────────────────────────────────
+function SudahApprovePanel({ searchQuery }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const APPROVED = ['PENDING', 'WAITING_PAYMENT', 'PAID', 'HANDED_OVER', 'COMPLETED'];
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getBoothOrders()
+      .then(r => setOrders((r.data.data || []).filter(o => APPROVED.includes(o.status))))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = orders.filter(o => !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
+
+  return (
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada order yang sudah disetujui</p>}
+      {filtered.map(o => <OrderCard key={o.transaction_id} order={o} />)}
+    </div>
+  );
+}
+
+// ─── Panel: History ───────────────────────────────────────────────────────────
+function HistoryPanel() {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
   const today = new Date().toISOString().slice(0, 10);
 
   const load = useCallback(() => {
     setLoading(true);
     getBoothOrders({ date: today })
       .then(r => setOrders(r.data.data || []))
-      .catch(() => setError(t('helper.loadError')))
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, [today]);
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading) return <Spinner />;
-  if (error)   return <p className="text-red-600 text-sm">{error}</p>;
-  if (orders.length === 0) return <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noTransactions')}</p>;
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
 
   return (
-    <div className="space-y-2">
-      <div className="flex justify-end mb-2">
-        <button onClick={load} className="text-xs text-blue-600 hover:underline">{t('helper.refresh')}</button>
-      </div>
-      {orders.map(o => (
-        <div key={o.transaction_id} className="bg-white rounded-lg border p-3 flex items-center justify-between gap-2">
-          <div>
-            <p className="font-mono text-sm font-medium">{o.transaction_id}</p>
-            <p className="text-xs text-gray-500">
-              {formatDate(o.created_at)} ·{' '}
-              {o.customer_name || o.customer_reg_phone || o.customer_phone || 'Walk-in'}
-            </p>
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {orders.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Belum ada transaksi hari ini</p>}
+      {orders.map(o => {
+        const name = o.customer_name || o.customer_reg_phone || o.customer_phone || 'Walk-in';
+        return (
+          <div
+            key={o.transaction_id}
+            style={{ background: '#fff', borderRadius: 10, border: `1px solid ${C.border}`, padding: '10px 14px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontFamily: 'monospace', fontWeight: 700, fontSize: 13, color: '#2a1e10' }}>{o.transaction_id}</p>
+              <p style={{ margin: '2px 0 0', fontSize: 11.5, color: C.muted }}>{formatDate(o.created_at)} · {name}</p>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: C.goldDark }}>{formatRupiah(o.total_amount)}</p>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#5a4e3e', marginTop: 2 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot(o.status), display: 'inline-block' }} />
+                {statusLabel(o.status)}
+              </span>
+            </div>
           </div>
-          <div className="text-right shrink-0">
-            <p className="font-semibold text-sm">{formatRupiah(o.total_amount)}</p>
-            <Badge status={o.status} label={t(`badge.${o.status}`)} />
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Handover item row (needs its own state for imgErr) ──────────────────────
+function HandoverItemRow({ item, checked, onToggle }) {
+  const [imgErr, setImgErr] = useState(false);
+  const qty = item.approved_quantity ?? item.quantity;
+  return (
+    <div
+      onClick={onToggle}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '10px 12px', marginBottom: 6,
+        background: '#fff', borderRadius: 10, border: `1.5px solid ${checked ? C.olive : C.border}`,
+        cursor: 'pointer', userSelect: 'none',
+      }}
+    >
+      <div style={{ width: 52, height: 52, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: C.soft, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {item.image_url && !imgErr
+          ? <img src={item.image_url} alt={item.product_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setImgErr(true)} />
+          : <span style={{ fontSize: 24 }}>🧸</span>
+        }
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: checked ? C.oliveDark : '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.product_name}
+        </p>
+        <p style={{ margin: 0, fontSize: 11, color: C.muted }}>
+          ×{qty}{item.barcode ? ` · ${item.barcode}` : ''}
+        </p>
+      </div>
+      <div style={{
+        width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+        border: `2px solid ${checked ? C.olive : '#ccc'}`,
+        background: checked ? C.olive : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'all 0.15s',
+      }}>
+        {checked && <span style={{ color: '#fff', fontWeight: 800, fontSize: 14, lineHeight: 1 }}>✓</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── T2: Handover Detail View ─────────────────────────────────────────────────
+function HandoverDetailView({ order: initialOrder, onBack, onDone }) {
+  const [order, setOrder] = useState(initialOrder);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [itemChecks, setItemChecks] = useState([]);
+  const [confirmModal, setConfirmModal] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getBoothOrder(initialOrder.transaction_id)
+      .then(r => {
+        const detail = r.data.data || {};
+        setOrder(detail);
+        const itms = detail.items || [];
+        setItems(itms);
+        setItemChecks(new Array(itms.length).fill(false));
+      })
+      .catch(() => setError('Gagal memuat detail order'))
+      .finally(() => setLoading(false));
+  }, [initialOrder.transaction_id]);
+
+  const checkedCount = itemChecks.filter(Boolean).length;
+  const allChecked = items.length > 0 && checkedCount === items.length;
+  const progress = items.length > 0 ? (checkedCount / items.length) * 100 : 0;
+  const customerName = order.customer_name || order.customer_reg_phone || order.customer_phone || 'Walk-in';
+
+  async function doHandover() {
+    setSubmitting(true);
+    setError('');
+    try {
+      await handoverOrder(order.transaction_id);
+      setConfirmModal(false);
+      onDone();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Gagal serah terima');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {/* Back header */}
+      <div style={{ padding: '10px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, background: '#fff', flexShrink: 0 }}>
+        <button
+          onClick={onBack}
+          style={{ padding: '5px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#5a4e3e', fontFamily: 'inherit' }}
+        >
+          ← Kembali
+        </button>
+        <h3 style={{ margin: 0, flex: 1, fontSize: 14, fontWeight: 800, color: '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          Serah Terima · {order.transaction_id}
+        </h3>
+        <span style={{ background: C.oliveLight, color: C.oliveDark, fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 8, flexShrink: 0 }}>
+          {checkedCount}/{items.length} ✓
+        </span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: 14 }}>
+        {error && <Banner type="red">{error}</Banner>}
+
+        {loading ? <Spinner /> : (
+          <>
+            {/* Summary card */}
+            <div style={{ background: C.soft, borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+              {[
+                ['ID Transaksi', <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#2a1e10' }}>{order.transaction_id}</span>],
+                ['Customer',     <span style={{ fontWeight: 600, color: '#2a1e10' }}>{customerName}</span>],
+                ['Total',        <span style={{ fontWeight: 800, color: C.goldDark }}>{formatRupiah(order.total_amount)}</span>],
+              ].map(([label, val]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12.5, marginBottom: 4 }}>
+                  <span style={{ color: C.muted, fontWeight: 500 }}>{label}</span>
+                  {val}
+                </div>
+              ))}
+            </div>
+
+            {/* Checklist header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#2a1e10' }}>Tap item saat diserahkan</p>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.muted }}>{checkedCount}/{items.length}</span>
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ height: 5, borderRadius: 3, background: C.border, marginBottom: 12, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${progress}%`, background: C.olive, transition: 'width 0.3s ease', borderRadius: 3 }} />
+            </div>
+
+            {/* Item checklist */}
+            {items.map((item, idx) => (
+              <HandoverItemRow
+                key={item.item_id || idx}
+                item={item}
+                checked={itemChecks[idx]}
+                onToggle={() => setItemChecks(prev => prev.map((v, i) => i === idx ? !v : v))}
+              />
+            ))}
+
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0', color: C.muted }}>
+              <div style={{ flex: 1, borderTop: `1.5px dashed ${C.border}` }} />
+              <span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>centang semua item untuk unlock</span>
+              <div style={{ flex: 1, borderTop: `1.5px dashed ${C.border}` }} />
+            </div>
+
+            {/* Info banner */}
+            <div style={{ background: '#D1FAE5', border: '1px solid #6EE7B7', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#065F46', fontWeight: 600, marginBottom: 14 }}>
+              ℹ️ Semua item harus di-centang sebelum konfirmasi serah terima
+            </div>
+
+            {/* Confirm button */}
+            <button
+              onClick={() => setConfirmModal(true)}
+              disabled={!allChecked}
+              style={{
+                width: '100%', padding: '12px 0', borderRadius: 10, border: 'none',
+                background: allChecked ? C.olive : '#e0dbd4',
+                color: allChecked ? '#fff' : '#9a9087',
+                fontWeight: 800, fontSize: 14,
+                cursor: allChecked ? 'pointer' : 'not-allowed',
+                fontFamily: 'inherit', transition: 'background 0.2s',
+              }}
+            >
+              ✅ Konfirmasi Serah Terima
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Confirm modal */}
+      {confirmModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 320, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 16, color: '#2a1e10' }}>Konfirmasi Serah Terima</h3>
+            <p style={{ margin: '0 0 16px', fontSize: 13, color: '#5a4e3e' }}>
+              Semua {items.length} item sudah diserahkan ke <strong>{customerName}</strong>?
+            </p>
+            {error && <p style={{ margin: '0 0 10px', fontSize: 12, color: C.crimson, fontWeight: 600 }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setConfirmModal(false); setError(''); }}
+                disabled={submitting}
+                style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}
+              >
+                Tidak
+              </button>
+              <button
+                onClick={doHandover}
+                disabled={submitting}
+                style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: C.olive, color: '#fff', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 13, fontFamily: 'inherit', opacity: submitting ? 0.7 : 1 }}
+              >
+                {submitting ? '...' : 'Ya, Serahkan'}
+              </button>
+            </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Panel: Serah Terima Outstanding ─────────────────────────────────────────
+function HandoverOutstandingPanel({ searchQuery, onCountUpdate }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    getBoothOrders({ status: 'PAID' })
+      .then(r => {
+        const data = r.data.data || [];
+        setOrders(data);
+        onCountUpdate?.(data.length);
+      })
+      .catch(() => onCountUpdate?.(0))
+      .finally(() => setLoading(false));
+  }, [onCountUpdate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (selectedOrder) {
+    return (
+      <HandoverDetailView
+        order={selectedOrder}
+        onBack={() => setSelectedOrder(null)}
+        onDone={() => { setSelectedOrder(null); load(); }}
+      />
+    );
+  }
+
+  const filtered = orders.filter(o =>
+    !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
+
+  return (
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <Banner type="amber">📦 {orders.length} pesanan siap diserahkan</Banner>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada pesanan untuk diserahkan</p>}
+      {filtered.map(o => (
+        <OrderCard
+          key={o.transaction_id}
+          order={o}
+          action={
+            <button
+              onClick={() => setSelectedOrder(o)}
+              style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: 'none', background: C.olive, color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', marginTop: 4 }}
+            >
+              📦 Serah Terima →
+            </button>
+          }
+        />
       ))}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAB: HANDOVER
-// ─────────────────────────────────────────────────────────────────────────────
-function HandoverTab() {
-  const { t } = useLang();
-  const [orders, setOrders]     = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState('');
-  const [confirming, setConfirming] = useState(null);
+// ─── Panel: Sudah Serah Terima ────────────────────────────────────────────────
+function SudahHandoverPanel({ searchQuery }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    getBoothOrders({ status: 'PAID' })
-      .then(r => setOrders(r.data.data || []))
-      .catch(() => setError(t('helper.loadError')))
+    getBoothOrders()
+      .then(r => setOrders((r.data.data || []).filter(o => ['HANDED_OVER', 'COMPLETED'].includes(o.status))))
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  async function doHandover(txnId) {
-    setConfirming(txnId);
-    try {
-      await handoverOrder(txnId);
-      load();
-    } catch (err) {
-      alert(err.response?.data?.message || t('helper.handoverError'));
-    } finally {
-      setConfirming(null);
-    }
-  }
+  const filtered = orders.filter(o =>
+    !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
-  if (loading) return <Spinner />;
-  if (error)   return <p className="text-red-600 text-sm">{error}</p>;
-
-  if (orders.length === 0) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-gray-400 text-sm">{t('helper.noPaidOrders')}</p>
-        <button onClick={load} className="text-xs text-blue-600 mt-2 hover:underline">{t('helper.refresh')}</button>
-      </div>
-    );
-  }
+  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
 
   return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center mb-1">
-        <p className="text-sm text-gray-600">{t('helper.ordersWaitingHandover', { n: orders.length })}</p>
-        <button onClick={load} className="text-xs text-blue-600 hover:underline">{t('helper.refresh')}</button>
-      </div>
-      {orders.map(o => (
-        <div key={o.transaction_id} className="bg-white rounded-xl border p-4">
-          <div className="flex items-start justify-between mb-3">
-            <div>
-              <p className="font-mono font-bold text-sm">{o.transaction_id}</p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                {o.customer_name || o.customer_reg_phone || o.customer_phone || 'Walk-in'} ·{' '}
-                {formatDate(o.created_at)}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="font-semibold">{formatRupiah(o.total_amount)}</p>
-              <Badge status="PAID" label={t('badge.PAID')} />
-            </div>
-          </div>
-          <Button
-            onClick={() => doHandover(o.transaction_id)}
-            loading={confirming === o.transaction_id}
-            className="w-full"
-            variant="success"
-          >
-            {t('helper.confirmHandover')}
-          </Button>
-        </div>
+    <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+      <Banner type="green">✅ {orders.length} serah terima selesai</Banner>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
+      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Belum ada serah terima selesai</p>}
+      {filtered.map(o => (
+        <OrderCard
+          key={o.transaction_id}
+          order={o}
+          action={
+            <span style={{ display: 'inline-block', marginTop: 4, background: C.oliveLight, color: C.oliveDark, fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 6 }}>
+              HANDOVER DONE
+            </span>
+          }
+        />
       ))}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN PAGE
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function HelperPage() {
-  const { subscribe }   = useWebSocket();
-  const { t }           = useLang();
+  const { user, role, logout } = useAuth();
+  const { subscribe }          = useWebSocket();
+  const navigate               = useNavigate();
+  const { lang, setLang }      = useLang();
 
-  const [tab, setTab]               = useState('order');
+  const [activeMenu,    setActiveMenu]    = useState('order');
+  const [activeSub,     setActiveSub]     = useState('membuat');
+  const [searchQuery,   setSearchQuery]   = useState('');
   const [approvalCount, setApprovalCount] = useState(0);
-  const [newApprovalToast, setNewApprovalToast] = useState(false);
+  const [handoverCount, setHandoverCount] = useState(0);
+  const [mapOpen,       setMapOpen]       = useState(false);
 
-  // CR-040: listen for PENDING_APPROVAL_CREATED to show badge + notification
+  // Live approval badge via WebSocket
   useEffect(() => {
     return subscribe('PENDING_APPROVAL_CREATED', () => {
-      setApprovalCount((c) => c + 1);
-      setNewApprovalToast(true);
-      setTimeout(() => setNewApprovalToast(false), 5000);
+      setApprovalCount(c => c + 1);
     });
   }, [subscribe]);
 
-  const TABS = [
-    { id: 'order',    label: t('helper.tabOrder') },
-    { id: 'approval', label: t('helper.tabApproval'), badge: approvalCount },
-    { id: 'history',  label: t('helper.tabHistory') },
-    { id: 'handover', label: t('helper.tabHandover') },
-  ];
+  function handleNavigate(menu, sub) {
+    setActiveMenu(menu);
+    setActiveSub(sub ?? null);
+    setSearchQuery('');
+    if (menu === 'approval') setApprovalCount(0);
+  }
+
+  function handleLogout() {
+    logout();
+    navigate('/staff/masuk');
+  }
+
+  const panelKey = activeSub ? `${activeMenu}/${activeSub}` : activeMenu;
+  const meta = PANEL_META[panelKey];
+  const boothName = user?.tenant_name || user?.tenant_id || 'Booth';
 
   return (
-    <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-xl font-bold text-gray-900 mb-4">{t('helper.pageTitle')}</h1>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: "'Nunito', 'Nunito Sans', sans-serif", background: C.warmBg, overflow: 'hidden' }}>
+      <Sidebar
+        activeMenu={activeMenu}
+        activeSub={activeSub}
+        onNavigate={handleNavigate}
+        approvalCount={approvalCount}
+        handoverCount={handoverCount}
+        boothName={boothName}
+        user={user}
+        role={role}
+        onLogout={handleLogout}
+        lang={lang}
+        setLang={setLang}
+        onOpenMap={() => setMapOpen(true)}
+      />
 
-      {/* CR-040: new order toast */}
-      {newApprovalToast && (
-        <div
-          className="mb-3 flex items-center gap-2 bg-emerald-600 text-white rounded-xl px-4 py-3 text-sm font-medium cursor-pointer shadow-lg"
-          onClick={() => { setTab('approval'); setNewApprovalToast(false); }}
-        >
-          <span className="text-lg">🔔</span>
-          <span>{t('helper.newOrderToast')}</span>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <TopBar meta={meta} searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {panelKey === 'order/membuat'             && <MembuatOrderPanel searchQuery={searchQuery} />}
+          {panelKey === 'order/outstanding'          && <OutstandingOrderPanel searchQuery={searchQuery} />}
+          {panelKey === 'order/paid'                 && <PaidOrderPanel searchQuery={searchQuery} />}
+          {panelKey === 'approval/belum_approve'     && (
+            <div style={{ height: '100%', overflowY: 'auto' }}>
+              <ApprovalQueueTab onCountChange={setApprovalCount} />
+            </div>
+          )}
+          {panelKey === 'approval/sudah_approve'     && <SudahApprovePanel searchQuery={searchQuery} />}
+          {panelKey === 'history'                    && <HistoryPanel />}
+          {panelKey === 'handover/handover_outstanding' && (
+            <HandoverOutstandingPanel searchQuery={searchQuery} onCountUpdate={setHandoverCount} />
+          )}
+          {panelKey === 'handover/sudah_handover'    && <SudahHandoverPanel searchQuery={searchQuery} />}
         </div>
-      )}
-
-      {/* Tab navigation */}
-      <div className="flex border-b mb-4 overflow-x-auto">
-        {TABS.map(tab_ => (
-          <button
-            key={tab_.id}
-            onClick={() => { setTab(tab_.id); if (tab_.id === 'approval') setApprovalCount(0); }}
-            className={`relative px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
-              tab === tab_.id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {tab_.label}
-            {tab_.badge > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-4.5 h-4.5 flex items-center justify-center min-w-[18px] px-1">
-                {tab_.badge}
-              </span>
-            )}
-          </button>
-        ))}
       </div>
 
-      {tab === 'order'    && <OrderTab />}
-      {tab === 'approval' && (
-        <ApprovalQueueTab onCountChange={setApprovalCount} />
-      )}
-      {tab === 'history'  && <HistoryTab />}
-      {tab === 'handover' && <HandoverTab />}
+      {mapOpen && <MapModal onClose={() => setMapOpen(false)} />}
     </div>
   );
 }

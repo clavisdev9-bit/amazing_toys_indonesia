@@ -223,4 +223,70 @@ async function sendTestMessage(testPhone) {
   }
 }
 
-module.exports = { sendOrderQR, getWaConfig, sendTestMessage };
+/**
+ * Kirim kode OTP login via WhatsApp ke customer.
+ * Throws jika provider DISABLED agar pemanggil bisa tangani dengan tepat.
+ *
+ * @param {string} phone - Nomor telepon customer (08xxx / +628xxx)
+ * @param {string} otpCode - 6-digit OTP
+ * @param {string} [customerName]
+ * @returns {Promise<{ status: 'SENT'|'FAILED', messageId?: string, error?: string }>}
+ */
+async function sendOTP(phone, otpCode, customerName = 'Pelanggan') {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') {
+    return { status: 'FAILED', error: 'WA provider belum dikonfigurasi.' };
+  }
+  if (!phone) return { status: 'FAILED', error: 'Nomor telepon kosong.' };
+
+  const message =
+    `Halo *${customerName}*!\n\n` +
+    `Kode verifikasi Amazing Toys Fair 2026 Anda:\n\n` +
+    `🔑 *${otpCode}*\n\n` +
+    `Berlaku *5 menit*. Jangan bagikan kode ini ke siapapun.\n\n` +
+    `Jika Anda tidak meminta kode ini, abaikan pesan ini.`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-OTP] OTP terkirim', { phone: phone.slice(0, 5) + '***', provider: settings.provider });
+    return result;
+  } catch (err) {
+    logger.error('[WA-OTP] Gagal kirim OTP', { provider: settings.provider, error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+/**
+ * Kirim pesan sambutan ke customer yang baru daftar.
+ * Fire-and-forget safe — tidak pernah throw.
+ *
+ * @param {string} phone
+ * @param {string} customerName
+ */
+async function sendGreeting(phone, customerName = 'Tamu') {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') {
+    logger.debug('[WA] Greeting dilewati — provider DISABLED');
+    return { status: 'SKIPPED' };
+  }
+  if (!phone) return { status: 'SKIPPED' };
+
+  const message =
+    `Halo *${customerName}*! 🎉\n\n` +
+    `Selamat datang di *Amazing Toys Fair 2026*!\n\n` +
+    `Anda sudah berhasil terdaftar. Nikmati pengalaman belanja mainan terbaik untuk buah hati Anda! 🧸\n\n` +
+    `📅 *Jadwal:* 15–20 Juli 2026\n` +
+    `📍 *Lokasi:* Jakarta Convention Center\n\n` +
+    `Selamat berbelanja! 🛍️`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA] Greeting terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA] Gagal kirim greeting', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+module.exports = { sendOrderQR, getWaConfig, sendTestMessage, sendOTP, sendGreeting };

@@ -206,9 +206,10 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
 // ── Approval card ─────────────────────────────────────────────────────────────
 
 const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll, approvingAll, rejectingAll, onRefresh }) {
-  const [showRejectAllModal, setShowRejectAllModal] = useState(false);
-  const [rejectAllReason, setRejectAllReason]       = useState('');
-  const [toast, setToast]                           = useState(null);
+  const [showRejectAllModal,  setShowRejectAllModal]  = useState(false);
+  const [rejectAllReason,    setRejectAllReason]      = useState('');
+  const [showApproveAllModal, setShowApproveAllModal] = useState(false);
+  const [toast, setToast]                             = useState(null);
 
   function showLocalToast(msg, type = 'error') {
     setToast({ msg, type });
@@ -289,12 +290,36 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
             className="flex-1 bg-emerald-600 hover:bg-emerald-700"
             loading={approvingAll}
             disabled={rejectingAll}
-            onClick={() => onApproveAll(txn.transaction_id)}
+            onClick={() => setShowApproveAllModal(true)}
           >
             ✓ Setujui Semua
           </Button>
         </div>
       )}
+
+      {/* Approve all confirmation modal */}
+      <Modal open={showApproveAllModal} onClose={() => setShowApproveAllModal(false)} title="Konfirmasi Setujui Semua">
+        <p className="text-sm text-gray-600 mb-4">
+          Apakah anda yakin menyetujui transaksi{' '}
+          <span className="font-mono font-semibold">{txn.transaction_id}</span>?
+        </p>
+        <div className="flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setShowApproveAllModal(false)}>
+            Batal
+          </Button>
+          <Button
+            variant="primary"
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+            loading={approvingAll}
+            onClick={() => {
+              onApproveAll(txn.transaction_id);
+              setShowApproveAllModal(false);
+            }}
+          >
+            Ya, Setujui
+          </Button>
+        </div>
+      </Modal>
 
       {/* Reject all modal */}
       <Modal open={showRejectAllModal} onClose={() => setShowRejectAllModal(false)} title="Tolak Semua Item">

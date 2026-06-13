@@ -134,4 +134,15 @@ async function listCategories() {
   return result.rows.map(r => r.category);
 }
 
-module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories, toggleProductHold };
+async function createCategory(name) {
+  if (!name?.trim()) throw new AppError('Nama kategori wajib diisi.', 422);
+  const result = await query(
+    `INSERT INTO product_categories (name) VALUES ($1)
+     ON CONFLICT (name) DO NOTHING
+     RETURNING category_id, name, created_at`,
+    [name.trim()],
+  );
+  return result.rows[0] ?? null;
+}
+
+module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories, createCategory, toggleProductHold };

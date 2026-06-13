@@ -33,6 +33,7 @@ services:
       - ./backend/migrations/014_cr036_waha_session.sql:/docker-entrypoint-initdb.d/19_cr036_waha_session.sql:ro
       - ./backend/migrations/015_cr040_helper_approve.sql:/docker-entrypoint-initdb.d/20_cr040_helper_approve.sql:ro
       - ./backend/migrations/016_drop_expires_at_not_null.sql:/docker-entrypoint-initdb.d/21_drop_expires_at_not_null.sql:ro
+      - ./backend/migrations/024_customer_otp_devices.sql:/docker-entrypoint-initdb.d/25_customer_otp_devices.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_hybrid"]
       interval: 10s
@@ -71,6 +72,10 @@ services:
       SMTP_PASS: ${SMTP_PASS}
       EMAIL_FROM: ${EMAIL_FROM}
       EMAIL_NOTIFY_TO: ${EMAIL_NOTIFY_TO}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-5}
+      DEVICE_TRUST_DAYS: ${DEVICE_TRUST_DAYS:-30}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-3}
       PRINTER_IP: ${PRINTER_IP}
       PRINTER_PORT: ${PRINTER_PORT:-9100}
       INTEGRATION_WEBHOOK_URL: http://integration:4000
@@ -79,6 +84,7 @@ services:
       - "${BACKEND_DEV_PORT:-3002}:3001"
     volumes:
       - hybrid_uploads_data:/app/public/uploads
+      - hybrid_config_data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 10s
@@ -163,6 +169,7 @@ services:
 volumes:
   hybrid_postgres_data:
   hybrid_uploads_data:
+  hybrid_config_data:
   waha_data:
 
 networks:

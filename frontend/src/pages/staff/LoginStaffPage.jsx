@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { loginStaff } from '../../api/auth';
 import { useAuth } from '../../hooks/useAuth';
+import { getDeviceInfo } from '../../utils/deviceFingerprint';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
@@ -9,10 +10,10 @@ const roleHome = { CASHIER: '/cashier', TENANT: '/tenant', LEADER: '/leader', AD
 
 export default function LoginStaffPage() {
   const { login } = useAuth();
-  const navigate = useNavigate();
-  const [form, setForm] = useState({ username: '', password: '' });
+  const navigate  = useNavigate();
+  const [form, setForm]     = useState({ username: '', password: '' });
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError]   = useState('');
 
   function handleChange(e) {
     setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
@@ -23,9 +24,41 @@ export default function LoginStaffPage() {
     setError('');
     setLoading(true);
     try {
-      const res = await loginStaff(form.username, form.password);
-      const { token, user } = res.data.data;
-      login(token, { role: user.role, name: user.name, userId: user.userId, username: user.username, tenantId: user.tenantId });
+      const device = await getDeviceInfo();
+      const res = await loginStaff(form.username, form.password, {
+        deviceId:        device.deviceId,
+        fingerprintHash: device.fingerprintHash,
+        deviceInfo: {
+          deviceName: device.deviceName,
+          browser:    device.browser,
+        },
+      });
+
+      const data = res.data.data;
+
+      if (data.requiresOtp) {
+        // Redirect to OTP verification page, passing tempToken via route state
+        navigate('/staff/otp', {
+          state: {
+            tempToken:   data.tempToken,
+            maskedEmail: data.maskedEmail,
+          },
+          replace: false,
+        });
+        return;
+      }
+
+      // Trusted device or OTP disabled — direct login
+      const { token, refreshToken, user } = data;
+      if (refreshToken) localStorage.setItem('sos_refresh_token', refreshToken);
+      login(token, {
+        role:     user.role,
+        name:     user.name,
+        userId:   user.userId,
+        username: user.username,
+        tenantId: user.tenantId,
+        deviceId: user.deviceId,
+      });
       navigate(roleHome[user.role] ?? '/');
     } catch (err) {
       const msg = err.response?.data?.message ?? 'Login gagal. Periksa username dan password.';

@@ -9,7 +9,7 @@ import {
 } from '../../../api/admin';
 import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
-import { getCategories } from '../../../api/products';
+import { getCategories, createCategory } from '../../../api/products';
 import { formatRupiah, formatDate } from '../../../utils/format';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
@@ -40,7 +40,7 @@ function fileToBase64(file) {
 // Defined outside MasterDataTab so its identity is stable across re-renders.
 // Defining it inside would cause React to unmount/remount inputs on every
 // keystroke (new component type each render), which destroys cursor focus.
-function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories, odooLoading, odooError, ppnRate }) {
+function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories, odooLoading, odooError, ppnRate, onAddCategory }) {
   return (
     <>
       {!isEdit && (
@@ -68,6 +68,7 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
           value={form.category}
           onChange={(val) => setForm((f) => ({ ...f, category: val }))}
           categories={categories}
+          onAddNew={onAddCategory}
           required />
         <Input label="Harga (Rp) *" type="number" min="1"
           value={form.price}
@@ -254,6 +255,18 @@ export default function MasterDataTab() {
     const match = categories.find((c) => c.toLowerCase() === raw.trim().toLowerCase());
     return match ?? raw.trim();
   }, [categories]);
+
+  async function handleAddCategory(name) {
+    try {
+      await createCategory(name);
+      const r = await getCategories();
+      setCategories(r.data.data ?? []);
+      addToast(`Kategori "${name}" berhasil ditambahkan.`, 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menambahkan kategori.', 'error');
+      throw err;
+    }
+  }
 
   if (showBulkUpload) {
     return <ProductBulkUpload onBack={() => { setShowBulkUpload(false); fetchProducts(); }} />;
@@ -726,7 +739,8 @@ export default function MasterDataTab() {
       <Modal open={createModal} onClose={() => setCreateModal(false)} title="Tambah Produk Baru">
         <form onSubmit={handleCreate} className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
           <FormFields isEdit={false} form={form} setForm={setForm} tenants={tenants} categories={categories}
-            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate} />
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate}
+            onAddCategory={handleAddCategory} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}
@@ -744,7 +758,8 @@ export default function MasterDataTab() {
             {editModal?.product_id} &bull; Tenant: {editModal?.tenant_name}
           </p>
           <FormFields isEdit={true} form={form} setForm={setForm} tenants={tenants} categories={categories}
-            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate} />
+            odooCategories={odooCategories} odooLoading={odooLoading} odooError={odooError} ppnRate={ppnRate}
+            onAddCategory={handleAddCategory} />
           {formError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">{formError}</div>
           )}

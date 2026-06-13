@@ -1,15 +1,18 @@
 'use strict';
 
 const express  = require('express');
-const { body } = require('express-validator');
-const { validate }   = require('../../middlewares/validate.middleware');
-const authService    = require('./auth.service');
+const { body, param } = require('express-validator');
+const { validate }    = require('../../middlewares/validate.middleware');
+const { authenticate } = require('../../middlewares/auth.middleware');
+const authService     = require('./auth.service');
 
 const router = express.Router();
 
+// ── Customer routes ───────────────────────────────────────────────────────────
+
 /**
  * POST /api/v1/auth/register
- * Customer self-registration (phone + name + gender)
+ * Customer self-registration
  */
 router.post('/register',
   [
@@ -32,35 +35,207 @@ router.post('/register',
 
 /**
  * POST /api/v1/auth/login/customer
- * Customer login via phone number
+ * Step 1: masukkan nomor telepon → kirim OTP via WA (atau langsung token bila trusted device)
+ * Body: { phone_number, deviceId? }
+ * Response A — trusted device: { requiresOtp: false, token, customer }
+ * Response B — OTP dikirim:    { requiresOtp: true, tempToken, maskedPhone }
  */
 router.post('/login/customer',
   [
     body('phone_number').trim().notEmpty().withMessage('Nomor telepon wajib diisi.'),
+    body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const data = await authService.loginCustomer(req.body);
+      const { phone_number, deviceId, deviceInfo } = req.body;
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const data = await authService.loginCustomer({
+        phone_number,
+        deviceId:   deviceId || null,
+        deviceInfo: { ...(deviceInfo || {}), ipAddress },
+      });
+      const message = data.requiresOtp ? 'OTP dikirim ke WhatsApp Anda.' : 'Login berhasil.';
+      res.json({ success: true, message, data });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
+ * POST /api/v1/auth/verify-otp/customer
+ * Step 2: verifikasi OTP → issue token
+ * Body: { tempToken, otpCode, deviceId?, deviceInfo? }
+ */
+router.post('/verify-otp/customer',
+  [
+    body('tempToken').notEmpty().withMessage('tempToken wajib diisi.'),
+    body('otpCode').trim().notEmpty().isLength({ min: 6, max: 6 }).isNumeric()
+      .withMessage('Kode OTP harus 6 digit angka.'),
+    body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const { tempToken, otpCode, deviceId, deviceInfo } = req.body;
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const data = await authService.verifyCustomerOtp({
+        tempToken,
+        otpCode,
+        deviceId:   deviceId || null,
+        deviceInfo: { ...(deviceInfo || {}), ipAddress },
+      });
       res.json({ success: true, message: 'Login berhasil.', data });
     } catch (err) { next(err); }
   }
 );
 
 /**
+ * POST /api/v1/auth/logout/customer
+ * Hapus trusted device sehingga login berikutnya wajib OTP kembali.
+ * Body: { deviceId? }
+ */
+router.post('/logout/customer',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      const deviceId = req.body.deviceId || req.user.deviceId || null;
+      await authService.logoutCustomer(req.user.customerId, deviceId);
+      res.json({ success: true, message: 'Logout berhasil.' });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Internal staff login ──────────────────────────────────────────────────────
+
+/**
  * POST /api/v1/auth/login
- * Internal user login (Cashier / Tenant / Leader)
+ * Internal user login.
+ * Body: { username, password, deviceId?, fingerprintHash?, deviceInfo? }
+ * Response A — OTP disabled / trusted device:
+ *   { requiresOtp: false, token, refreshToken?, user }
+ * Response B — OTP required (new device):
+ *   { requiresOtp: true, tempToken, maskedEmail }
  */
 router.post('/login',
   [
     body('username').trim().notEmpty(),
     body('password').notEmpty(),
+    body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
+    body('fingerprintHash').optional().isString(),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const data = await authService.loginUser(req.body);
+      const { username, password, deviceId, fingerprintHash, deviceInfo } = req.body;
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const data = await authService.loginUser({
+        username,
+        password,
+        deviceId:        deviceId || null,
+        fingerprintHash: fingerprintHash || null,
+        deviceInfo:      { ...(deviceInfo || {}), ipAddress },
+      });
+      res.json({ success: true, message: data.requiresOtp ? 'OTP dikirim ke email.' : 'Login berhasil.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── OTP verification ──────────────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/auth/verify-otp
+ * Body: { tempToken, otpCode, deviceId?, fingerprintHash?, deviceInfo? }
+ */
+router.post('/verify-otp',
+  [
+    body('tempToken').notEmpty().withMessage('tempToken wajib diisi.'),
+    body('otpCode').trim().notEmpty().isLength({ min: 6, max: 6 }).isNumeric()
+      .withMessage('Kode OTP harus 6 digit angka.'),
+    body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
+    body('fingerprintHash').optional().isString(),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const { tempToken, otpCode, deviceId, fingerprintHash, deviceInfo } = req.body;
+      const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
+      const data = await authService.verifyOtpAndLogin({
+        tempToken,
+        otpCode,
+        deviceId:        deviceId || null,
+        fingerprintHash: fingerprintHash || null,
+        deviceInfo:      { ...(deviceInfo || {}), ipAddress },
+      });
       res.json({ success: true, message: 'Login berhasil.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Token refresh ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/auth/refresh
+ * Body: { refreshToken }
+ */
+router.post('/refresh',
+  [
+    body('refreshToken').notEmpty().withMessage('Refresh token wajib diisi.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await authService.refreshAccessToken(req.body.refreshToken);
+      res.json({ success: true, message: 'Token diperbarui.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Authenticated endpoints ───────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/auth/logout
+ * Revokes current device's refresh token + trusted device entry.
+ * Body: { deviceId? } — falls back to req.user.deviceId from JWT
+ */
+router.post('/logout',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      const deviceId = req.body.deviceId || req.user.deviceId || null;
+      await authService.logoutDevice(req.user.userId, deviceId);
+      res.json({ success: true, message: 'Logout berhasil.' });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
+ * GET /api/v1/auth/devices
+ * Returns list of trusted devices for the authenticated user.
+ */
+router.get('/devices',
+  authenticate,
+  async (req, res, next) => {
+    try {
+      const devices = await authService.getUserDevices(req.user.userId);
+      res.json({ success: true, data: devices });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
+ * DELETE /api/v1/auth/devices/:deviceId
+ * Revokes a specific trusted device.
+ */
+router.delete('/devices/:deviceId',
+  authenticate,
+  [
+    param('deviceId').isUUID().withMessage('deviceId tidak valid.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      await authService.revokeUserDevice(req.user.userId, req.params.deviceId);
+      res.json({ success: true, message: 'Perangkat berhasil dicabut.' });
     } catch (err) { next(err); }
   }
 );

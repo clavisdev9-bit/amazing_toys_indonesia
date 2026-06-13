@@ -1,12 +1,15 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProducts, getCategories, getProductByBarcode } from '../../api/products';
-import { createCashierOrder } from '../../api/cashier';
+import { createCashierOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
 import { formatRupiah } from '../../utils/format';
 import { canAddToCart, getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
 import VoucherInput from '../../components/cart/VoucherInput';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { useToast } from '../../hooks/useToast';
+import ToastContainer from '../../components/ui/Toast';
 
 function normalizeProduct(p) {
   return {
@@ -66,6 +69,8 @@ function ProductCard({ product, onAdd }) {
 export default function CashierPOSPage() {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
+  const { subscribe } = useWebSocket();
+  const { toasts, addToast, removeToast } = useToast();
 
   // Customer
   const [customerPhone, setCustomerPhone] = useState('');
@@ -88,6 +93,10 @@ export default function CashierPOSPage() {
   const [creating, setCreating]   = useState(false);
   const [error, setError]         = useState('');
 
+  // Delete approval — tracks product_ids with a PENDING delete request
+  const [pendingDeleteIds, setPendingDeleteIds] = useState(new Set());
+  const [deletingIds, setDeletingIds] = useState(new Set());
+
   useEffect(() => {
     Promise.all([getProducts({ limit: 500 }), getCategories()])
       .then(([prodRes, catRes]) => {
@@ -99,6 +108,35 @@ export default function CashierPOSPage() {
       .catch(() => {})
       .finally(() => setLoadingProducts(false));
   }, []);
+
+  // Restore pending delete state after reload
+  useEffect(() => {
+    getPendingDeleteRequests()
+      .then(r => {
+        const ids = new Set((r.data.data ?? []).map(req => req.product_id));
+        setPendingDeleteIds(ids);
+      })
+      .catch(() => {});
+  }, []);
+
+  // WebSocket: listen for delete request resolutions
+  useEffect(() => {
+    return subscribe('delete_request:resolved', (msg) => {
+      const { action, product_id } = msg.data ?? msg;
+      setPendingDeleteIds(prev => {
+        const next = new Set(prev);
+        next.delete(product_id);
+        return next;
+      });
+      if (action === 'approve') {
+        setCart(prev => prev.filter(i => i.id !== product_id));
+        setAppliedVoucher(null);
+        addToast('Item dihapus oleh leader.', 'success');
+      } else {
+        addToast('Permintaan hapus ditolak oleh leader.', 'error');
+      }
+    });
+  }, [subscribe, addToast]);
 
   const filtered = useMemo(() => {
     let list = products;
@@ -163,6 +201,25 @@ export default function CashierPOSPage() {
     setCart(prev => prev.filter(i => i.id !== id));
   }
 
+  async function handleDeleteRequest(item) {
+    if (pendingDeleteIds.has(item.id) || deletingIds.has(item.id)) return;
+    setDeletingIds(prev => new Set(prev).add(item.id));
+    try {
+      await createDeleteRequest({
+        product_id: item.id,
+        product_name: item.name,
+        qty: item.qty,
+        subtotal: item.price * item.qty,
+      });
+      setPendingDeleteIds(prev => new Set(prev).add(item.id));
+      addToast(`Permintaan hapus "${item.name}" dikirim ke leader.`, 'info');
+    } catch {
+      addToast('Gagal mengirim permintaan hapus. Coba lagi.', 'error');
+    } finally {
+      setDeletingIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
+    }
+  }
+
   const subtotal    = cart.reduce((s, i) => s + i.price * i.qty, 0);
   const totalQty    = cart.reduce((s, i) => s + i.qty, 0);
   const discount    = appliedVoucher?.discount_amount || 0;
@@ -190,7 +247,8 @@ export default function CashierPOSPage() {
   }
 
   return (
-    <div className="flex flex-col gap-3 h-[calc(100vh-8rem)]">
+    <div className="flex flex-col gap-3 h-[calc(100vh-8rem)] relative">
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {/* ── Top: Phone + Barcode row ───────────────────────────────────────── */}
       <div className="flex gap-3 shrink-0">
@@ -314,27 +372,45 @@ export default function CashierPOSPage() {
                 <p className="text-xs mt-1">Klik produk atau scan barcode.</p>
               </div>
             ) : (
-              cart.map(item => (
-                <div key={item.id} className="px-3 py-2">
-                  <p className="text-xs font-semibold text-gray-800 truncate mb-1">{item.name}</p>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setQty(item.id, item.qty - 1)}
-                        className="w-6 h-6 rounded border border-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center hover:bg-gray-100 transition-colors"
-                      >−</button>
-                      <span className="w-6 text-center text-xs font-bold text-gray-800">{item.qty}</span>
-                      <button
-                        onClick={() => setQty(item.id, item.qty + 1)}
-                        disabled={item.qty >= item.stock}
-                        className="w-6 h-6 rounded border border-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40"
-                      >+</button>
+              cart.map(item => {
+                const isPending = pendingDeleteIds.has(item.id);
+                const isDeleting = deletingIds.has(item.id);
+                return (
+                  <div key={item.id} className={`px-3 py-2 transition-opacity ${isPending ? 'opacity-50' : ''}`}>
+                    <p className="text-xs font-semibold text-gray-800 truncate mb-1">{item.name}</p>
+                    {isPending && (
+                      <p className="text-[10px] text-amber-600 font-medium mb-1">⏳ Menunggu persetujuan leader...</p>
+                    )}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => !isPending && setQty(item.id, item.qty - 1)}
+                          disabled={isPending}
+                          className="w-6 h-6 rounded border border-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40"
+                        >−</button>
+                        <span className="w-6 text-center text-xs font-bold text-gray-800">{item.qty}</span>
+                        <button
+                          onClick={() => !isPending && setQty(item.id, item.qty + 1)}
+                          disabled={isPending || item.qty >= item.stock}
+                          className="w-6 h-6 rounded border border-gray-300 text-gray-600 text-xs font-bold flex items-center justify-center hover:bg-gray-100 transition-colors disabled:opacity-40"
+                        >+</button>
+                      </div>
+                      <span className="text-xs font-bold text-blue-700">{formatRupiah(item.price * item.qty)}</span>
+                      {isPending ? (
+                        <span className="text-amber-500 text-xs" title="Menunggu leader">⏳</span>
+                      ) : isDeleting ? (
+                        <Spinner className="w-3 h-3" />
+                      ) : (
+                        <button
+                          onClick={() => handleDeleteRequest(item)}
+                          className="text-red-400 hover:text-red-600 text-xs"
+                          title="Ajukan hapus item (perlu persetujuan leader)"
+                        >🗑️</button>
+                      )}
                     </div>
-                    <span className="text-xs font-bold text-blue-700">{formatRupiah(item.price * item.qty)}</span>
-                    <button onClick={() => removeItem(item.id)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 

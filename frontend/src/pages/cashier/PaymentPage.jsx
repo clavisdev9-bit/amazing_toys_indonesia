@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 import { useLang } from '../../context/LangContext';
 import { lookupPayment, processPayment } from '../../api/payments';
 import { getProducts, getCategories } from '../../api/products';
-import { addItemToTransaction, applyVoucherToOrder } from '../../api/cashier';
+import { addItemToTransaction, applyVoucherToOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import { canAddToCart, getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
@@ -18,7 +20,10 @@ import PrintConfirmationModal from '../../components/cashier/PrintConfirmationMo
 import VoucherInput from '../../components/cart/VoucherInput';
 import { sendEReceipt } from '../../services/sendEReceipt';
 
-const METHODS = ['CASH', 'QRIS', 'EDC', 'TRANSFER'];
+const PAYMENT_METHODS = [
+  { id: 'QRIS', icon: '📱', label: 'QR / QRIS',    desc: 'Scan QR untuk bayar' },
+  { id: 'EDC',  icon: '💳', label: 'Kartu (EDC)',  desc: 'Gesek / tap / chip' },
+];
 
 function normalizeProduct(p) {
   return {
@@ -86,13 +91,13 @@ export default function PaymentPage() {
   const { user }    = useAuth();
   const { t }       = useLang();
   const { toasts, addToast, removeToast } = useToast();
+  const { subscribe } = useWebSocket();
   const cashierName = user?.name ?? user?.username ?? 'Kasir';
 
   // Transaction state
   const [txn, setTxn] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [method, setMethod] = useState('CASH');
-  const [cashReceived, setCashReceived] = useState('');
+  const [method, setMethod] = useState('QRIS');
   const [paymentRef, setPaymentRef] = useState('');
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
@@ -104,6 +109,10 @@ export default function PaymentPage() {
   const [voucherKey, setVoucherKey]           = useState(0); // force-remount VoucherInput on failure
   const autoVoucherDone = useRef(false);
   const preVoucher = location.state?.preVoucher ?? null; // voucher code passed from dashboard
+
+  // Delete request state
+  const [pendingDeleteIds, setPendingDeleteIds] = useState(new Set());
+  const [deletingIds, setDeletingIds] = useState(new Set());
 
   // Product browser state
   const [products, setProducts] = useState([]);
@@ -157,6 +166,39 @@ export default function PaymentPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [txn?.transaction_id]);
 
+  // Restore pending delete state from server on mount
+  useEffect(() => {
+    getPendingDeleteRequests()
+      .then(r => {
+        const ids = new Set(
+          (r.data.data ?? [])
+            .filter(req => req.transaction_id === transactionId)
+            .map(req => req.product_id)
+        );
+        setPendingDeleteIds(ids);
+      })
+      .catch(() => {});
+  }, [transactionId]);
+
+  // WebSocket: listen for delete request resolutions
+  useEffect(() => {
+    return subscribe('delete_request:resolved', (msg) => {
+      const { action, product_id } = msg.data ?? msg;
+      setPendingDeleteIds(prev => {
+        const next = new Set(prev);
+        next.delete(product_id);
+        return next;
+      });
+      if (action === 'approve') {
+        refreshTxn();
+        addToast('Item berhasil dihapus oleh leader.', 'success');
+      } else {
+        addToast('Permintaan hapus ditolak oleh leader.', 'error');
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscribe]);
+
   const filteredProducts = useMemo(() => {
     let list = products;
     if (activeCategory !== 'Semua') list = list.filter(p => p.category === activeCategory);
@@ -184,6 +226,26 @@ export default function PaymentPage() {
     }
   }
 
+  async function handleDeleteRequest(item) {
+    if (pendingDeleteIds.has(item.product_id) || deletingIds.has(item.product_id)) return;
+    setDeletingIds(prev => new Set(prev).add(item.product_id));
+    try {
+      await createDeleteRequest({
+        transaction_id: transactionId,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        qty: item.approved_quantity ?? item.quantity,
+        subtotal: parseFloat(item.subtotal),
+      });
+      setPendingDeleteIds(prev => new Set(prev).add(item.product_id));
+      addToast(`Permintaan hapus "${item.product_name}" dikirim ke leader.`, 'info');
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal mengirim permintaan hapus.', 'error');
+    } finally {
+      setDeletingIds(prev => { const next = new Set(prev); next.delete(item.product_id); return next; });
+    }
+  }
+
   async function handleApplyVoucher(voucherOrCode) {
     const code = typeof voucherOrCode === 'string' ? voucherOrCode : voucherOrCode.code;
     setVoucherApplying(true);
@@ -208,9 +270,11 @@ export default function PaymentPage() {
     setError('');
     setProcessing(true);
     try {
-      const body = { transaction_id: transactionId, payment_method: method };
-      if (method === 'CASH') body.cash_received = parseFloat(cashReceived);
-      else body.payment_ref = paymentRef || undefined;
+      const body = {
+        transaction_id: transactionId,
+        payment_method: method,
+        payment_ref: paymentRef || undefined,
+      };
       const res = await processPayment(body);
       setSuccess(res.data.data);
     } catch (err) {
@@ -282,7 +346,7 @@ export default function PaymentPage() {
           success={success}
           cashierName={cashierName}
           customer={customer}
-          cashReceived={method === 'CASH' && cashReceived ? parseFloat(cashReceived) : null}
+          cashReceived={null}
           onClose={() => setIsModalOpen(false)}
           onConfirmPrint={handleConfirmPrint}
         />
@@ -324,12 +388,34 @@ export default function PaymentPage() {
                   <Badge status={txn.status} />
                 </div>
                 <div className="divide-y text-sm mt-3">
-                  {(txn.items ?? []).filter(item => item.approval_status !== 'REJECTED').map((item, i) => (
-                    <div key={i} className="py-1.5 flex justify-between">
-                      <span className="text-gray-700">{item.product_name} × {item.approved_quantity ?? item.quantity}</span>
-                      <span className="font-medium">{formatRupiah(item.subtotal)}</span>
-                    </div>
-                  ))}
+                  {(txn.items ?? []).filter(item => item.approval_status !== 'REJECTED').map((item, i) => {
+                    const isPendingDelete = pendingDeleteIds.has(item.product_id);
+                    const isDeletePending = deletingIds.has(item.product_id);
+                    return (
+                      <div key={i} className={`py-1.5 flex items-center gap-2 transition-opacity ${isPendingDelete ? 'opacity-50' : ''}`}>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-gray-700">{item.product_name} × {item.approved_quantity ?? item.quantity}</span>
+                          {isPendingDelete && (
+                            <span className="ml-1.5 text-[10px] text-amber-600 font-medium">⏳ Menunggu Leader</span>
+                          )}
+                        </div>
+                        <span className="font-medium shrink-0">{formatRupiah(item.subtotal)}</span>
+                        {isPending && (
+                          isPendingDelete ? (
+                            <span className="text-amber-500 text-xs shrink-0" title="Menunggu persetujuan leader">⏳</span>
+                          ) : isDeletePending ? (
+                            <Spinner className="w-3 h-3 shrink-0" />
+                          ) : (
+                            <button
+                              onClick={() => handleDeleteRequest(item)}
+                              className="text-red-400 hover:text-red-600 text-xs shrink-0 p-0.5"
+                              title="Ajukan hapus item (perlu persetujuan leader)"
+                            >🗑️</button>
+                          )
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 {(() => {
                   const subtotal     = parseFloat(txn.subtotal_amount ?? 0);
@@ -394,48 +480,57 @@ export default function PaymentPage() {
               {/* Payment form */}
               <form onSubmit={handleProcess} className="bg-white rounded-xl border p-4 space-y-4">
                 <h2 className="font-semibold text-gray-700">{t('payment.method')}</h2>
-                <div className="grid grid-cols-4 gap-2">
-                  {METHODS.map((m) => (
+
+                {/* Method selector — 2 cards */}
+                <div className="grid grid-cols-2 gap-3">
+                  {PAYMENT_METHODS.map(({ id, icon, label, desc }) => (
                     <button
-                      key={m}
+                      key={id}
                       type="button"
-                      onClick={() => { setMethod(m); setCashReceived(''); setPaymentRef(''); }}
-                      className={`py-2 rounded-lg text-sm font-medium border transition-colors
-                        ${method === m ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                      onClick={() => { setMethod(id); setPaymentRef(''); }}
+                      className={`flex flex-col items-center gap-1 py-4 rounded-xl border-2 transition-all
+                        ${method === id
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'}`}
                     >
-                      {m}
+                      <span className="text-2xl">{icon}</span>
+                      <span className="text-sm font-bold">{label}</span>
+                      <span className="text-xs opacity-70">{desc}</span>
                     </button>
                   ))}
                 </div>
 
-                {method === 'CASH' && (
-                  <div className="space-y-2">
-                    <Input
-                      label={t('payment.cashReceived')}
-                      type="number"
-                      min={txn.total_amount}
-                      step="1000"
-                      placeholder={String(txn.total_amount)}
-                      value={cashReceived}
-                      onChange={(e) => setCashReceived(e.target.value)}
-                      required
-                    />
-                    {cashReceived && parseFloat(cashReceived) >= txn.total_amount && (
-                      <div className="bg-green-50 text-green-700 text-sm rounded-lg px-3 py-2">
-                        {t('payment.change')}: <strong>{formatRupiah(parseFloat(cashReceived) - txn.total_amount)}</strong>
-                      </div>
-                    )}
+                {/* QR method: tampilkan QR code transaksi */}
+                {method === 'QRIS' && (
+                  <div className="flex flex-col items-center gap-2 py-2">
+                    <div className="bg-white p-3 rounded-xl border-2 border-gray-200 shadow-sm">
+                      <QRCodeSVG value={txn.transaction_id} size={160} level="M" includeMargin={false} />
+                    </div>
+                    <p className="text-xs text-center text-gray-500 max-w-[260px]">
+                      Tampilkan QR ini ke customer — scan via GoPay, OVO, BSI Mobile, atau app bank lain
+                    </p>
+                    <p className="text-[11px] font-mono text-gray-400">{txn.transaction_id}</p>
                   </div>
                 )}
 
-                {method !== 'CASH' && (
-                  <Input
-                    label={t('payment.paymentRef')}
-                    placeholder="Opsional"
-                    value={paymentRef}
-                    onChange={(e) => setPaymentRef(e.target.value)}
-                  />
+                {/* EDC method: instruksi */}
+                {method === 'EDC' && (
+                  <div className="flex flex-col items-center gap-2 py-3 bg-gray-50 rounded-xl border border-gray-200">
+                    <span className="text-4xl">💳</span>
+                    <p className="text-sm font-semibold text-gray-700">Proses di mesin EDC</p>
+                    <p className="text-xs text-gray-500 text-center max-w-[260px]">
+                      Gesek / tap / masukkan kartu customer di mesin EDC, lalu masukkan nomor referensi di bawah
+                    </p>
+                  </div>
                 )}
+
+                {/* Nomor referensi — kedua metode */}
+                <Input
+                  label={t('payment.paymentRef')}
+                  placeholder="Opsional — no. referensi / approval"
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                />
 
                 {error && (
                   <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
@@ -443,12 +538,7 @@ export default function PaymentPage() {
                   </div>
                 )}
 
-                <Button
-                  type="submit"
-                  size="full"
-                  loading={processing}
-                  disabled={method === 'CASH' && (!cashReceived || parseFloat(cashReceived) < txn.total_amount)}
-                >
+                <Button type="submit" size="full" loading={processing}>
                   {t('payment.processBtn')}
                 </Button>
               </form>
@@ -542,7 +632,7 @@ export default function PaymentPage() {
         success={success}
         cashierName={cashierName}
         customer={customer}
-        cashReceived={method === 'CASH' && cashReceived ? parseFloat(cashReceived) : null}
+        cashReceived={null}
         onClose={() => setIsModalOpen(false)}
         onConfirmPrint={handleConfirmPrint}
       />

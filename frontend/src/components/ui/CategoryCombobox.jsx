@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-export default function CategoryCombobox({ label, value, onChange, categories = [], required }) {
+export default function CategoryCombobox({ label, value, onChange, categories = [], required, onAddNew }) {
   const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
   const containerRef = useRef(null);
 
   const normalised = value.trim().toLowerCase();
@@ -9,6 +10,7 @@ export default function CategoryCombobox({ label, value, onChange, categories = 
     (c) => c.toLowerCase().includes(normalised) && c.toLowerCase() !== normalised,
   );
   const exactMatch = categories.find((c) => c.toLowerCase() === normalised);
+  const canAdd = onAddNew && value.trim() && !exactMatch;
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -34,6 +36,20 @@ export default function CategoryCombobox({ label, value, onChange, categories = 
     if (e.key === 'Escape') setOpen(false);
   }
 
+  async function handleAddNew(e) {
+    e.preventDefault();
+    if (!canAdd || adding) return;
+    setAdding(true);
+    try {
+      await onAddNew(value.trim());
+      setOpen(false);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  const showDropdown = open && (suggestions.length > 0 || canAdd);
+
   return (
     <div className="flex flex-col gap-1 relative" ref={containerRef}>
       {label && <label className="text-sm font-medium text-gray-700">{label}</label>}
@@ -49,7 +65,7 @@ export default function CategoryCombobox({ label, value, onChange, categories = 
       {exactMatch && (
         <p className="text-xs text-amber-600">Kategori sudah ada — akan menggunakan yang terdaftar</p>
       )}
-      {open && suggestions.length > 0 && (
+      {showDropdown && (
         <ul className="absolute z-50 top-full mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
           {suggestions.map((cat) => (
             <li
@@ -60,6 +76,14 @@ export default function CategoryCombobox({ label, value, onChange, categories = 
               {cat}
             </li>
           ))}
+          {canAdd && (
+            <li
+              onMouseDown={handleAddNew}
+              className="px-3 py-2 text-sm cursor-pointer text-blue-700 font-semibold hover:bg-blue-50 border-t border-gray-100 flex items-center gap-1.5"
+            >
+              {adding ? '⏳' : '➕'} Tambahkan "{value.trim()}"
+            </li>
+          )}
         </ul>
       )}
     </div>

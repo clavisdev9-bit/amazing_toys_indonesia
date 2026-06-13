@@ -43,6 +43,18 @@ router.get('/categories', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /api/v1/products/categories — admin/leader only
+router.post('/categories',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const { name } = req.body;
+      const data = await productsSvc.createCategory(name);
+      res.status(201).json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
 // GET /api/v1/products/barcode/:barcode — scan lookup
 router.get('/barcode/:barcode',
   authenticate,

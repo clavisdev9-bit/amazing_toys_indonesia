@@ -18,6 +18,10 @@ const logger = require('../config/logger');
 const tenantClients = new Map();
 /** Map: customerId → Set<WebSocket> */
 const customerClients = new Map();
+/** Set of all connected LEADER/ADMIN clients */
+const leaderClients = new Set();
+/** Map: cashierId (UUID) → Set<WebSocket> */
+const cashierClients = new Map();
 
 /** Module-level WSS reference so broadcastToAll can access it */
 let wssInstance = null;
@@ -46,6 +50,12 @@ function setupWebSocket(server) {
             // HELPER shares the tenantClients channel with TENANT for the same booth
             if (!tenantClients.has(payload.tenantId)) tenantClients.set(payload.tenantId, new Set());
             tenantClients.get(payload.tenantId).add(ws);
+          } else if (payload.role === 'LEADER' || payload.role === 'ADMIN') {
+            leaderClients.add(ws);
+          } else if (payload.role === 'CASHIER') {
+            const uid = payload.userId;
+            if (!cashierClients.has(uid)) cashierClients.set(uid, new Set());
+            cashierClients.get(uid).add(ws);
           }
 
           ws.send(JSON.stringify({ event: 'AUTH_OK', role: payload.role }));
@@ -58,13 +68,19 @@ function setupWebSocket(server) {
 
     ws.on('close', () => {
       if (!ws.authPayload) return;
-      const { role, customerId, tenantId } = ws.authPayload;
+      const { role, customerId, tenantId, userId } = ws.authPayload;
       if (role === 'CUSTOMER' && customerClients.has(customerId)) {
         customerClients.get(customerId).delete(ws);
       }
       // HELPER shares tenantClients with TENANT — must clean up both roles on close
       if ((role === 'TENANT' || role === 'HELPER') && tenantClients.has(tenantId)) {
         tenantClients.get(tenantId).delete(ws);
+      }
+      if (role === 'LEADER' || role === 'ADMIN') {
+        leaderClients.delete(ws);
+      }
+      if (role === 'CASHIER' && cashierClients.has(userId)) {
+        cashierClients.get(userId).delete(ws);
       }
     });
   });
@@ -109,6 +125,28 @@ function broadcastToCustomer(customerId, payload) {
 }
 
 /**
+ * Broadcast a message to all connected LEADER/ADMIN clients.
+ */
+function broadcastToLeaders(payload) {
+  const msg = JSON.stringify(payload);
+  leaderClients.forEach((ws) => {
+    if (ws.readyState === 1) ws.send(msg);
+  });
+}
+
+/**
+ * Broadcast a message to a specific cashier by userId.
+ */
+function broadcastToCashier(cashierId, payload) {
+  const clients = cashierClients.get(cashierId);
+  if (!clients) return;
+  const msg = JSON.stringify(payload);
+  clients.forEach((ws) => {
+    if (ws.readyState === 1) ws.send(msg);
+  });
+}
+
+/**
  * Global broadcast function called by notifications.service.
  * Routes by tenantId if present; otherwise no-op.
  */
@@ -143,4 +181,4 @@ function broadcastProductAvailable(productId, productName) {
   logger.info(`[WebSocket] PRODUCT_AVAILABLE broadcast — ${productId} "${productName}"`);
 }
 
-module.exports = { setupWebSocket, broadcastToTenant, broadcastToCustomer, wsBroadcast, broadcastToAll, broadcastProductAvailable };
+module.exports = { setupWebSocket, broadcastToTenant, broadcastToCustomer, wsBroadcast, broadcastToAll, broadcastProductAvailable, broadcastToLeaders, broadcastToCashier };

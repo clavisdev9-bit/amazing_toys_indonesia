@@ -19,6 +19,27 @@ function parseTxnFromQr(raw) {
   return m ? m[0].toUpperCase() : null;
 }
 
+/**
+ * Cross-browser getUserMedia helper.
+ * Tries navigator.mediaDevices.getUserMedia first (modern),
+ * then falls back to the vendor-prefixed callback API (old Android / Firefox).
+ */
+function getMediaStream(constraints) {
+  if (navigator.mediaDevices?.getUserMedia) {
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+  const legacyGUM =
+    navigator.getUserMedia ||
+    navigator.webkitGetUserMedia ||
+    navigator.mozGetUserMedia;
+  if (legacyGUM) {
+    return new Promise((resolve, reject) =>
+      legacyGUM.call(navigator, constraints, resolve, reject),
+    );
+  }
+  return Promise.reject(Object.assign(new Error('NotSupportedError'), { name: 'NotSupportedError' }));
+}
+
 export default function QrScannerModal({
   onResult,
   onClose,
@@ -26,14 +47,16 @@ export default function QrScannerModal({
   hint = 'Arahkan kamera ke QR code pada struk pelanggan',
   resultParser = parseTxnFromQr,
 }) {
-  const videoRef         = useRef(null);
-  const canvasRef        = useRef(null);
-  const streamRef        = useRef(null);
-  const rafRef           = useRef(null);
-  const onResultRef      = useRef(onResult);
-  const resultParserRef  = useRef(resultParser);
+  const videoRef        = useRef(null);
+  const canvasRef       = useRef(null);
+  const frozenRef       = useRef(null);
+  const streamRef       = useRef(null);
+  const rafRef          = useRef(null);
+  const onResultRef     = useRef(onResult);
+  const resultParserRef = useRef(resultParser);
   const [error, setError]       = useState(null);
   const [starting, setStarting] = useState(true);
+  const [frozen, setFrozen]     = useState(false);
 
   // Keep refs pointing at the latest callbacks without restarting the camera effect
   useLayoutEffect(() => {
@@ -46,41 +69,76 @@ export default function QrScannerModal({
     let frameCount = 0;
 
     async function start() {
-      // Guard: getUserMedia requires a secure context (HTTPS or localhost)
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setError('Kamera membutuhkan koneksi HTTPS. Buka: https://' + window.location.host + window.location.pathname);
+      // Constraint cascade: try ideal → bare facingMode → any video
+      // This handles OverconstrainedError on old cameras that reject resolution hints.
+      const constraintSets = [
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+        { video: { facingMode: 'environment' }, audio: false },
+        { video: true, audio: false },
+      ];
+
+      let stream  = null;
+      let lastErr = null;
+      for (const c of constraintSets) {
+        try {
+          stream = await getMediaStream(c);
+          break;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+
+      if (!stream) {
+        if (!active) return;
+        const name = lastErr?.name || '';
+        let friendly;
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError')
+          friendly = 'Akses kamera ditolak. Izinkan kamera di pengaturan browser.';
+        else if (name === 'NotFoundError' || name === 'DevicesNotFoundError')
+          friendly = 'Tidak ada kamera yang tersedia di perangkat ini.';
+        else if (name === 'NotReadableError' || name === 'TrackStartError')
+          friendly = 'Kamera sedang digunakan aplikasi lain. Tutup lalu coba lagi.';
+        else if (name === 'NotSupportedError')
+          friendly = 'Kamera membutuhkan koneksi HTTPS. Buka: https://' + window.location.host + window.location.pathname;
+        else
+          friendly = `Kamera tidak dapat dibuka (${name || lastErr?.message || 'unknown'}).`;
+        setError(friendly);
         setStarting(false);
         return;
       }
 
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
+      if (!active) { stream.getTracks().forEach((t) => t.stop()); return; }
+      streamRef.current = stream;
 
-        if (!active) { stream.getTracks().forEach((t) => t.stop()); return; }
-        streamRef.current = stream;
+      const video = videoRef.current;
 
-        const video = videoRef.current;
+      // srcObject fallback — iOS Safari < 11 does not support srcObject
+      if ('srcObject' in video) {
         video.srcObject = stream;
-        video.setAttribute('playsinline', 'true');
-        await video.play();
-        if (!active) return;
+      } else {
+        // eslint-disable-next-line no-param-reassign
+        video.src = URL.createObjectURL(stream);
+      }
 
-        setStarting(false);
-        scanLoop();
+      video.setAttribute('playsinline', 'true');
+      // Explicit muted attribute required for autoplay on some old Android Chrome
+      video.setAttribute('muted', '');
+      video.muted = true;
+
+      // play() may return undefined on pre-2017 browsers — guard before await
+      try {
+        const maybePromise = video.play();
+        if (maybePromise !== undefined) await maybePromise;
       } catch (err) {
         if (!active) return;
-        const name = err?.name || '';
-        let friendly;
-        if (name === 'NotAllowedError')   friendly = 'Akses kamera ditolak. Izinkan kamera di pengaturan browser.';
-        else if (name === 'NotFoundError')    friendly = 'Tidak ada kamera yang tersedia di perangkat ini.';
-        else if (name === 'NotReadableError') friendly = 'Kamera sedang digunakan aplikasi lain. Tutup lalu coba lagi.';
-        else friendly = `Kamera tidak dapat dibuka (${name || err?.message || 'unknown'}).`;
-        setError(friendly);
+        setError('Kamera tidak dapat diputar. Coba refresh halaman.');
         setStarting(false);
+        return;
       }
+
+      if (!active) return;
+      setStarting(false);
+      scanLoop();
     }
 
     function scanLoop() {
@@ -89,27 +147,60 @@ export default function QrScannerModal({
 
       const video  = videoRef.current;
       const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
+      if (!video || !canvas || video.readyState < 4 /* HAVE_ENOUGH_DATA */) {
         rafRef.current = requestAnimationFrame(scanLoop);
         return;
       }
 
-      // Process every 3rd frame (~20 fps) — reduces CPU load while maintaining responsiveness
+      // Old Android Chrome sometimes reports 0×0 even at HAVE_ENOUGH_DATA —
+      // wait until the decoder delivers real dimensions.
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      if (!w || !h) {
+        rafRef.current = requestAnimationFrame(scanLoop);
+        return;
+      }
+
+      // Process every 3rd frame (~20 fps) — reduces CPU on low-end devices
       if (frameCount % 3 !== 0) {
         rafRef.current = requestAnimationFrame(scanLoop);
         return;
       }
 
-      const w = video.videoWidth, h = video.videoHeight;
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      canvas.width  = w;
+      canvas.height = h;
+      // willReadFrequently is a perf hint; ignored by old browsers — safe to pass
+      const ctx = canvas.getContext('2d', { willReadFrequently: true }) ?? canvas.getContext('2d');
+      if (!ctx) {
+        rafRef.current = requestAnimationFrame(scanLoop);
+        return;
+      }
+
       ctx.drawImage(video, 0, 0, w, h);
-      // attemptBoth: tries normal AND inverted QR codes — catches more real-world cases
       const code = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'attemptBoth' });
+
       if (code) {
         const parsed = resultParserRef.current(code.data);
-        if (parsed) { onResultRef.current(parsed); return; }
+        if (parsed) {
+          // Copy current frame to the visible frozen canvas
+          const fc = frozenRef.current;
+          if (fc) {
+            fc.width  = w;
+            fc.height = h;
+            const fctx = fc.getContext('2d');
+            if (fctx) fctx.drawImage(video, 0, 0, w, h);
+          }
+          // Stop live camera feed
+          active = false;
+          cancelAnimationFrame(rafRef.current);
+          streamRef.current?.getTracks().forEach((t) => t.stop());
+          setFrozen(true);
+          // Deliver result after brief pause so user sees the lock
+          setTimeout(() => onResultRef.current(parsed), 900);
+          return;
+        }
       }
+
       rafRef.current = requestAnimationFrame(scanLoop);
     }
 
@@ -134,24 +225,47 @@ export default function QrScannerModal({
 
         {/* Camera viewport */}
         <div className="relative bg-black" style={{ minHeight: 300 }}>
+          {/* Hidden working canvas for jsQR processing */}
           <canvas ref={canvasRef} className="hidden" />
+
+          {/* Frozen frame canvas — shown after capture */}
+          <canvas
+            ref={frozenRef}
+            className="w-full block"
+            style={{ display: frozen ? 'block' : 'none', maxHeight: 360 }}
+          />
+
+          {/* Live video feed */}
           <video
             ref={videoRef}
             muted
             playsInline
             className="w-full block"
-            style={{ display: error ? 'none' : 'block', maxHeight: 360 }}
+            style={{ display: (!error && !frozen) ? 'block' : 'none', maxHeight: 360 }}
           />
 
-          {/* Scan guide */}
-          {!starting && !error && (
+          {/* Scan guide — shown while scanning */}
+          {!starting && !error && !frozen && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="relative w-52 h-52">
-                {/* Corner brackets */}
                 <span className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-white rounded-tl" />
                 <span className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-white rounded-tr" />
                 <span className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-white rounded-bl" />
                 <span className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white rounded-br" />
+              </div>
+            </div>
+          )}
+
+          {/* Success overlay — shown when frame is locked */}
+          {frozen && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center shadow-lg">
+                  <svg className="w-9 h-9 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <span className="text-white text-sm font-semibold drop-shadow">QR Terdeteksi</span>
               </div>
             </div>
           )}
@@ -181,10 +295,19 @@ export default function QrScannerModal({
         </div>
 
         {/* Footer */}
-        {!error
-          ? <p className="text-xs text-center text-gray-500 px-4 py-3">{hint}</p>
-          : <div className="p-4"><button onClick={onClose} className="w-full py-2.5 rounded-xl bg-gray-100 text-sm font-medium text-gray-700 hover:bg-gray-200">Tutup</button></div>
-        }
+        {!error && !frozen && (
+          <p className="text-xs text-center text-gray-500 px-4 py-3">{hint}</p>
+        )}
+        {!error && frozen && (
+          <p className="text-xs text-center text-green-600 font-medium px-4 py-3">Memproses...</p>
+        )}
+        {error && (
+          <div className="p-4">
+            <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-gray-100 text-sm font-medium text-gray-700 hover:bg-gray-200">
+              Tutup
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

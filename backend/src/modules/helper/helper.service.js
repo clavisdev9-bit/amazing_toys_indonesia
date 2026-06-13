@@ -547,16 +547,26 @@ async function getBoothOrders(helperTenantId, { status, date } = {}) {
 
 /**
  * Get a single transaction with items — scoped to this helper's booth.
+ * Juga mendukung lookup by group_code (GRP-xxx) untuk invoice multi-booth.
  */
 async function getBoothOrder(transactionId, helperTenantId) {
+  // Cek apakah input adalah group_code (GRP-...) atau UUID biasa
+  const isGroupCode = /^GRP-/i.test(transactionId);
+
+  if (isGroupCode) {
+    return _getGroupOrderForBooth(transactionId, helperTenantId);
+  }
+
   const txResult = await query(
     `SELECT t.transaction_id, t.status, t.subtotal_amount, t.tax_rate, t.tax_amount,
             t.total_amount, t.qr_payload, t.created_at, t.reserved_at,
             t.customer_phone, t.handover_at, t.public_token, t.public_token_exp,
-            t.wa_sent_at, t.wa_delivery_status,
+            t.wa_sent_at, t.wa_delivery_status, t.group_id,
+            g.group_code,
             c.full_name AS customer_name, c.phone_number AS customer_reg_phone
      FROM transactions t
      LEFT JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN transaction_groups g ON g.group_id = t.group_id
      WHERE t.transaction_id = $1`,
     [transactionId],
   );
@@ -564,8 +574,8 @@ async function getBoothOrder(transactionId, helperTenantId) {
   if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
 
   const itemsResult = await query(
-    `SELECT ti.product_id, p.product_name, ti.quantity, ti.unit_price, ti.subtotal,
-            ti.pickup_status, ti.tenant_id
+    `SELECT ti.product_id, p.product_name, p.barcode, p.image_url, ti.quantity, ti.approved_quantity,
+            ti.unit_price, ti.subtotal, ti.pickup_status, ti.tenant_id
      FROM transaction_items ti
      JOIN products p ON p.product_id = ti.product_id
      WHERE ti.transaction_id = $1 AND ti.tenant_id = $2`,
@@ -577,6 +587,55 @@ async function getBoothOrder(transactionId, helperTenantId) {
   }
 
   return { ...txn, items: itemsResult.rows };
+}
+
+/**
+ * Lookup invoice group untuk helper — hanya tampilkan item milik booth tersebut.
+ * Dipanggil saat customer tunjukkan struk GRP-xxx ke booth untuk pickup.
+ */
+async function _getGroupOrderForBooth(groupCode, helperTenantId) {
+  const groupRes = await query(
+    `SELECT g.group_id, g.group_code, g.payment_status, g.paid_at,
+            g.total_amount, g.customer_name, g.customer_phone
+     FROM transaction_groups g
+     WHERE g.group_code = $1`,
+    [groupCode],
+  );
+  const group = groupRes.rows[0];
+  if (!group) throw new AppError('Group invoice tidak ditemukan.', 404);
+  if (group.payment_status !== 'PAID') {
+    throw new AppError('Invoice group belum dibayar.', 402);
+  }
+
+  // Ambil item milik booth ini dari semua TRX dalam group
+  const itemsResult = await query(
+    `SELECT ti.product_id, p.product_name, p.barcode, p.image_url,
+            ti.quantity, ti.approved_quantity, ti.unit_price, ti.subtotal,
+            ti.pickup_status, ti.tenant_id,
+            t.transaction_id, t.status AS txn_status
+     FROM transactions t
+     JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+     JOIN products p ON p.product_id = ti.product_id
+     WHERE t.group_id = $1 AND ti.tenant_id = $2`,
+    [group.group_id, helperTenantId],
+  );
+
+  if (itemsResult.rows.length === 0) {
+    throw new AppError('Tidak ada item dari booth ini dalam invoice ini.', 404);
+  }
+
+  return {
+    // Normalise ke shape yang sama dengan single TRX agar UI helper tidak berubah
+    transaction_id:    itemsResult.rows[0].transaction_id,
+    status:            itemsResult.rows[0].txn_status,
+    group_id:          group.group_id,
+    group_code:        group.group_code,
+    is_group_invoice:  true,
+    paid_at:           group.paid_at,
+    customer_name:     group.customer_name,
+    customer_reg_phone: group.customer_phone,
+    items: itemsResult.rows,
+  };
 }
 
 /**

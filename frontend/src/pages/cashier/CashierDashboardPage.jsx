@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../../api/client';
-import { getTransactions } from '../../api/cashier';
+import { getTransactions, getExpiredTransactions } from '../../api/cashier';
 import { lookupPayment } from '../../api/payments';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
@@ -18,6 +18,7 @@ export default function CashierDashboardPage() {
   const [lookupError, setLookupError] = useState('');
   const [recent, setRecent]           = useState([]);
   const [queue, setQueue]             = useState([]);
+  const [expired, setExpired]         = useState([]);
   const [activeTab, setActiveTab]     = useState('queue');
 
   const loadQueue = useCallback(() => {
@@ -26,13 +27,20 @@ export default function CashierDashboardPage() {
       .catch(() => {});
   }, []);
 
+  const loadExpired = useCallback(() => {
+    getExpiredTransactions()
+      .then(r => setExpired(r.data.data || []))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadQueue();
+    loadExpired();
     getTransactions().then((r) => {
       const items = r.data.data?.items ?? r.data.data ?? [];
       setRecent(items);
     }).catch(() => {});
-  }, [loadQueue]);
+  }, [loadQueue, loadExpired]);
 
   async function handleLookup(e) {
     e.preventDefault();
@@ -131,6 +139,14 @@ export default function CashierDashboardPage() {
         >
           {t('cashier.processedTab')}
         </button>
+        <button
+          onClick={() => { setActiveTab('expired'); loadExpired(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'expired' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500'
+          }`}
+        >
+          Kadaluarsa {expired.length > 0 && <span className="ml-1 bg-red-100 text-red-600 text-xs rounded-full px-1.5 py-0.5">{expired.length}</span>}
+        </button>
       </div>
 
       {/* Queue tab — RESERVED + WAITING_PAYMENT + PENDING orders */}
@@ -190,6 +206,42 @@ export default function CashierDashboardPage() {
                     <Badge status={txn.status} />
                   </div>
                 </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Expired tab — EXPIRED transactions today */}
+      {activeTab === 'expired' && (
+        <div>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-xs text-gray-400">Transaksi yang melewati batas waktu tanpa pembayaran.</p>
+            <button onClick={loadExpired} className="text-xs text-red-500 hover:underline">{t('helper.refresh')}</button>
+          </div>
+          {expired.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-8">Tidak ada transaksi kadaluarsa hari ini.</p>
+          ) : (
+            <div className="bg-white rounded-xl border overflow-hidden divide-y">
+              {expired.map((txn) => (
+                <div
+                  key={txn.transaction_id}
+                  className="w-full px-4 py-3 flex items-center justify-between gap-2 opacity-70"
+                >
+                  <div>
+                    <p className="font-mono text-sm font-semibold text-gray-700">{txn.transaction_id}</p>
+                    <p className="text-xs text-gray-500">
+                      {txn.booth_location ? `${txn.booth_location} · ` : ''}
+                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'} ·{' '}
+                      Dibuat {formatDate(txn.created_at)}
+                    </p>
+                    <p className="text-xs text-red-400 mt-0.5">Kadaluarsa: {formatDate(txn.expires_at)}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-gray-500">{formatRupiah(txn.total_amount)}</p>
+                    <Badge status="EXPIRED" />
+                  </div>
+                </div>
               ))}
             </div>
           )}

@@ -1,4 +1,5 @@
 import React, { createContext, useState, useCallback } from 'react';
+import { logoutCustomer as apiLogoutCustomer } from '../api/auth';
 
 export const AuthContext = createContext(null);
 
@@ -39,7 +40,12 @@ export function AuthProvider({ children }) {
     setAuth({ token: newToken, user: userData });
   }, []);
 
-  const logout = useCallback(() => {
+  const logout = useCallback((currentUser) => {
+    // Bila customer, revoke trusted device di backend sebelum clear token
+    const u = currentUser ?? JSON.parse(localStorage.getItem('sos_user') || 'null');
+    if (u?.role === 'CUSTOMER' && u?.deviceId) {
+      apiLogoutCustomer(u.deviceId).catch(() => {});
+    }
     localStorage.removeItem('sos_token');
     localStorage.removeItem('sos_user');
     setAuth({ token: null, user: null });

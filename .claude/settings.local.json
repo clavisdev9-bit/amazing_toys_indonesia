@@ -72,7 +72,12 @@
       "mcp__visualize__read_me",
       "mcp__visualize__show_widget",
       "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Recurse -Directory -Depth 2)",
-      "Bash(Select-Object -First 20)"
+      "Bash(Select-Object -First 20)",
+      "Bash(pip show *)",
+      "Bash(python tools/generate_flow_pptx.py)",
+      "Bash(node -e \"const s=require\\('./backend/node_modules/sharp'\\); console.log\\('sharp ok'\\)\")",
+      "Bash(dir \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\frontend\\\\src\\\\components\\\\helper\")",
+      "Bash(git checkout *)"
     ]
   }
 }

@@ -1,5 +1,5 @@
 # Change Request
-**Project:** Amazing Toys Fair 2026 — SOS × Odoo 18 Integration  
+**Project:** Amazing Toy Show × Odoo 18 Integration  
 **CR Number:** CR-2026-0527-001  
 **Date:** 2026-05-27  
 **Author:** clavis Development  
@@ -2971,6 +2971,69 @@ navigate(`/product_cart/${text}`);
 2. Fallback ke `getProductByBarcode(id)` jika gagal
 
 Sehingga QR yang berisi barcode numerik (contoh: `0887961896398`) maupun product_id tetap bisa resolve ke halaman yang benar.
+
+---
+
+### CR-061 — Fraud Protection: Sistem Proteksi pada Fitur Hapus Item Kasir
+
+**Date:** 2026-06-13
+**Status:** Done
+**Files:**
+- `backend/src/modules/leader/leader.service.js`
+- `backend/src/modules/leader/leader.router.js`
+- `backend/src/modules/payments/payments.service.js`
+- `backend/src/modules/cashier/cashier.service.js`
+- `backend/src/modules/orders/orders.service.js`
+- `backend/migrations/023_cr061_fraud_protection.sql`
+
+### Latar Belakang
+
+Skenario fraud: kasir menambah item X ke transaksi → customer bayar via EDC (total sudah include item X) → kasir submit delete request untuk item X setelah PAID → leader approve → nominal EDC tidak cocok dengan total akhir di sistem → selisih digelapkan.
+
+### Perubahan
+
+#### FIX 1 — Block delete request pada transaksi PAID
+
+`leader.service.js` → `reviewDeleteRequest()`: Sebelum melakukan DELETE, query status transaksi. Jika status `PAID` → throw `AppError` 409 `'Tidak dapat menghapus item dari transaksi yang sudah dibayar.'`.
+
+#### FIX 2 — Simpan `amount_charged` saat payment diproses
+
+Migration: `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS amount_charged NUMERIC(14,2);`
+
+`payments.service.js` → `processPayment()`: Set `amount_charged = total_amount` atomik saat UPDATE ke PAID.
+
+`cashier.service.js` → `groupCheckout()`: Set `amount_charged = total_amount` per TRX saat group PAID.
+
+Kolom ini membekukan nominal yang benar-benar ditagih ke EDC/QRIS/CASH. Setelah FIX 1 memblokir modifikasi post-PAID, nilai ini tidak bisa berubah.
+
+#### FIX 3 — Audit log penambahan item
+
+`orders.service.js` → `addItemToTransaction()`: Upgrade audit log dari action `TXN_ITEM_ADDED` ke `ADD_ITEM` dengan detail lengkap: `product_name`, `qty`, `subtotal`, `total_before`, `total_after`.
+
+#### FIX 4 — Fraud alert via WebSocket ke leader
+
+`leader.service.js` → `reviewDeleteRequest()`: Saat request diblokir karena TRX PAID, broadcast `fraud_alert:delete_on_paid` ke semua leader yang online sebelum throw error. Payload: `{ cashier_id, cashier_name, transaction_id, product_name, qty, subtotal, attempted_at }`.
+
+#### FIX 5 — Endpoint discrepancy check untuk leader
+
+`leader.router.js` + `leader.service.js`: Tambah `GET /api/v1/leader/discrepancies?date=YYYY-MM-DD`. Query transaksi PAID hari ini yang memiliki `amount_charged ≠ total_amount`. Return: `[ { transaction_id, amount_charged, total_amount, difference, cashier_name, paid_at } ]`. Require role LEADER/ADMIN.
+
+### Ringkasan Perubahan
+
+| File | Perubahan |
+|---|---|
+| `leader.service.js` | Import `broadcastToLeaders`; guard PAID di `reviewDeleteRequest`; broadcast fraud alert; tambah `getDiscrepancies()` |
+| `leader.router.js` | Tambah `GET /api/v1/leader/discrepancies` |
+| `payments.service.js` | Set `amount_charged = total_amount` saat PAID |
+| `cashier.service.js` | Set `amount_charged = total_amount` per TRX di group checkout |
+| `orders.service.js` | Upgrade `ADD_ITEM` audit log dengan `total_before`/`total_after` |
+| `023_cr061_fraud_protection.sql` | `ADD COLUMN amount_charged NUMERIC(14,2)` |
+
+### Catatan
+
+- Flow delete request existing (kasir submit → leader approve/reject untuk TRX non-PAID) **tidak berubah**
+- `amount_charged` untuk transaksi lama (sebelum CR ini) adalah NULL — `getDiscrepancies` filter `IS NOT NULL`
+- Migration dijalankan manual: `docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -f /migrations/023_cr061_fraud_protection.sql`
 
 ---
 
