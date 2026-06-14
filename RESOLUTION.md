@@ -78,6 +78,11 @@
 | [BUG-060](#bug-060) | 2026-06-14 | Field "Batas Waktu Checkout (menit)" di admin tidak bisa diketik — `onChange` pakai `parseInt \|\| 30`, field snap balik ke 30 setiap user clear untuk mengetik ulang | Frontend | ✅ Resolved | — |
 | [BUG-061](#bug-061) | 2026-06-14 | WA notifikasi "hampir kadaluarsa" tidak terkirim (TXN-20260613-00080) — 3 root cause: (1) `c.phone` harus `c.phone_number`, (2) status `PENDING` tidak dicakup, (3) kolom `wa_expiry_notif_sent_at` tidak ada di schema guard | Backend/Scheduler/Database | ✅ Resolved | — |
 | [BUG-062](#bug-062) | 2026-06-14 | Registrasi `081180003939` — customer lapor "registrasi failed" padahal OTP terkirim — `sendOTP()` dipanggil sebelum `INSERT INTO pending_registrations`; jika DB gagal OTP terkirim tapi tidak bisa diverifikasi | Backend/Auth | ✅ Resolved | — |
+| [BUG-063](#bug-063) | 2026-06-14 | Tour Guide popup di mobile muncul di paling bawah layar, overlap nav bar — `bottom: 0` tanpa clearance; teks "memesan makanan" (harusnya produk), "Navigating..." (harusnya Bahasa Indonesia), "Langkah X dari 16" (jumlah step tetap membingungkan) | Frontend/UX | ✅ Resolved | — |
+| [BUG-064](#bug-064) | 2026-06-14 | Group Checkout gagal — migration `022_group_checkout.sql` tidak pernah diaplikasikan; tabel `transaction_groups` + kolom `group_id` tidak ada di DB | Database | ✅ Resolved | CR-054 |
+| [BUG-065](#bug-065) | 2026-06-15 | Klik "Konfirmasi Bayar" di `/cashier/group-bayar` gagal 422 — validator `body('transaction_ids.*').isUUID()` menolak format `TXN-YYYYMMDD-NNNNN` yang bukan UUID | Backend | ✅ Resolved | CR-054 |
+| [BUG-066](#bug-066) | 2026-06-15 | `/pesanan/:id` tidak auto-refresh setelah Group Checkout — backend broadcast `GROUP_ORDER_PAID` tapi frontend hanya subscribe `ORDER_PAID`; polling juga tidak cover `PENDING_APPROVAL` | Frontend + Backend | ✅ Resolved | CR-054 |
+| [BUG-067](#bug-067) | 2026-06-15 | Group invoice `GRP-*` tidak bisa digunakan untuk ambil barang di halaman helper — `HandoverOutstandingPanel` hanya filter by `transaction_id`, tidak handle format `GRP-*`; `handoverOrder` tidak punya logik group sehingga item multi-booth saling merusak; setiap booth butuh independent handover | Frontend + Backend | ✅ Resolved | CR-054 |
 
 ---
 
@@ -4876,3 +4881,422 @@ docker compose up -d --no-deps backend
 
 **Recurrence Prevention:**  
 Lihat STD-018 di STANDARD.md — OTP wajib dikirim setelah record database yang menjadi acuan verifikasi berhasil disimpan.
+
+
+---
+
+## BUG-063 — Tour Guide Mobile Popup Overlap Nav Bar + Teks Salah
+
+**Symptom:**
+
+Pada tampilan mobile, tooltip tour guide (`TourTooltip`) muncul di posisi paling bawah layar dengan `position: fixed; bottom: 0` — menabrak/overlap navigation bar bawah. Selain itu ditemukan tiga teks error:
+- `TourWelcomeModal`: "Mau tur singkat untuk belajar cara **memesan makanan**?" (app ini adalah toy fair, bukan food)
+- `TourNavigationButtons`: "**Navigating...**" (teks Bahasa Inggris, app seharusnya full Bahasa Indonesia)
+- `TourProgressBar`: "Langkah X **dari 16**" — membingungkan karena step bisa di-skip sehingga progress bisa melompat (misal dari Langkah 3 ke Langkah 12)
+
+**Root Cause:**
+
+| # | Defect | File |
+|---|---|---|
+| 1 | Mobile bottom-sheet menggunakan `bottom: 0, left: 0, right: 0` — tidak ada clearance dari nav bar (z-30) | `TourTooltip.jsx` |
+| 2 | Hardcoded text "memesan makanan" dari template awal, tidak diperbarui saat app diganti ke toy fair | `TourWelcomeModal.jsx` |
+| 3 | `isTransitioning` state menampilkan "Navigating..." (English) | `TourNavigationButtons.jsx` |
+| 4 | Progress label menampilkan total step absolut (16) yang tidak mencerminkan step yang user jalani karena `skipIfMissing` | `TourProgressBar.jsx` |
+
+**Fix:**
+
+**`TourTooltip.jsx`** — Redesign mobile layout:
+- Ganti `bottom: 0, left: 0, right: 0, borderRadius: '16px 16px 0 0'` → `bottom: 72, left: 12, right: 12, borderRadius: 20`
+- Floating card di atas nav bar (clearance 72px) dengan rounded corners semua sisi
+- Tambah blue gradient accent strip 4px di bagian atas card
+- Tambah drag handle indicator (visual only)
+- Close button (✕) circular di kanan atas
+- Tombol transisi: `translateY(0)` dengan spring easing `cubic-bezier(0.34,1.56,0.64,1)`
+- Desktop tooltip: tetap positioned, tambah gradient accent strip + improved shadow
+
+**`TourWelcomeModal.jsx`** — Teks dan desain:
+- "memesan makanan" → "memesan produk di sini"
+- Tambah gradient header (`#3B5BDB → #748FFC`) dengan ikon 🎪 dan subtitle "Amazing Toys Fair 2026"
+- Tombol "Mulai Tur" menggunakan gradient brand, bukan plain `bg-blue-600`
+
+**`TourNavigationButtons.jsx`** — Teks dan mobile layout:
+- "Navigating..." → "Memuat..."
+- Terima prop `isCard` dari `TourTooltip`
+- Mobile (`isCard=true`): tombol row dengan Back (fixed 80px) + Next (flex-1), touch target 40px, gradient Next button
+- Desktop: layout existing diperbaiki dengan gradient button
+
+**`TourProgressBar.jsx`** — Label:
+- "Langkah X dari {totalSteps}" → "Langkah X" + persentase `{pct}%`
+- Progress bar: tinggi 5px (dari 1px/h-1), gradient `#3B5BDB → #748FFC`, easing `cubic-bezier(0.4,0,0.2,1)`
+
+**Perubahan File:**
+
+- `frontend/src/components/tour/TourTooltip.jsx` — redesign mobile card + desktop tooltip
+- `frontend/src/components/tour/TourWelcomeModal.jsx` — fix teks + redesign visual
+- `frontend/src/components/tour/TourNavigationButtons.jsx` — fix "Navigating..." + mobile layout
+- `frontend/src/components/tour/TourProgressBar.jsx` — fix label + visual
+
+**Deployment:**
+
+```bash
+docker compose build frontend
+docker compose up -d --no-deps frontend
+```
+
+**Recurrence Prevention:**
+
+Lihat STD-019 di STANDARD.md — Tour Guide UI Standard: tooltip mobile harus selalu floating card di atas nav bar (`bottom ≥ 64px`), tidak boleh edge-to-edge bottom sheet. Semua teks UI wajib Bahasa Indonesia.
+
+---
+
+## BUG-064 — Group Checkout Gagal: Tabel `transaction_groups` Tidak Ada di Database
+
+**Date:** 2026-06-14  
+**Status:** ✅ Resolved  
+**CR Terkait:** CR-054
+
+### Symptom
+
+Fitur Group Checkout (CR-054) tidak berfungsi sama sekali. Saat kasir menscan QR customer dengan >1 transaksi aktif, backend melempar error:
+
+```
+relation "transaction_groups" does not exist
+```
+
+Atau lebih tepatnya, endpoint `GET /cashier/customer-transactions` crash karena query menyertakan `AND t.group_id IS NULL` — kolom `group_id` belum ada di tabel `transactions`.
+
+### Root Cause
+
+Migration `022_group_checkout.sql` **tidak pernah diaplikasikan** ke database. File migration sudah ada di `backend/migrations/`, service code sudah ada (cashier.service.js, cashier.router.js), frontend pages sudah ada (GroupMergePage, GroupPaymentPage, PrintGroupReceiptButton), routes di App.jsx sudah ada — tetapi step deploy migration terlewat.
+
+**Urutan migration yang ada:**
+
+```
+021_cr041_refresh_tokens.sql    ← applied ✅
+022_group_checkout.sql          ← SKIPPED ❌
+023_cr061_fraud_protection.sql  ← applied ✅ (terbukti: kolom amount_charged ada)
+```
+
+Migration 023 yang datang setelahnya diaplikasikan normal, sehingga tidak ada error yang muncul saat deploy awal. Bug hanya terdeteksi saat fitur group checkout pertama kali digunakan.
+
+### Fix
+
+```bash
+docker cp backend/migrations/022_group_checkout.sql hybrid_postgres:/tmp/
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -f /tmp/022_group_checkout.sql
+docker restart hybrid_backend
+```
+
+**Hasil setelah fix:**
+- Tabel `transaction_groups` dibuat dengan 14 kolom
+- Kolom `group_id UUID` ditambahkan ke `transactions`
+- Index `idx_transactions_group_id`, `idx_transaction_groups_customer`, `idx_transaction_groups_phone` dibuat
+- Sequence `transaction_groups_seq` dibuat (untuk format `GRP-YYYYMMDD-NNNN`)
+
+### Recurrence Prevention
+
+Lihat STD-020 di STANDARD.md — Migration Deployment Checklist: setiap CR yang menyertakan file migration wajib didaftarkan ke checklist deployment dan diverifikasi via `SELECT` sebelum dianggap selesai.
+
+---
+
+## BUG-065 — "Konfirmasi Bayar" Group Checkout Gagal 422: Validator `.isUUID()` Menolak Format `TXN-*`
+
+**Date:** 2026-06-15  
+**Status:** ✅ Resolved  
+**CR Terkait:** CR-054
+
+### Symptom
+
+Setelah BUG-064 (migration) diperbaiki, kasir masih tidak bisa memproses pembayaran Group Checkout. Saat klik tombol **"Konfirmasi Bayar"** di halaman `/cashier/group-bayar`, request dikirim ke `POST /api/v1/cashier/group-checkout` dan mendapat respons:
+
+```
+HTTP 422 Unprocessable Entity
+{ "errors": [{ "msg": "transaction_id tidak valid.", "path": "transaction_ids[0]" }] }
+```
+
+Semua transaction ID yang dikirim (`TXN-20260615-00001`, dst.) ditolak validasi.
+
+### Root Cause
+
+Di `cashier.router.js` (POST `/group-checkout` validator), baris:
+
+```js
+body('transaction_ids.*').isUUID().withMessage('transaction_id tidak valid.'),
+```
+
+Validator `.isUUID()` mengharapkan format UUID v4 (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Transaction ID di sistem ini menggunakan format **custom string** `TXN-YYYYMMDD-NNNNN` yang tidak pernah valid sebagai UUID — sehingga **100% request group checkout akan ditolak**, tanpa pengecualian.
+
+Format aktual yang tersimpan di database:
+
+```sql
+SELECT transaction_id FROM transactions LIMIT 3;
+-- TXN-20260613-00079
+-- TXN-20260613-00080
+-- TXN-20260614-00081
+```
+
+### Fix
+
+**File:** `backend/src/modules/cashier/cashier.router.js` — baris 206
+
+```js
+// Sebelum (BUG):
+body('transaction_ids.*').isUUID().withMessage('transaction_id tidak valid.'),
+
+// Sesudah (FIX):
+body('transaction_ids.*').isString().notEmpty().withMessage('transaction_id tidak valid.'),
+```
+
+Deploy:
+
+```bash
+docker cp backend/src/modules/cashier/cashier.router.js hybrid_backend:/app/src/modules/cashier/cashier.router.js
+docker restart hybrid_backend
+```
+
+Verifikasi fix di dalam container:
+
+```bash
+docker exec hybrid_backend grep "transaction_ids\.\*" /app/src/modules/cashier/cashier.router.js
+# Output: body('transaction_ids.*').isString().notEmpty().withMessage('transaction_id tidak valid.'),
+```
+
+### Recurrence Prevention
+
+Lihat STD-021 di STANDARD.md — Input validator harus menggunakan tipe yang sesuai dengan format primary key aktual. Jangan gunakan `.isUUID()` untuk field yang menggunakan format string custom seperti `TXN-*`, `GRP-*`, `PRD-*`.
+
+---
+
+## BUG-066 — `/pesanan/:id` Tidak Auto-Refresh Setelah Group Checkout
+
+**Date:** 2026-06-15  
+**Status:** ✅ Resolved  
+**CR Terkait:** CR-054
+
+### Symptom
+
+Setelah kasir berhasil memproses Group Checkout, halaman `/pesanan/:id` customer tidak auto-refresh — status tetap tampil `PENDING`/`RESERVED` meskipun pembayaran sudah dikonfirmasi. Customer harus manual tekan tombol refresh untuk melihat status `PAID`.
+
+### Root Cause
+
+**Penyebab utama — event name mismatch (Backend ↔ Frontend):**
+
+`payments.service.js` (single-TRX flow) broadcast event:
+```js
+broadcastToCustomer(txn.customer_id, { event: 'ORDER_PAID', transactionId });
+```
+
+`cashier.service.js` (group checkout flow) broadcast event:
+```js
+broadcastToCustomer(committed.customerId, {
+  event: 'GROUP_ORDER_PAID',   // ← event name berbeda!
+  groupId, groupCode, message  // ← tidak menyertakan transactionIds
+});
+```
+
+`OrderTrackingPage.jsx` hanya subscribe ke `ORDER_PAID`:
+```js
+return subscribe('ORDER_PAID', (data) => {
+  if (data?.transactionId === transactionId) fetchOrder();
+});
+```
+
+Akibatnya, saat kasir menggunakan Group Checkout, event `GROUP_ORDER_PAID` diterima oleh WS tapi tidak ada handler yang menangkap — halaman customer tidak pernah memanggil `fetchOrder()`.
+
+**Penyebab kedua — polling tidak cover `PENDING_APPROVAL`:**
+
+Polling fallback hanya aktif untuk `['PENDING', 'RESERVED', 'WAITING_PAYMENT']`. Status `PENDING_APPROVAL` (mode HELPER_APPROVE) tidak termasuk, sehingga jika WS down saat helper menyetujui pesanan, halaman tidak pernah auto-refresh.
+
+### Fix
+
+**1. Backend — `cashier.service.js` (line ~358):** Tambahkan `transactionIds` ke payload `GROUP_ORDER_PAID`:
+
+```js
+// Sebelum (BUG):
+broadcastToCustomer(committed.customerId, {
+  event:    'GROUP_ORDER_PAID',
+  groupId:  committed.groupId,
+  groupCode: committed.groupCode,
+  message:  '...',
+});
+
+// Sesudah (FIX):
+broadcastToCustomer(committed.customerId, {
+  event:          'GROUP_ORDER_PAID',
+  groupId:        committed.groupId,
+  groupCode:      committed.groupCode,
+  transactionIds: committed.transactionIds,  // ← TAMBAH INI
+  message:        '...',
+});
+```
+
+**2. Frontend — `OrderTrackingPage.jsx`:** Tambah subscriber `GROUP_ORDER_PAID` dan perluas polling ke `PENDING_APPROVAL`:
+
+```jsx
+// Handler baru: GROUP_ORDER_PAID
+useEffect(() => {
+  return subscribe('GROUP_ORDER_PAID', (data) => {
+    if (data?.transactionIds?.includes(transactionId)) fetchOrder();
+  });
+}, [transactionId, subscribe, fetchOrder]);
+
+// Polling diperluas ke PENDING_APPROVAL
+useEffect(() => {
+  const isActive = order?.status
+    && ['PENDING', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL'].includes(order.status);
+  if (!isActive) return;
+  const id = setInterval(fetchOrder, 15_000);
+  return () => clearInterval(id);
+}, [order?.status, fetchOrder]);
+```
+
+Deploy:
+
+```bash
+# Backend
+docker cp cashier.service.js hybrid_backend:/app/src/modules/cashier/cashier.service.js
+docker restart hybrid_backend
+
+# Frontend (Nginx, perlu build)
+npm run build
+docker cp dist/. hybrid_frontend:/usr/share/nginx/html/
+docker exec hybrid_frontend nginx -s reload
+```
+
+### Recurrence Prevention
+
+Lihat STD-022 di STANDARD.md — Setiap kali backend menambahkan WS broadcast baru, semua halaman frontend yang relevan WAJIB subscribe ke event tersebut dengan payload yang cukup untuk filter per-entity.
+
+---
+
+## BUG-067 — Group Invoice `GRP-*` Tidak Bisa Digunakan untuk Ambil Barang di Helper
+
+**Date:** 2026-06-15  
+**Status:** ✅ Resolved  
+**CR Terkait:** CR-054
+
+### Symptom
+
+Helper booth menerima customer yang menunjukkan struk dengan kode `GRP-20260614-0001`. Saat helper mengetik atau scan kode tersebut di kolom pencarian halaman "Serah Terima", daftar menampilkan "Tidak ada pesanan untuk diserahkan" — meskipun ada transaksi PAID yang siap diserahkan.
+
+### Root Cause
+
+`HandoverOutstandingPanel` di `HelperPage.jsx` menggunakan filter:
+
+```js
+const filtered = orders.filter(o =>
+  !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase())
+);
+```
+
+`orders` berisi data individual TXN (`TXN-00091`, `TXN-00092`). Ketika helper mengetik `GRP-20260614-0001`, tidak ada TXN yang cocok → list kosong.
+
+Backend sudah mendukung lookup by group code via `_getGroupOrderForBooth()` (deteksi `^GRP-` prefix di `helper.service.js` baris 554), tetapi fungsi ini tidak pernah dipanggil dari panel outstanding karena filter hanya bekerja pada `transaction_id`.
+
+### Fix
+
+**File:** `frontend/src/pages/helper/HelperPage.jsx` — `HandoverOutstandingPanel`
+
+Tambahkan `useEffect` yang mendeteksi prefix `GRP-` di `searchQuery` dan langsung memanggil `getBoothOrder(q)`:
+
+```jsx
+useEffect(() => {
+  const q = (searchQuery ?? '').trim();
+  if (!/^GRP-/i.test(q)) { setGrpError(''); return; }
+  if (q.length < 10) return;  // tunggu kode lengkap
+  setGrpLoading(true);
+  setGrpError('');
+  getBoothOrder(q)
+    .then(r => setSelectedOrder(r.data.data))
+    .catch(err => setGrpError(err.response?.data?.message || 'Group invoice tidak ditemukan di booth ini.'))
+    .finally(() => setGrpLoading(false));
+}, [searchQuery]);
+```
+
+Ketika `selectedOrder` ter-set, `HandoverDetailView` langsung terbuka dengan data dari `_getGroupOrderForBooth()` — yaitu item milik booth ini dari semua TXN dalam group. Handover kemudian berjalan via `transaction_id` TXN pertama yang ditemukan untuk booth ini.
+
+### Alur Setelah Fix
+
+```
+Helper scan/ketik GRP-20260614-0001
+  → useEffect deteksi prefix GRP-
+  → getBoothOrder('GRP-20260614-0001')
+  → _getGroupOrderForBooth() → items Booth A dari TXN-00091
+  → HandoverDetailView terbuka
+  → Helper centang semua item → Konfirmasi
+  → handoverOrder('TXN-00091') → status PAID → HANDED_OVER → COMPLETED
+  → items pickup_status READY → DONE
+```
+
+### Recurrence Prevention
+
+Lihat STD-023 di STANDARD.md — Setiap fitur yang menggunakan format ID selain `TXN-*` (misal group code `GRP-*`) WAJIB ditest secara eksplisit di semua UI yang menerima input ID — termasuk kolom pencarian, scan QR, dan lookup manual.
+
+---
+
+### BUG-067 — Addendum: Multi-Booth Independent Handover via Group Code
+
+**Date:** 2026-06-15 (follow-up)  
+**Kasus nyata:**
+```
+GRP-20260614-0001
+  ├─ TXN-20260614-00093 → ToysWorld · Hall A, Stand A1
+  └─ TXN-20260614-00094 → EduPlayZone · Hall C, Stand C5
+```
+
+**Root cause lanjutan (setelah BUG-067 fix awal):**
+
+1. **`handoverOrder` tidak punya logik GRP** — meneruskan ke single-TXN path, tidak ada `tenant_id` scope di `UPDATE transaction_items`. Jika TXN-00093 punya item dari dua booth, booth pertama yang handover akan me-mark semua item (termasuk milik booth lain) sebagai DONE.
+
+2. **`HandoverDetailView` re-fetch kehilangan `is_group_invoice` flag** — re-fetch pakai `transaction_id` (TXN ID dari hasil lookup GRP), sehingga response single-TXN tidak lagi punya `group_code` atau `is_group_invoice`. Akibatnya `doHandover` memanggil `handoverOrder('TXN-00093')` bukan `handoverOrder('GRP-...')`.
+
+**Fix:**
+
+*Backend — `helper.service.js`:*
+```js
+// Tambah deteksi GRP- di handoverOrder:
+async function handoverOrder(transactionId, helperId, helperTenantId) {
+  if (/^GRP-/i.test(transactionId)) {
+    return _handoverGroup(transactionId, helperId, helperTenantId);
+  }
+  // ... existing single-TXN code unchanged ...
+}
+
+// _handoverGroup: booth-scoped, handles multi-TXN group:
+async function _handoverGroup(groupCode, helperId, helperTenantId) {
+  // Temukan TRX dalam group yang punya item booth ini (AND t.status = 'PAID')
+  // Update hanya item tenant ini: WHERE transaction_id = $2 AND tenant_id = $3 AND pickup_status = 'READY'
+  // Cek jika masih ada item READY di TRX → jika tidak, mark TRX sebagai COMPLETED
+}
+```
+
+*Frontend — `HelperPage.jsx` `HandoverDetailView`:*
+```js
+// Re-fetch pakai group_code jika is_group_invoice
+const lookupKey = initialOrder.is_group_invoice ? initialOrder.group_code : initialOrder.transaction_id;
+
+// Handover pakai group_code jika is_group_invoice
+const handoverId = order.is_group_invoice ? order.group_code : order.transaction_id;
+await handoverOrder(handoverId);
+```
+
+**Alur Setelah Fix (kasus user):**
+```
+ToysWorld helper scan GRP-20260614-0001:
+  → getBoothOrder('GRP-20260614-0001', ToysWorld_tenantId)
+  → _getGroupOrderForBooth → items dari TXN-00093 (ToysWorld only)
+  → HandoverDetailView re-fetch: getBoothOrder('GRP-20260614-0001') → is_group_invoice:true
+  → handoverOrder('GRP-20260614-0001', helperId, ToysWorld_tenantId)
+  → _handoverGroup → UPDATE items WHERE tenant_id = ToysWorld AND pickup_status = 'READY'
+  → TXN-00093: no more READY → COMPLETED ✅
+
+EduPlayZone helper scan GRP-20260614-0001:
+  → getBoothOrder('GRP-20260614-0001', EduPlayZone_tenantId)
+  → _getGroupOrderForBooth → items dari TXN-00094 (EduPlayZone only)
+  → HandoverDetailView re-fetch: getBoothOrder('GRP-20260614-0001') → is_group_invoice:true
+  → handoverOrder('GRP-20260614-0001', helperId, EduPlayZone_tenantId)
+  → _handoverGroup → UPDATE items WHERE tenant_id = EduPlayZone AND pickup_status = 'READY'
+  → TXN-00094: no more READY → COMPLETED ✅
+```
+
+Kedua booth menggunakan **kode yang sama** (`GRP-20260614-0001`) dan masing-masing hanya menyelesaikan item milik booth mereka sendiri.

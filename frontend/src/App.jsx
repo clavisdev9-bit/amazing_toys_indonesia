@@ -49,6 +49,8 @@ import CashierDashboardPage from './pages/cashier/CashierDashboardPage';
 import CashierPOSPage from './pages/cashier/CashierPOSPage';
 import PaymentPage from './pages/cashier/PaymentPage';
 import RecapPage from './pages/cashier/RecapPage';
+import GroupMergePage from './pages/cashier/GroupMergePage';
+import GroupPaymentPage from './pages/cashier/GroupPaymentPage';
 
 // Tenant pages
 import TenantOrdersPage from './pages/tenant/TenantOrdersPage';
@@ -62,13 +64,20 @@ import HelperOrderSuccessPage from './pages/helper/HelperOrderSuccessPage';
 
 // Admin page
 import AdminPage from './pages/admin/AdminPage';
-
 // Leader pages
 import LeaderDashboardPage from './pages/leader/LeaderDashboardPage';
 import SalesReportPage from './pages/leader/SalesReportPage';
 import VisitorStatsPage from './pages/leader/VisitorStatsPage';
 import ReturnsPage from './pages/leader/ReturnsPage';
 import LeaderDeleteApprovalPage from './pages/leader/LeaderDeleteApprovalPage';
+import TenantRankingPage from './pages/leader/TenantRankingPage';
+import SettlementPage from './pages/leader/SettlementPage';
+import VoucherReportPage from './pages/leader/VoucherReportPage';
+import TopProductsPage from './pages/leader/TopProductsPage';
+import ConversionPage from './pages/leader/ConversionPage';
+import HelperPerformancePage from './pages/leader/HelperPerformancePage';
+import TaxReportPage from './pages/leader/TaxReportPage';
+import TopCustomersPage from './pages/leader/TopCustomersPage';
 
 const CASHIER_NAV = [
   { to: '/cashier', icon: '💳', label: 'Pembayaran' },
@@ -90,6 +99,14 @@ const ADMIN_NAV = [
 const LEADER_NAV = [
   { to: '/leader', icon: '📈', label: 'Dashboard KPI' },
   { to: '/leader/penjualan', icon: '💰', label: 'Laporan Penjualan' },
+  { to: '/leader/ranking-tenant', icon: '🏆', label: 'Ranking Tenant' },
+  { to: '/leader/settlement', icon: '💳', label: 'Settlement' },
+  { to: '/leader/voucher', icon: '🎟️', label: 'Laporan Voucher' },
+  { to: '/leader/top-produk', icon: '🏷️', label: 'Top Produk' },
+  { to: '/leader/top-customer', icon: '👑', label: 'Top Customer' },
+  { to: '/leader/konversi', icon: '📊', label: 'Konversi' },
+  { to: '/leader/kinerja-helper', icon: '🙋', label: 'Kinerja Helper' },
+  { to: '/leader/pajak', icon: '🧾', label: 'Laporan Pajak' },
   { to: '/leader/pengunjung', icon: '👥', label: 'Pengunjung' },
   { to: '/leader/retur', icon: '↩️', label: 'Retur' },
   { to: '/leader/hapus-approval', icon: '🗑️', label: 'Hapus Approval' },
@@ -216,6 +233,8 @@ function AppRoutes() {
               <Route path="/cashier/pos" element={<CashierPOSPage />} />
               <Route path="/cashier/bayar/:transactionId" element={<PaymentPage />} />
               <Route path="/cashier/rekap" element={<RecapPage />} />
+              <Route path="/cashier/group-merge" element={<GroupMergePage />} />
+              <Route path="/cashier/group-bayar" element={<GroupPaymentPage />} />
             </Route>
           </Route>
 
@@ -234,6 +253,14 @@ function AppRoutes() {
             <Route element={<StaffShell navItems={LEADER_NAV} title="Leader" />}>
               <Route path="/leader" element={<LeaderDashboardPage />} />
               <Route path="/leader/penjualan" element={<SalesReportPage />} />
+              <Route path="/leader/ranking-tenant" element={<TenantRankingPage />} />
+              <Route path="/leader/settlement" element={<SettlementPage />} />
+              <Route path="/leader/voucher" element={<VoucherReportPage />} />
+              <Route path="/leader/top-produk" element={<TopProductsPage />} />
+              <Route path="/leader/top-customer" element={<TopCustomersPage />} />
+              <Route path="/leader/konversi" element={<ConversionPage />} />
+              <Route path="/leader/kinerja-helper" element={<HelperPerformancePage />} />
+              <Route path="/leader/pajak" element={<TaxReportPage />} />
               <Route path="/leader/pengunjung" element={<VisitorStatsPage />} />
               <Route path="/leader/retur" element={<ReturnsPage />} />
               <Route path="/leader/hapus-approval" element={<LeaderDeleteApprovalPage />} />

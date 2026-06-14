@@ -4,7 +4,7 @@ const express  = require('express');
 const { body, query: qv } = require('express-validator');
 const { authenticate, authorize } = require('../../middlewares/auth.middleware');
 const { validate }  = require('../../middlewares/validate.middleware');
-const leaderSvc     = require('./leader.service');
+const leaderSvc = require('./leader.service');
 const { broadcastToCashier } = require('../../ws/websocket');
 
 const router = express.Router();
@@ -160,6 +160,124 @@ router.patch('/delete-requests/:id',
         });
       }
       res.json({ success: true, data: result });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Shared date range validation helper ──────────────────────────────────────
+
+function parseDateRange(req) {
+  const { date_from, date_to } = req.query;
+  if (!date_from || !date_to) throw { status: 400, message: 'Parameter date_from dan date_to wajib diisi.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date_from) || !/^\d{4}-\d{2}-\d{2}$/.test(date_to))
+    throw { status: 400, message: 'Format tanggal harus YYYY-MM-DD.' };
+  if (date_from > date_to) throw { status: 400, message: 'date_from tidak boleh lebih besar dari date_to.' };
+  return { dateFrom: date_from, dateTo: date_to };
+}
+
+// ── Top Customers ────────────────────────────────────────────────────────────
+
+router.get('/top-customers',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+      const data  = await leaderSvc.getTopCustomers({ ...range, limit });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-02: Tenant Ranking ─────────────────────────────────────────────────────
+
+router.get('/tenant-ranking',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getTenantRanking(range);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-03: Settlement Report ──────────────────────────────────────────────────
+
+router.get('/settlement',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getSettlementReport(range);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-04: Voucher Usage Report ───────────────────────────────────────────────
+
+router.get('/voucher-report',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getVoucherReport(range);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-06: Top Products ───────────────────────────────────────────────────────
+
+router.get('/top-products',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range    = parseDateRange(req);
+      const tenantId = req.query.tenant_id || null;
+      const limit    = Math.min(parseInt(req.query.limit) || 20, 100);
+      const data     = await leaderSvc.getTopProducts({ ...range, tenantId, limit });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-07: Conversion Rate ────────────────────────────────────────────────────
+
+router.get('/conversion',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getConversionRate(range);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-08: Helper Performance ─────────────────────────────────────────────────
+
+router.get('/helper-performance',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getHelperPerformance(range);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── R-10: Tax Report ─────────────────────────────────────────────────────────
+
+router.get('/tax-report',
+  authenticate, authorize('LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const range = parseDateRange(req);
+      const data  = await leaderSvc.getTaxReport(range);
+      res.json({ success: true, data });
     } catch (err) { next(err); }
   }
 );

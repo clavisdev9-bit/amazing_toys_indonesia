@@ -5,7 +5,7 @@ import TourProgressBar from './TourProgressBar';
 import TourNavigationButtons from './TourNavigationButtons';
 
 const TOOLTIP_W = 300;
-const TOOLTIP_H = 220; // approximate; used for initial placement
+const TOOLTIP_H = 220;
 
 function calcPosition(targetRect, position, vw, vh) {
   if (!targetRect || position === 'center') {
@@ -54,19 +54,14 @@ function calcPosition(targetRect, position, vw, vh) {
 }
 
 function Arrow({ dir }) {
-  const base = {
-    position: 'absolute',
-    width: 0,
-    height: 0,
-    borderStyle: 'solid',
-  };
+  const base = { position: 'absolute', width: 0, height: 0, borderStyle: 'solid' };
   const SIZE = 8;
-  const COLOR = 'white';
+  const C = 'white';
   const styles = {
-    top:    { ...base, top: -SIZE * 2 + 2, left: '50%', transform: 'translateX(-50%)', borderWidth: `0 ${SIZE}px ${SIZE * 2}px ${SIZE}px`, borderColor: `transparent transparent ${COLOR} transparent` },
-    bottom: { ...base, bottom: -SIZE * 2 + 2, left: '50%', transform: 'translateX(-50%)', borderWidth: `${SIZE * 2}px ${SIZE}px 0 ${SIZE}px`, borderColor: `${COLOR} transparent transparent transparent` },
-    left:   { ...base, left: -SIZE * 2 + 2, top: '50%', transform: 'translateY(-50%)', borderWidth: `${SIZE}px ${SIZE * 2}px ${SIZE}px 0`, borderColor: `transparent ${COLOR} transparent transparent` },
-    right:  { ...base, right: -SIZE * 2 + 2, top: '50%', transform: 'translateY(-50%)', borderWidth: `${SIZE}px 0 ${SIZE}px ${SIZE * 2}px`, borderColor: `transparent transparent transparent ${COLOR}` },
+    top:    { ...base, top: -SIZE * 2 + 2, left: '50%', transform: 'translateX(-50%)', borderWidth: `0 ${SIZE}px ${SIZE * 2}px ${SIZE}px`, borderColor: `transparent transparent ${C} transparent` },
+    bottom: { ...base, bottom: -SIZE * 2 + 2, left: '50%', transform: 'translateX(-50%)', borderWidth: `${SIZE * 2}px ${SIZE}px 0 ${SIZE}px`, borderColor: `${C} transparent transparent transparent` },
+    left:   { ...base, left: -SIZE * 2 + 2, top: '50%', transform: 'translateY(-50%)', borderWidth: `${SIZE}px ${SIZE * 2}px ${SIZE}px 0`, borderColor: `transparent ${C} transparent transparent` },
+    right:  { ...base, right: -SIZE * 2 + 2, top: '50%', transform: 'translateY(-50%)', borderWidth: `${SIZE}px 0 ${SIZE}px ${SIZE * 2}px`, borderColor: `transparent transparent transparent ${C}` },
   };
   if (!styles[dir]) return null;
   return <div style={styles[dir]} />;
@@ -74,32 +69,28 @@ function Arrow({ dir }) {
 
 export default function TourTooltip() {
   const { isActive, currentStep, showWelcome, skipTour, getTargetElement } = useTour();
-  const [pos, setPos] = useState({ left: -9999, top: -9999, arrow: null });
+  const [pos, setPos]         = useState({ left: -9999, top: -9999, arrow: null });
   const [visible, setVisible] = useState(false);
   const tooltipRef = useRef(null);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
   const updatePos = useCallback(() => {
     if (!isActive || !currentStep) return;
-    const el = getTargetElement();
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const isMob = vw < 640;
 
-    if (isMob) {
-      // Bottom sheet on mobile
-      setPos({ left: 0, top: 'auto', bottom: 0, arrow: null, isBottomSheet: true });
+    if (vw < 640) {
+      setPos({ isCard: true });
       return;
     }
 
+    const el = getTargetElement();
     if (!el || currentStep.position === 'center') {
       setPos({ left: vw / 2 - TOOLTIP_W / 2, top: vh / 2 - TOOLTIP_H / 2, arrow: null });
       return;
     }
 
     const rect = el.getBoundingClientRect();
-    const p = calcPosition(rect, currentStep.position, vw, vh);
-    setPos(p);
+    setPos(calcPosition(rect, currentStep.position, vw, vh));
   }, [isActive, currentStep?.id, getTargetElement]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -109,11 +100,7 @@ export default function TourTooltip() {
     let rafId;
     function schedule() { rafId = requestAnimationFrame(updatePos); }
 
-    // Small delay for animation
-    const t = setTimeout(() => {
-      updatePos();
-      setVisible(true);
-    }, 60);
+    const t = setTimeout(() => { updatePos(); setVisible(true); }, 60);
 
     const ro = new ResizeObserver(schedule);
     ro.observe(document.documentElement);
@@ -129,87 +116,146 @@ export default function TourTooltip() {
     };
   }, [isActive, currentStep?.id, updatePos]);
 
-  // Keyboard navigation
   useEffect(() => {
     if (!isActive) return;
-    function handleKey(e) {
-      if (e.key === 'Escape') skipTour();
-    }
+    function handleKey(e) { if (e.key === 'Escape') skipTour(); }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [isActive, skipTour]);
 
-  // Focus trap
   useEffect(() => {
-    if (isActive && visible && tooltipRef.current) {
-      tooltipRef.current.focus();
-    }
+    if (isActive && visible && tooltipRef.current) tooltipRef.current.focus();
   }, [isActive, visible, currentStep?.id]);
 
-  // Guard: never render while welcome modal is open — prevents overlap (BUG-TOUR-001)
   if (!isActive || !currentStep || showWelcome) return null;
 
-  const isBottomSheet = pos.isBottomSheet;
+  const isCard = !!pos.isCard;
 
-  const tooltipStyle = isBottomSheet
-    ? {
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        zIndex: 50,
-        borderRadius: '16px 16px 0 0',
-        padding: '20px 20px 32px',
-        background: 'white',
-        boxShadow: '0 -4px 24px rgba(0,0,0,0.15)',
-        maxHeight: '55vh',
-        overflowY: 'auto',
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'translateY(0)' : 'translateY(20px)',
-        transition: 'opacity 200ms ease-out, transform 200ms ease-out',
-      }
-    : {
-        position: 'fixed',
-        left: pos.left,
-        top: pos.top,
-        width: TOOLTIP_W,
-        zIndex: 50,
-        borderRadius: 12,
-        padding: '16px',
-        background: 'white',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'translateY(0)' : 'translateY(8px)',
-        transition: 'opacity 200ms ease-out, transform 200ms ease-out',
-      };
+  // ── Shared inner content ────────────────────────────────────────────────────
+  const inner = (
+    <>
+      {/* Blue accent strip */}
+      <div style={{
+        height: 4,
+        background: 'linear-gradient(90deg, #3B5BDB 0%, #748FFC 100%)',
+        borderRadius: isCard ? '20px 20px 0 0' : '16px 16px 0 0',
+        flexShrink: 0,
+      }} />
 
+      <div style={{ padding: isCard ? '14px 16px 20px' : '14px 14px 16px', position: 'relative' }}>
+        {/* Drag handle — mobile only */}
+        {isCard && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: '#E5E7EB' }} />
+          </div>
+        )}
+
+        {/* Close button */}
+        <button
+          onClick={skipTour}
+          aria-label="Tutup tur"
+          style={{
+            position: 'absolute', top: isCard ? 10 : 10, right: 12,
+            width: 28, height: 28,
+            background: '#F3F4F6',
+            border: 'none', borderRadius: '50%',
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 10, color: '#9CA3AF',
+            lineHeight: 1,
+            transition: 'background 150ms',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = '#E5E7EB'}
+          onMouseLeave={e => e.currentTarget.style.background = '#F3F4F6'}
+        >
+          ✕
+        </button>
+
+        <TourProgressBar />
+
+        <h3 style={{
+          fontWeight: 700,
+          fontSize: isCard ? 15 : 14,
+          color: '#111827',
+          margin: '0 0 6px',
+          paddingRight: 32,
+          lineHeight: 1.4,
+        }}>
+          {currentStep.title}
+        </h3>
+
+        <p style={{
+          fontSize: 13,
+          color: '#6B7280',
+          lineHeight: 1.65,
+          margin: 0,
+        }}>
+          {currentStep.description}
+        </p>
+
+        <TourNavigationButtons isCard={isCard} />
+      </div>
+    </>
+  );
+
+  // ── Mobile floating card ────────────────────────────────────────────────────
+  if (isCard) {
+    return createPortal(
+      <div
+        ref={tooltipRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Tur: ${currentStep.title}`}
+        tabIndex={-1}
+        style={{
+          position: 'fixed',
+          bottom: 72,
+          left: 12,
+          right: 12,
+          zIndex: 50,
+          borderRadius: 20,
+          background: 'white',
+          boxShadow: '0 8px 40px rgba(0,0,0,0.18), 0 2px 12px rgba(59,91,219,0.10)',
+          border: '1px solid rgba(229,231,235,0.8)',
+          overflow: 'hidden',
+          opacity: visible ? 1 : 0,
+          transform: visible ? 'translateY(0)' : 'translateY(24px)',
+          transition: 'opacity 250ms ease-out, transform 300ms cubic-bezier(0.34,1.56,0.64,1)',
+          outline: 'none',
+        }}
+      >
+        {inner}
+      </div>,
+      document.body,
+    );
+  }
+
+  // ── Desktop positioned tooltip ──────────────────────────────────────────────
   return createPortal(
     <div
       ref={tooltipRef}
       role="dialog"
       aria-modal="true"
-      aria-label={`Tour: ${currentStep.title}`}
+      aria-label={`Tur: ${currentStep.title}`}
       tabIndex={-1}
-      style={tooltipStyle}
+      style={{
+        position: 'fixed',
+        left: pos.left,
+        top: pos.top,
+        width: TOOLTIP_W,
+        zIndex: 50,
+        borderRadius: 16,
+        background: 'white',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+        overflow: 'hidden',
+        opacity: visible ? 1 : 0,
+        transform: visible ? 'translateY(0)' : 'translateY(8px)',
+        transition: 'opacity 200ms ease-out, transform 200ms ease-out',
+        outline: 'none',
+      }}
     >
-      {/* Arrow pointer */}
-      {!isBottomSheet && pos.arrow && <Arrow dir={pos.arrow} />}
-
-      {/* Skip button */}
-      <button
-        onClick={skipTour}
-        aria-label="Tutup tur"
-        className="absolute top-3 right-3 w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors text-xs"
-      >
-        ✕
-      </button>
-
-      <TourProgressBar />
-
-      <h3 className="text-sm font-bold text-gray-900 mb-1.5 pr-6">{currentStep.title}</h3>
-      <p className="text-xs text-gray-500 leading-relaxed">{currentStep.description}</p>
-
-      <TourNavigationButtons />
+      {!pos.arrow ? null : <Arrow dir={pos.arrow} />}
+      {inner}
     </div>,
     document.body,
   );

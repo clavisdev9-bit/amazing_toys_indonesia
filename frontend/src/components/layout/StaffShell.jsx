@@ -29,7 +29,7 @@ function SideNavItem({ to, icon, label }) {
   );
 }
 
-export default function StaffShell({ navItems = [], title = '' }) {
+export default function StaffShell({ navItems = [], title = '', sidebarExtra = null }) {
   const { user, role, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -104,6 +104,11 @@ export default function StaffShell({ navItems = [], title = '' }) {
           {navItems.map((item) => (
             <SideNavItem key={item.to} {...item} />
           ))}
+          {sidebarExtra && (
+            <div className="mt-3">
+              {sidebarExtra}
+            </div>
+          )}
         </nav>
 
         <div className="p-4 border-t">

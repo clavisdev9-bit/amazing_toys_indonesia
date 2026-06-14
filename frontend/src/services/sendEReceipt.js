@@ -1,7 +1,5 @@
 import client from '../api/client';
-
-const EVENT_NAME = 'Amazing Toys Fair 2026';
-const EVENT_VENUE = 'JCC Senayan, Jakarta';
+import { getPublicConfigAsync } from '../hooks/useAppLogo';
 
 /**
  * POST /api/v1/receipts/send-email
@@ -9,12 +7,16 @@ const EVENT_VENUE = 'JCC Senayan, Jakarta';
  */
 export async function sendEReceipt(txn, success, customer) {
   try {
+    const cfg = await getPublicConfigAsync();
+    const eventName  = cfg?.event_name  || 'SOS';
+    const eventVenue = cfg?.venue        || '';
+
     await client.post('/receipts/send-email', {
       to: customer.email,
       customerName: customer.name,
       transactionId: txn.transaction_id,
-      eventName: EVENT_NAME,
-      eventVenue: EVENT_VENUE,
+      eventName,
+      eventVenue,
       cashier: success?.cashierId ?? '',
       createdAt: success?.paidAt ?? txn.checkout_time,
       paymentMethod: success?.paymentMethod ?? '',

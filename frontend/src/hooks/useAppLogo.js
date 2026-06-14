@@ -37,6 +37,13 @@ export function usePublicConfig() {
   return config;
 }
 
+// ── getPublicConfigAsync — non-React callers (services, utils) ───────────────
+// Returns the cached config object (same cache as hooks above).
+
+export function getPublicConfigAsync() {
+  return fetchCached();
+}
+
 // ── bustPublicConfigCache — forces a fresh fetch on next use ──────────────────
 
 export function bustPublicConfigCache() {

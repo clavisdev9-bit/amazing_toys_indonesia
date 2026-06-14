@@ -1,12 +1,19 @@
 'use strict';
 
-const transporter = require('../config/mailer');
+const transporter    = require('../config/mailer');
+const { getSystemConfig } = require('../modules/admin/admin.service');
+
+async function _getEventName() {
+  const cfg = await getSystemConfig();
+  return cfg.event_name || 'SOS';
+}
 
 async function sendLoginAlert({ username, role, name, loginAt }) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return;
 
   const roleLabel = { CASHIER: 'Kasir', TENANT: 'Tenant', LEADER: 'Leader', ADMIN: 'Admin' }[role] ?? role;
   const time = loginAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });
+  const eventName = await _getEventName();
 
   await transporter.sendMail({
     from:    process.env.EMAIL_FROM,
@@ -15,7 +22,7 @@ async function sendLoginAlert({ username, role, name, loginAt }) {
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
         <div style="background:#1f2937;padding:20px 24px">
-          <h2 style="color:#fff;margin:0;font-size:18px">🔐 Amazing Toys SOS — Login Alert</h2>
+          <h2 style="color:#fff;margin:0;font-size:18px">🔐 ${eventName} SOS — Login Alert</h2>
         </div>
         <div style="padding:24px">
           <table style="width:100%;border-collapse:collapse;font-size:14px">
@@ -24,7 +31,7 @@ async function sendLoginAlert({ username, role, name, loginAt }) {
             <tr><td style="padding:6px 0;color:#6b7280">Role</td><td style="padding:6px 0">${roleLabel}</td></tr>
             <tr><td style="padding:6px 0;color:#6b7280">Waktu Login</td><td style="padding:6px 0">${time} WIB</td></tr>
           </table>
-          <p style="font-size:12px;color:#9ca3af;margin-top:16px">Email ini dikirim otomatis oleh sistem SOS Amazing Toys Fair 2026.</p>
+          <p style="font-size:12px;color:#9ca3af;margin-top:16px">Email ini dikirim otomatis oleh sistem SOS ${eventName}.</p>
         </div>
       </div>
     `,
@@ -37,16 +44,17 @@ async function sendOTPEmail(toEmail, otpCode, userName) {
   if (!process.env.SMTP_USER || !process.env.SMTP_PASS) return;
 
   const ttl = process.env.OTP_TTL_MINUTES || '5';
+  const eventName = await _getEventName();
 
   await transporter.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
-    subject: `[Amazing Toys Fair] Kode Verifikasi Login: ${otpCode}`,
+    subject: `[${eventName}] Kode Verifikasi Login: ${otpCode}`,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
         <div style="background:#1f2937;padding:20px 24px">
           <h2 style="color:#fff;margin:0;font-size:18px">🔐 Kode Verifikasi Login</h2>
-          <p style="color:#9ca3af;margin:4px 0 0;font-size:13px">Amazing Toys Fair 2026</p>
+          <p style="color:#9ca3af;margin:4px 0 0;font-size:13px">${eventName}</p>
         </div>
         <div style="padding:28px 24px">
           <p style="color:#374151;font-size:14px;margin:0 0 20px">
@@ -66,7 +74,7 @@ async function sendOTPEmail(toEmail, otpCode, userName) {
           </div>
         </div>
         <div style="background:#f9fafb;padding:12px 24px;border-top:1px solid #e5e7eb">
-          <p style="color:#9ca3af;font-size:11px;margin:0">Email otomatis — jangan reply. Amazing Toys Fair 2026 &copy;</p>
+          <p style="color:#9ca3af;font-size:11px;margin:0">Email otomatis — jangan reply. ${eventName} &copy;</p>
         </div>
       </div>
     `,
@@ -80,16 +88,17 @@ async function sendNewDeviceAlert(toEmail, deviceInfo) {
   const time = loginAt
     ? new Date(loginAt).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false })
     : '-';
+  const eventName = await _getEventName();
 
   await transporter.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
-    subject: '[Amazing Toys Fair] Login dari Perangkat Baru Terdeteksi',
+    subject: `[${eventName}] Login dari Perangkat Baru Terdeteksi`,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
         <div style="background:#1f2937;padding:20px 24px">
           <h2 style="color:#fff;margin:0;font-size:18px">🖥️ Login Perangkat Baru</h2>
-          <p style="color:#9ca3af;margin:4px 0 0;font-size:13px">Amazing Toys Fair 2026</p>
+          <p style="color:#9ca3af;margin:4px 0 0;font-size:13px">${eventName}</p>
         </div>
         <div style="padding:24px">
           <p style="color:#374151;font-size:14px;margin:0 0 16px">
@@ -107,7 +116,7 @@ async function sendNewDeviceAlert(toEmail, deviceInfo) {
           </div>
         </div>
         <div style="background:#f9fafb;padding:12px 24px;border-top:1px solid #e5e7eb">
-          <p style="color:#9ca3af;font-size:11px;margin:0">Email otomatis — jangan reply. Amazing Toys Fair 2026 &copy;</p>
+          <p style="color:#9ca3af;font-size:11px;margin:0">Email otomatis — jangan reply. ${eventName} &copy;</p>
         </div>
       </div>
     `,

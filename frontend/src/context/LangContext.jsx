@@ -169,7 +169,7 @@ const T = {
 
     // Login
     'login.title':        'Masuk',
-    'login.subtitle':     'Amazing Toys Fair 2026',
+    'login.subtitle':     '',
     'login.phone':        'Nomor Telepon',
     'login.phonePh':      '08xxxxxxxxxx',
     'login.submit':       'Masuk',
@@ -180,7 +180,7 @@ const T = {
 
     // Register
     'register.title':     'Daftar Akun Baru',
-    'register.subtitle':  'Amazing Toys Fair 2026',
+    'register.subtitle':  '',
     'register.name':      'Nama Lengkap',
     'register.namePh':    'Masukkan nama lengkap',
     'register.phone':     'Nomor Telepon',
@@ -543,7 +543,7 @@ const T = {
     'checkout.continue': 'Continue Shopping',
 
     'login.title':        'Login',
-    'login.subtitle':     'Amazing Toys Fair 2026',
+    'login.subtitle':     '',
     'login.phone':        'Phone Number',
     'login.phonePh':      '08xxxxxxxxxx',
     'login.submit':       'Login',
@@ -553,7 +553,7 @@ const T = {
     'login.error':        'Login failed. Please try again.',
 
     'register.title':     'Create New Account',
-    'register.subtitle':  'Amazing Toys Fair 2026',
+    'register.subtitle':  '',
     'register.name':      'Full Name',
     'register.namePh':    'Enter full name',
     'register.phone':     'Phone Number',
@@ -915,7 +915,7 @@ const T = {
     'checkout.continue': '继续购物',
 
     'login.title':        '登录',
-    'login.subtitle':     'Amazing Toys Fair 2026',
+    'login.subtitle':     '',
     'login.phone':        '手机号',
     'login.phonePh':      '08xxxxxxxxxx',
     'login.submit':       '登录',
@@ -925,7 +925,7 @@ const T = {
     'login.error':        '登录失败，请重试。',
 
     'register.title':     '创建新账户',
-    'register.subtitle':  'Amazing Toys Fair 2026',
+    'register.subtitle':  '',
     'register.name':      '全名',
     'register.namePh':    '输入全名',
     'register.phone':     '手机号',

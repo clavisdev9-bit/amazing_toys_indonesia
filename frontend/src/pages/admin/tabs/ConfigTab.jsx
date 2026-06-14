@@ -166,7 +166,7 @@ export default function ConfigTab() {
           <div className="bg-white rounded-xl border p-4 space-y-4">
             {/* Current logo preview */}
             <div className="flex items-center gap-4">
-              <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center bg-gray-50 overflow-hidden shrink-0">
+              <div className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center bg-white overflow-hidden shrink-0">
                 {(logoPreview || config.logo_url) ? (
                   <img
                     src={logoPreview || config.logo_url}

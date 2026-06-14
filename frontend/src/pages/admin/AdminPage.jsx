@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 import ErrorBoundary  from '../../components/ErrorBoundary';
 import MasterDataTab  from './tabs/MasterDataTab';
 import UserRoleTab    from './tabs/UserRoleTab';
@@ -8,7 +10,8 @@ import ConfigTab      from './tabs/ConfigTab';
 import IntegrationTab from './tabs/IntegrationTab';
 import TaxTab         from './tabs/TaxTab';
 import VoucherTab     from './tabs/VoucherTab';
-import WaGatewayTab  from './tabs/WaGatewayTab';
+import WaGatewayTab    from './tabs/WaGatewayTab';
+import DataHealthTab   from './tabs/DataHealthTab';
 
 const TABS = [
   { key: 'master-data', label: 'Master Data', icon: '📦', active: 'bg-blue-600 text-white shadow',   desc: 'Kelola produk & foto' },
@@ -20,11 +23,30 @@ const TABS = [
   { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
   { key: 'tax',         label: 'Pajak & SPT',  icon: '🧮', active: 'bg-orange-500 text-white shadow',  desc: 'Konfigurasi PPN, Tax Grid SPT Masa, dan mapping akun Odoo' },
   { key: 'wa-gateway',  label: 'WA API',        icon: '📲', active: 'bg-green-600 text-white shadow',   desc: 'Konfigurasi WA Gateway (WAHA / Wablas / Zenziva / Twilio) untuk pengiriman QR order via WhatsApp' },
+  { key: 'data-health', label: 'Data Health',   icon: '🩺', active: 'bg-rose-600 text-white shadow',    desc: 'Pantau kelengkapan & kesehatan data sistem' },
 ];
 
 export default function AdminPage() {
-  const [tab, setTab] = useState('master-data');
+  const config    = usePublicConfig();
+  const eventName = config?.event_name || 'SOS';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const qTab = searchParams.get('tab');
+    return TABS.find((t) => t.key === qTab) ? qTab : 'master-data';
+  });
   const current = TABS.find((t) => t.key === tab);
+
+  useEffect(() => {
+    const qTab = searchParams.get('tab');
+    if (qTab && TABS.find((t) => t.key === qTab) && qTab !== tab) {
+      setTab(qTab);
+    }
+  }, [searchParams]);
+
+  function handleSetTab(key) {
+    setTab(key);
+    setSearchParams({ tab: key }, { replace: true });
+  }
 
   return (
     <div className="max-w-6xl">
@@ -37,7 +59,7 @@ export default function AdminPage() {
           </div>
           <div className="flex-1 min-w-0">
             <h1 className="text-xl font-bold text-white">Administrator Panel</h1>
-            <p className="text-blue-200 text-sm mt-0.5">Full Access — Amazing Toys Fair 2026</p>
+            <p className="text-blue-200 text-sm mt-0.5">Full Access — {eventName}</p>
           </div>
           <div className="hidden sm:block text-right shrink-0">
             <p className="text-xs text-blue-300 uppercase tracking-wide">Modul aktif</p>
@@ -53,7 +75,7 @@ export default function AdminPage() {
         {TABS.map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => handleSetTab(t.key)}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium
               whitespace-nowrap transition-all duration-150
               ${tab === t.key ? t.active : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'}`}
@@ -81,6 +103,7 @@ export default function AdminPage() {
         {tab === 'integration' && <IntegrationTab />}
         {tab === 'tax'         && <TaxTab />}
         {tab === 'wa-gateway'  && <WaGatewayTab />}
+        {tab === 'data-health' && <DataHealthTab />}
       </ErrorBoundary>
     </div>
   );

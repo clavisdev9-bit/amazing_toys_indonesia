@@ -355,10 +355,11 @@ async function groupCheckout({ transactionIds, cashierId, paymentMethod, cashRec
   if (committed.customerId) {
     try {
       broadcastToCustomer(committed.customerId, {
-        event:    'GROUP_ORDER_PAID',
-        groupId:  committed.groupId,
-        groupCode: committed.groupCode,
-        message:  'Pembayaran berhasil. Tunjukkan struk ke masing-masing booth untuk mengambil barang.',
+        event:          'GROUP_ORDER_PAID',
+        groupId:        committed.groupId,
+        groupCode:      committed.groupCode,
+        transactionIds: committed.transactionIds,
+        message:        'Pembayaran berhasil. Tunjukkan struk ke masing-masing booth untuk mengambil barang.',
       });
     } catch (e) { logger.warn('WS GROUP_ORDER_PAID customer failed', { error: e.message }); }
   }

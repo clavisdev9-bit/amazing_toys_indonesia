@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import client from '../../api/client';
+import { usePublicConfig } from '../../hooks/useAppLogo';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,8 @@ function EditEmailModal({ currentMasked, onClose, onSaved }) {
 export default function ProfilePage() {
   const { user, logout } = useAuth();
   const navigate         = useNavigate();
+  const config           = usePublicConfig();
+  const eventName        = config?.event_name || 'SOS';
 
   const [profile,       setProfile]       = useState(null);
   const [loading,       setLoading]       = useState(true);
@@ -161,7 +164,7 @@ export default function ProfilePage() {
           {profile?.full_name ?? user?.name ?? '—'}
         </h1>
         <p className="text-sm text-white/75 mt-1">
-          Pelanggan Amazing Toys Fair 2026
+          Pelanggan {eventName}
         </p>
       </div>
 

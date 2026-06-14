@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../../api/client';
-import { getTransactions, getExpiredTransactions } from '../../api/cashier';
+import { getTransactions, getExpiredTransactions, getCustomerActiveTrx } from '../../api/cashier';
 import { lookupPayment } from '../../api/payments';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
@@ -48,7 +48,24 @@ export default function CashierDashboardPage() {
     setLookupError('');
     setLooking(true);
     try {
-      await lookupPayment(txnId.trim());
+      const txnRes = await lookupPayment(txnId.trim());
+      const txnData = txnRes.data.data;
+
+      // Check for other active TRX from the same customer
+      const phone = txnData?.customer_phone ?? txnData?.walk_in_phone ?? null;
+      if (phone) {
+        const activeRes = await getCustomerActiveTrx({ phone }).catch(() => null);
+        const activeTrx = activeRes?.data?.data ?? [];
+        if (activeTrx.length > 1) {
+          // Multiple TRX found — go to merge page
+          navigate('/cashier/group-merge', {
+            state: { transactions: activeTrx, scannedId: txnId.trim() },
+          });
+          return;
+        }
+      }
+
+      // Single TRX — go directly to payment page (existing flow)
       const code = voucherCode.trim().toUpperCase() || undefined;
       navigate(`/cashier/bayar/${txnId.trim()}`, { state: code ? { preVoucher: code } : undefined });
     } catch (err) {

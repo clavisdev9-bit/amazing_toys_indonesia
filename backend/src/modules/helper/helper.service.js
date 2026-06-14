@@ -469,6 +469,9 @@ async function cancelHelperOrder(transactionId, helperId, helperTenantId) {
  * Mark order as HANDED_OVER then COMPLETED.
  */
 async function handoverOrder(transactionId, helperId, helperTenantId) {
+  if (/^GRP-/i.test(transactionId)) {
+    return _handoverGroup(transactionId, helperId, helperTenantId);
+  }
   return withTransaction(async (client) => {
     const txResult = await client.query(
       `SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
@@ -510,6 +513,84 @@ async function handoverOrder(transactionId, helperId, helperTenantId) {
     } catch (e) { logger.warn('WS ORDER_HANDED_OVER broadcast failed', { error: e.message }); }
 
     return { transactionId, status: 'COMPLETED' };
+  });
+}
+
+/**
+ * Serah terima group invoice — setiap booth hanya menyelesaikan item miliknya sendiri.
+ * Transaksi ditandai COMPLETED hanya jika semua item di dalamnya sudah DONE.
+ * Dipanggil dari handoverOrder saat parameter berformat GRP-*.
+ */
+async function _handoverGroup(groupCode, helperId, helperTenantId) {
+  return withTransaction(async (client) => {
+    const groupRes = await client.query(
+      `SELECT group_id, group_code, payment_status FROM transaction_groups WHERE group_code = $1`,
+      [groupCode],
+    );
+    const group = groupRes.rows[0];
+    if (!group) throw new AppError('Group invoice tidak ditemukan.', 404);
+    if (group.payment_status !== 'PAID') {
+      throw new AppError('Invoice group belum dibayar.', 402);
+    }
+
+    // Lock semua TRX dalam group yang punya item milik booth ini dan masih PAID
+    const txResult = await client.query(
+      `SELECT DISTINCT t.transaction_id, t.status
+       FROM transactions t
+       JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+       WHERE t.group_id = $1 AND ti.tenant_id = $2 AND t.status = 'PAID'
+       FOR UPDATE OF t`,
+      [group.group_id, helperTenantId],
+    );
+
+    if (txResult.rows.length === 0) {
+      throw new AppError('Tidak ada item dari booth ini yang siap diserahkan.', 404);
+    }
+
+    const completedTxIds = [];
+    for (const txn of txResult.rows) {
+      // Mark hanya item milik booth ini sebagai DONE
+      await client.query(
+        `UPDATE transaction_items
+         SET pickup_status = 'DONE', handed_over_at = NOW(), handed_over_by = $1
+         WHERE transaction_id = $2 AND tenant_id = $3 AND pickup_status = 'READY'`,
+        [helperId, txn.transaction_id, helperTenantId],
+      );
+
+      // Cek apakah masih ada item READY di TRX ini (dari booth lain)
+      const pendingRes = await client.query(
+        `SELECT 1 FROM transaction_items
+         WHERE transaction_id = $1 AND pickup_status = 'READY' LIMIT 1`,
+        [txn.transaction_id],
+      );
+
+      if (pendingRes.rows.length === 0) {
+        // Semua item sudah DONE → selesaikan TRX
+        await client.query(
+          `UPDATE transactions
+           SET status = 'HANDED_OVER', handover_at = NOW(), handover_by = $1
+           WHERE transaction_id = $2`,
+          [helperId, txn.transaction_id],
+        );
+        await client.query(
+          `UPDATE transactions SET status = 'COMPLETED' WHERE transaction_id = $1`,
+          [txn.transaction_id],
+        );
+        completedTxIds.push(txn.transaction_id);
+      }
+    }
+
+    await writeAuditLog({
+      action: 'GROUP_HANDOVER_PROCESSED', actorId: helperId, actorRole: 'HELPER',
+      entityType: 'TRANSACTION_GROUP', entityId: group.group_id,
+      newValue: { groupCode, completedTransactionIds: completedTxIds, tenantId: helperTenantId },
+    });
+
+    try {
+      broadcastToAll({ event: 'ORDER_HANDED_OVER', groupCode, boothId: helperTenantId });
+    } catch (e) { logger.warn('WS ORDER_HANDED_OVER (group) broadcast failed', { error: e.message }); }
+
+    return { groupCode, status: 'COMPLETED', transactionIds: completedTxIds };
   });
 }
 

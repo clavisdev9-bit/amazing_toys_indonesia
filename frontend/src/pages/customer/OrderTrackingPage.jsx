@@ -229,10 +229,17 @@ function AuthenticatedOrderView({ transactionId }) {
     });
   }, [transactionId, subscribe, fetchOrder]);
 
-  // Listen for ORDER_PAID — fired by cashier after payment is processed
+  // Listen for ORDER_PAID — fired by cashier after single-TRX payment
   useEffect(() => {
     return subscribe('ORDER_PAID', (data) => {
       if (data?.transactionId === transactionId) fetchOrder();
+    });
+  }, [transactionId, subscribe, fetchOrder]);
+
+  // Listen for GROUP_ORDER_PAID — fired by cashier after group checkout (CR-054)
+  useEffect(() => {
+    return subscribe('GROUP_ORDER_PAID', (data) => {
+      if (data?.transactionIds?.includes(transactionId)) fetchOrder();
     });
   }, [transactionId, subscribe, fetchOrder]);
 
@@ -260,11 +267,11 @@ function AuthenticatedOrderView({ transactionId }) {
   }, [transactionId, subscribe, fetchOrder]);
 
   // Polling fallback — keeps page fresh when WS is not connected or delivery fails.
-  // Only active while order is in a payment-pending status.
+  // Active for any non-terminal status (includes PENDING_APPROVAL for helper-approval flow).
   useEffect(() => {
-    const awaitingPayment = order?.status
-      && ['PENDING', 'RESERVED', 'WAITING_PAYMENT'].includes(order.status);
-    if (!awaitingPayment) return;
+    const isActive = order?.status
+      && ['PENDING', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL'].includes(order.status);
+    if (!isActive) return;
     const id = setInterval(fetchOrder, 15_000);
     return () => clearInterval(id);
   }, [order?.status, fetchOrder]);

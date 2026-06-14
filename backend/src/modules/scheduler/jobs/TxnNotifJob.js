@@ -20,12 +20,14 @@ const logger    = require('../../../config/logger');
 const JOB_NAME  = 'txn.expiry.notif';
 const DATA_FILE = path.join(__dirname, '../../../../data/system-config.json');
 
+function _readConfig() {
+  try { return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')); } catch { return {}; }
+}
+
 function _readNotifMinutes() {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    const v   = parseInt(cfg.order_notif_limit_minutes, 10);
-    if (Number.isFinite(v) && v > 0) return v;
-  } catch { /* fallback */ }
+  const cfg = _readConfig();
+  const v   = parseInt(cfg.order_notif_limit_minutes, 10);
+  if (Number.isFinite(v) && v > 0) return v;
   return 5;
 }
 
@@ -176,9 +178,10 @@ async function execute() {
   for (const row of rows) {
     if (!row.phone) continue;
 
-    const minsLeft = Math.max(1, Math.round((new Date(row.expires_at) - Date.now()) / 60000));
+    const minsLeft  = Math.max(1, Math.round((new Date(row.expires_at) - Date.now()) / 60000));
+    const eventName = _readConfig().event_name || 'SOS';
     const message  =
-      `⏳ *Pengingat Pesanan Amazing Toys Fair 2026*\n\n` +
+      `⏳ *Pengingat Pesanan ${eventName}*\n\n` +
       `Halo! Pesanan Anda *${row.transaction_id}* di *${row.booth_name || 'Amazing Toys'}* ` +
       `akan kadaluarsa dalam *${minsLeft} menit*.\n\n` +
       `Segera tunjukkan QR pesanan Anda ke kasir sebelum waktu habis.\n\n` +

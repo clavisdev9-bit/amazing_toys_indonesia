@@ -46,7 +46,7 @@ export const tourSteps = [
     spotlightPadding: 8,
   },
 
-  // 4 — Add-to-cart button
+  // 4 — Add-to-cart button (hidden in HELPER_APPROVE/HELPER_INPUT mode — skipIfMissing)
   {
     id: 'step-katalog-add-cart',
     page: 'katalog',
@@ -55,6 +55,7 @@ export const tourSteps = [
     description: 'Ketuk tombol ini untuk menambahkan produk ke keranjang belanjamu. Tombol berubah hijau sebagai tanda berhasil ditambahkan.',
     position: 'top',
     spotlightPadding: 6,
+    skipIfMissing: true,
   },
 
   // 5 — Cart icon in bottom nav
@@ -79,7 +80,7 @@ export const tourSteps = [
     navigateTo: '/keranjang',
   },
 
-  // 7 — Cart item list
+  // 7 — Cart item list (skipIfMissing: cart empty in helper mode)
   {
     id: 'step-keranjang-items',
     page: 'keranjang',
@@ -89,9 +90,10 @@ export const tourSteps = [
     position: 'bottom',
     spotlightPadding: 8,
     waitForSelector: '#tour-cart-items',
+    skipIfMissing: true,
   },
 
-  // 8 — Order total
+  // 8 — Order total (skipIfMissing: only shown when cart has items)
   {
     id: 'step-keranjang-total',
     page: 'keranjang',
@@ -100,17 +102,19 @@ export const tourSteps = [
     description: 'Total biaya pesananmu ditampilkan di sini. Periksa kembali semua item sebelum melanjutkan ke tahap pembayaran.',
     position: 'top',
     spotlightPadding: 8,
+    skipIfMissing: true,
   },
 
-  // 9 — Checkout button
+  // 9 — Checkout button (skipIfMissing: only shown when cart has items)
   {
     id: 'step-keranjang-checkout',
     page: 'keranjang',
     targetSelector: '#tour-checkout-btn',
     title: 'Buat Pesanan',
-    description: 'Ketuk tombol ini untuk membuat pesanan dan menghasilkan QR Code pembayaran. Pesanan berlaku selama 30 menit.',
+    description: 'Ketuk tombol ini untuk membuat pesanan dan menghasilkan QR Code pembayaran. Pesanan berlaku selama batas waktu checkout yang ditentukan admin.',
     position: 'top',
     spotlightPadding: 8,
+    skipIfMissing: true,
   },
 
   // 10 — Navigate to /pesanan (center intro)
@@ -124,7 +128,7 @@ export const tourSteps = [
     navigateTo: '/pesanan',
   },
 
-  // 11 — Order list
+  // 11 — Order list (skipIfMissing: no orders yet on first visit)
   {
     id: 'step-pesanan-list',
     page: 'pesanan',
@@ -134,6 +138,7 @@ export const tourSteps = [
     position: 'bottom',
     spotlightPadding: 8,
     waitForSelector: '#tour-order-list',
+    skipIfMissing: true,
   },
 
   // 12 — QR code explanation
@@ -162,7 +167,7 @@ export const tourSteps = [
     page: 'pesanan',
     targetSelector: null,
     title: 'Struk & Status Ambil',
-    description: 'Setelah pembayaran dikonfirmasi, struk digital tersedia di detail pesanan. Pantau juga ststus barang mu setiap stan secara langsung.',
+    description: 'Setelah pembayaran dikonfirmasi, struk digital tersedia di detail pesanan. Pantau juga status barang di setiap stan secara langsung.',
     position: 'center',
   },
 

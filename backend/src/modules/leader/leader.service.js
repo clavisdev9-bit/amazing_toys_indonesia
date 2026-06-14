@@ -330,10 +330,377 @@ async function getDiscrepancies(date) {
   return result.rows;
 }
 
+// ── Top Customers ────────────────────────────────────────────────────────────
+
+async function getTopCustomers({ dateFrom, dateTo, limit = 10 }) {
+  const result = await query(
+    `SELECT
+       COALESCE(c.full_name, t.customer_phone, 'Walk-in')   AS customer_name,
+       COALESCE(c.phone_number, t.customer_phone, '-')       AS phone,
+       COUNT(DISTINCT t.transaction_id)::INTEGER              AS total_transaksi,
+       SUM(ti.quantity)::INTEGER                              AS total_item,
+       SUM(t.total_amount)                                    AS total_belanja,
+       ROUND(AVG(t.total_amount))                             AS avg_belanja,
+       MAX(t.paid_at)                                         AS last_purchase
+     FROM transactions t
+     LEFT JOIN customers c   ON c.customer_id = t.customer_id
+     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+     WHERE t.status = 'PAID'
+       AND DATE(t.paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+     GROUP BY c.customer_id, c.full_name, c.phone_number, t.customer_phone
+     ORDER BY total_belanja DESC
+     LIMIT $3`,
+    [dateFrom, dateTo, limit]
+  );
+
+  return result.rows.map((r, i) => ({
+    rank:          i + 1,
+    customerName:  r.customer_name,
+    phone:         r.phone,
+    totalTransaksi: r.total_transaksi,
+    totalItem:     r.total_item,
+    totalBelanja:  Number(r.total_belanja),
+    avgBelanja:    Number(r.avg_belanja),
+    lastPurchase:  r.last_purchase,
+  }));
+}
+
+// ── R-02: Revenue Per Tenant Ranking ────────────────────────────────────────
+
+async function getTenantRanking({ dateFrom, dateTo }) {
+  const result = await query(
+    `SELECT
+       ten.tenant_id,
+       ten.tenant_name,
+       ten.booth_location,
+       COUNT(DISTINCT t.transaction_id)::INTEGER   AS total_transaksi,
+       SUM(ti.subtotal)                             AS revenue,
+       SUM(ti.quantity)::INTEGER                    AS total_item,
+       ROUND(AVG(t.total_amount))                   AS avg_order_value
+     FROM transaction_items ti
+     JOIN tenants ten ON ten.tenant_id = ti.tenant_id
+     JOIN transactions t ON t.transaction_id = ti.transaction_id
+     WHERE t.status = 'PAID'
+       AND DATE(t.paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+     GROUP BY ten.tenant_id, ten.tenant_name, ten.booth_location
+     ORDER BY revenue DESC`,
+    [dateFrom, dateTo]
+  );
+  const rows = result.rows.map((r, i) => ({
+    rank:           i + 1,
+    tenantId:       r.tenant_id,
+    tenantName:     r.tenant_name,
+    boothLocation:  r.booth_location,
+    totalTransaksi: r.total_transaksi,
+    revenue:        Number(r.revenue),
+    totalItem:      r.total_item,
+    avgOrderValue:  Number(r.avg_order_value),
+  }));
+  const totalRevenue = rows.reduce((s, r) => s + r.revenue, 0);
+  return { rows, totalRevenue };
+}
+
+// ── R-03: Payment Settlement ─────────────────────────────────────────────────
+
+async function getSettlementReport({ dateFrom, dateTo }) {
+  const [breakdown, pending, daily] = await Promise.all([
+    query(
+      `SELECT
+         COALESCE(payment_method, 'UNKNOWN') AS payment_method,
+         COUNT(*)::INTEGER                   AS count,
+         SUM(total_amount)                   AS amount
+       FROM transactions
+       WHERE status = 'PAID'
+         AND DATE(paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+       GROUP BY payment_method
+       ORDER BY amount DESC`,
+      [dateFrom, dateTo]
+    ),
+    query(
+      `SELECT
+         COUNT(*)::INTEGER        AS pending_count,
+         COALESCE(SUM(total_amount), 0) AS pending_amount
+       FROM transactions
+       WHERE status IN ('PENDING', 'RESERVED', 'WAITING_PAYMENT')
+         AND DATE(created_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2`,
+      [dateFrom, dateTo]
+    ),
+    query(
+      `SELECT
+         DATE(paid_at AT TIME ZONE 'Asia/Jakarta')::TEXT AS date,
+         COUNT(*)::INTEGER                                AS count,
+         SUM(total_amount)                                AS amount
+       FROM transactions
+       WHERE status = 'PAID'
+         AND DATE(paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+       GROUP BY DATE(paid_at AT TIME ZONE 'Asia/Jakarta')
+       ORDER BY date ASC`,
+      [dateFrom, dateTo]
+    ),
+  ]);
+
+  const totalPaid   = breakdown.rows.reduce((s, r) => s + Number(r.amount), 0);
+  const totalTxn    = breakdown.rows.reduce((s, r) => s + r.count, 0);
+
+  return {
+    breakdown: breakdown.rows.map((r) => ({
+      paymentMethod: r.payment_method,
+      count:         r.count,
+      amount:        Number(r.amount),
+    })),
+    pending: {
+      count:  pending.rows[0].pending_count,
+      amount: Number(pending.rows[0].pending_amount),
+    },
+    daily: daily.rows.map((r) => ({
+      date:   r.date,
+      count:  r.count,
+      amount: Number(r.amount),
+    })),
+    totalPaid,
+    totalTxn,
+  };
+}
+
+// ── R-04: Voucher Usage Report ───────────────────────────────────────────────
+
+async function getVoucherReport({ dateFrom, dateTo }) {
+  const [summary, detail] = await Promise.all([
+    query(
+      `SELECT
+         COUNT(*)::INTEGER             AS total_usage,
+         COALESCE(SUM(vu.discount_amount), 0) AS total_discount
+       FROM voucher_usages vu
+       WHERE DATE(vu.used_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2`,
+      [dateFrom, dateTo]
+    ),
+    query(
+      `SELECT
+         v.code,
+         v.description,
+         v.discount_type,
+         v.discount_value,
+         COUNT(vu.id)::INTEGER         AS usage_count,
+         SUM(vu.discount_amount)       AS total_discount,
+         MIN(vu.used_at)               AS first_used,
+         MAX(vu.used_at)               AS last_used
+       FROM vouchers v
+       LEFT JOIN voucher_usages vu
+         ON vu.voucher_code = v.code
+         AND DATE(vu.used_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+       GROUP BY v.id, v.code, v.description, v.discount_type, v.discount_value
+       HAVING COUNT(vu.id) > 0
+       ORDER BY usage_count DESC`,
+      [dateFrom, dateTo]
+    ),
+  ]);
+
+  return {
+    summary: {
+      totalUsage:    summary.rows[0].total_usage,
+      totalDiscount: Number(summary.rows[0].total_discount),
+    },
+    vouchers: detail.rows.map((r) => ({
+      code:          r.code,
+      description:   r.description,
+      discountType:  r.discount_type,
+      discountValue: Number(r.discount_value),
+      usageCount:    r.usage_count,
+      totalDiscount: Number(r.total_discount),
+      firstUsed:     r.first_used,
+      lastUsed:      r.last_used,
+    })),
+  };
+}
+
+// ── R-06: Top Products (all tenants) ────────────────────────────────────────
+
+async function getTopProducts({ dateFrom, dateTo, tenantId, limit = 20 }) {
+  const conditions = [
+    `t.status = 'PAID'`,
+    `DATE(t.paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2`,
+  ];
+  const params = [dateFrom, dateTo];
+
+  if (tenantId) {
+    params.push(tenantId);
+    conditions.push(`ti.tenant_id = $${params.length}`);
+  }
+
+  const result = await query(
+    `SELECT
+       p.product_id,
+       p.product_name,
+       p.category,
+       ten.tenant_name,
+       SUM(ti.quantity)::INTEGER   AS qty_sold,
+       ti.unit_price               AS price,
+       SUM(ti.subtotal)            AS revenue
+     FROM transaction_items ti
+     JOIN transactions t  ON t.transaction_id  = ti.transaction_id
+     JOIN products p      ON p.product_id       = ti.product_id
+     JOIN tenants ten     ON ten.tenant_id       = ti.tenant_id
+     WHERE ${conditions.join(' AND ')}
+     GROUP BY p.product_id, p.product_name, p.category, ten.tenant_name, ti.unit_price
+     ORDER BY revenue DESC
+     LIMIT $${params.length + 1}`,
+    [...params, limit]
+  );
+
+  return result.rows.map((r, i) => ({
+    rank:        i + 1,
+    productId:   r.product_id,
+    productName: r.product_name,
+    category:    r.category,
+    tenantName:  r.tenant_name,
+    qtySold:     r.qty_sold,
+    price:       Number(r.price),
+    revenue:     Number(r.revenue),
+  }));
+}
+
+// ── R-07: Conversion Rate ────────────────────────────────────────────────────
+
+async function getConversionRate({ dateFrom, dateTo }) {
+  const result = await query(
+    `SELECT
+       DATE(created_at AT TIME ZONE 'Asia/Jakarta')::TEXT AS date,
+       COUNT(DISTINCT customer_id) FILTER (WHERE customer_id IS NOT NULL) AS visitors,
+       COUNT(DISTINCT customer_id) FILTER (WHERE status = 'PAID' AND customer_id IS NOT NULL) AS buyers,
+       COUNT(*) FILTER (WHERE status = 'PAID')::INTEGER AS paid_txn,
+       COUNT(*)::INTEGER                                  AS total_txn
+     FROM transactions
+     WHERE DATE(created_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+     GROUP BY DATE(created_at AT TIME ZONE 'Asia/Jakarta')
+     ORDER BY date ASC`,
+    [dateFrom, dateTo]
+  );
+
+  const rows = result.rows.map((r) => {
+    const visitors = parseInt(r.visitors) || 0;
+    const buyers   = parseInt(r.buyers)   || 0;
+    return {
+      date:           r.date,
+      visitors,
+      buyers,
+      paidTxn:        r.paid_txn,
+      totalTxn:       r.total_txn,
+      conversionRate: visitors > 0 ? Math.round((buyers / visitors) * 100) : 0,
+    };
+  });
+
+  const totalVisitors = rows.reduce((s, r) => s + r.visitors, 0);
+  const totalBuyers   = rows.reduce((s, r) => s + r.buyers,   0);
+  return {
+    rows,
+    overall: {
+      visitors:       totalVisitors,
+      buyers:         totalBuyers,
+      conversionRate: totalVisitors > 0 ? Math.round((totalBuyers / totalVisitors) * 100) : 0,
+    },
+  };
+}
+
+// ── R-08: Helper Performance ─────────────────────────────────────────────────
+
+async function getHelperPerformance({ dateFrom, dateTo }) {
+  const result = await query(
+    `SELECT
+       u.user_id,
+       u.display_name,
+       COUNT(DISTINCT t.transaction_id)::INTEGER                          AS total_order,
+       COUNT(DISTINCT t.transaction_id) FILTER (WHERE t.status = 'PAID')::INTEGER AS paid_order,
+       COALESCE(SUM(t.total_amount) FILTER (WHERE t.status = 'PAID'), 0) AS revenue,
+       COUNT(DISTINCT t.transaction_id) FILTER (WHERE t.status = 'CANCELLED')::INTEGER AS cancelled_order
+     FROM users u
+     JOIN transactions t ON t.created_by_user = u.user_id
+     WHERE u.role = 'HELPER'
+       AND DATE(t.created_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+     GROUP BY u.user_id, u.display_name
+     ORDER BY revenue DESC`,
+    [dateFrom, dateTo]
+  );
+
+  return result.rows.map((r) => ({
+    userId:         r.user_id,
+    displayName:    r.display_name,
+    totalOrder:     r.total_order,
+    paidOrder:      r.paid_order,
+    cancelledOrder: r.cancelled_order,
+    revenue:        Number(r.revenue),
+    successRate:    r.total_order > 0
+      ? Math.round((r.paid_order / r.total_order) * 100)
+      : 0,
+  }));
+}
+
+// ── R-10: Tax Report ─────────────────────────────────────────────────────────
+
+async function getTaxReport({ dateFrom, dateTo }) {
+  const [byRate, daily] = await Promise.all([
+    query(
+      `SELECT
+         tax_rate,
+         COUNT(*)::INTEGER        AS txn_count,
+         SUM(subtotal_amount)     AS subtotal,
+         SUM(tax_amount)          AS tax_amount,
+         SUM(total_amount)        AS total_amount
+       FROM transactions
+       WHERE status = 'PAID'
+         AND DATE(paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+       GROUP BY tax_rate
+       ORDER BY tax_rate ASC`,
+      [dateFrom, dateTo]
+    ),
+    query(
+      `SELECT
+         DATE(paid_at AT TIME ZONE 'Asia/Jakarta')::TEXT AS date,
+         SUM(subtotal_amount)     AS subtotal,
+         SUM(tax_amount)          AS tax_amount,
+         SUM(total_amount)        AS total_amount
+       FROM transactions
+       WHERE status = 'PAID'
+         AND DATE(paid_at AT TIME ZONE 'Asia/Jakarta') BETWEEN $1 AND $2
+       GROUP BY DATE(paid_at AT TIME ZONE 'Asia/Jakarta')
+       ORDER BY date ASC`,
+      [dateFrom, dateTo]
+    ),
+  ]);
+
+  return {
+    byRate: byRate.rows.map((r) => ({
+      taxRate:     Number(r.tax_rate),
+      txnCount:    r.txn_count,
+      subtotal:    Number(r.subtotal),
+      taxAmount:   Number(r.tax_amount),
+      totalAmount: Number(r.total_amount),
+    })),
+    daily: daily.rows.map((r) => ({
+      date:        r.date,
+      subtotal:    Number(r.subtotal),
+      taxAmount:   Number(r.tax_amount),
+      totalAmount: Number(r.total_amount),
+    })),
+    totals: {
+      subtotal:    byRate.rows.reduce((s, r) => s + Number(r.subtotal),    0),
+      taxAmount:   byRate.rows.reduce((s, r) => s + Number(r.tax_amount),  0),
+      totalAmount: byRate.rows.reduce((s, r) => s + Number(r.total_amount),0),
+    },
+  };
+}
+
 module.exports = {
   getDashboardKPIs, getSalesReport,
+  getTopCustomers,
   createReturnRequest, listReturnRequests, processReturnRequest,
   getVisitorReport,
   listDeleteRequests, reviewDeleteRequest,
   getDiscrepancies,
+  getTenantRanking,
+  getSettlementReport,
+  getVoucherReport,
+  getTopProducts,
+  getConversionRate,
+  getHelperPerformance,
+  getTaxReport,
 };

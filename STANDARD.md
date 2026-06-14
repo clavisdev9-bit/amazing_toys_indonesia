@@ -877,3 +877,294 @@ Pending record yang sudah tersimpan tidak perlu dihapus. Pada retry berikutnya, 
 ### Referensi
 
 BUG-062 — `registerCustomer()`: `sendOTP()` dipanggil sebelum `INSERT INTO pending_registrations`, menyebabkan orphan OTP jika DB gagal.
+
+---
+
+## STD-019 — Tour Guide UI: Floating Card Mobile, Teks Bahasa Indonesia
+
+**Berlaku untuk:** Semua komponen tour guide customer (`TourTooltip`, `TourWelcomeModal`, `TourNavigationButtons`, `TourProgressBar`)
+
+**Latar Belakang:** BUG-063 — Mobile tooltip menggunakan `bottom: 0` edge-to-edge yang overlap dengan navigation bar; teks "Navigating..." dan "memesan makanan" tidak sesuai.
+
+---
+
+### Aturan
+
+**A. Mobile tooltip WAJIB floating card, bukan bottom sheet edge-to-edge:**
+
+```js
+// BENAR — floating card dengan clearance dari nav bar
+{
+  position: 'fixed',
+  bottom: 72,      // minimum 64px, memberi ruang nav bar (h-16 = 64px) + jarak
+  left: 12,
+  right: 12,
+  borderRadius: 20, // semua corner bulat
+}
+
+// SALAH — bottom sheet tanpa clearance
+{
+  position: 'fixed',
+  bottom: 0,        // ← overlap nav bar
+  left: 0,
+  right: 0,
+  borderRadius: '16px 16px 0 0',  // ← hanya corner atas
+}
+```
+
+**B. Semua teks UI tour wajib Bahasa Indonesia:**
+
+| Teks Salah | Teks Benar |
+|---|---|
+| "Navigating..." | "Memuat..." |
+| "memesan makanan" | "memesan produk" |
+| "Langkah X dari Y" (Y = total absolut) | "Langkah X" + persentase |
+
+**C. Visual identity — gunakan brand color `#3B5BDB → #748FFC`:**
+
+- Accent strip gradient 4px di bagian atas card/modal
+- Tombol "Lanjut" dan "Mulai Tur" menggunakan `linear-gradient(135deg, #3B5BDB, #748FFC)` bukan `bg-blue-600`
+- Progress bar gradient, tinggi minimal 4px
+
+**D. Touch target mobile minimum 40px:**
+
+Tombol navigasi (Kembali, Lanjut, Selesai) harus memiliki `height: 40` atau minimal area tap 40px untuk aksesibilitas mobile.
+
+**E. WelcomeModal — konten harus sesuai domain app:**
+
+Teks "cara memesan" harus menyebutkan konteks yang benar. Untuk Amazing Toys Fair: "cara memesan produk". Jangan gunakan template generik yang menyebut "makanan", "minuman", dsb.
+
+### Checklist
+
+- [ ] Mobile tooltip `bottom ≥ 64px`, `left/right` minimal 8px, `borderRadius` semua corner
+- [ ] Semua loading state text dalam Bahasa Indonesia
+- [ ] Progress label tidak menampilkan total step absolut yang bisa melompat karena `skipIfMissing`
+- [ ] Tombol menggunakan brand gradient, touch target ≥ 40px pada mobile
+- [ ] WelcomeModal tidak mengandung teks domain yang salah
+
+### Referensi
+
+BUG-063 — Tour Guide mobile popup di `bottom: 0` overlap nav bar; "Navigating...", "memesan makanan", "dari 16" diperbaiki.
+
+---
+
+## STD-020 — Migration Deployment Checklist: Verifikasi Schema Sebelum CR Dianggap Selesai
+
+**Berlaku untuk:** Semua CR yang menyertakan file migration SQL (`backend/migrations/*.sql`)
+
+**Latar Belakang:** BUG-064 — Migration `022_group_checkout.sql` terlewat, meski semua code frontend dan backend sudah ada. Tabel `transaction_groups` + kolom `group_id` tidak ada di database, menyebabkan seluruh fitur Group Checkout gagal di runtime.
+
+### Aturan
+
+**A. Wajib verifikasi schema setelah apply migration:**
+
+Setelah menjalankan file `.sql`, langsung cek bahwa objek yang dibuat benar-benar ada:
+
+```bash
+# Cek tabel baru
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c "\dt <table_name>"
+
+# Cek kolom baru
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid \
+  -c "SELECT column_name FROM information_schema.columns WHERE table_name='<table>' AND column_name='<col>';"
+
+# Cek sequence baru
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c "\ds <sequence_name>"
+```
+
+Jika query mengembalikan `Did not find any relation` atau baris kosong → migration belum diaplikasikan atau gagal diam.
+
+**B. CR belum selesai jika migration belum diverifikasi:**
+
+Urutan deployment yang benar untuk CR dengan migration:
+
+```
+1. Apply migration SQL ke database          ← WAJIB PERTAMA
+2. Deploy backend code (docker cp / restart)
+3. Deploy frontend (build + up)
+4. Verifikasi schema via SELECT             ← WAJIB TERAKHIR
+5. Baru tandai CR sebagai Done
+```
+
+**C. Migration tidak boleh terlewat meski code sudah ada:**
+
+Adanya file `.jsx`, `.js`, dan route yang sudah tersedia **tidak membuktikan** migration sudah diaplikasikan. Code dan schema adalah dua layer yang independen — keduanya wajib dideploy.
+
+**D. Urutan migration harus sequential:**
+
+Jika migration N-1 terlewat tetapi migration N berhasil (karena menggunakan `IF NOT EXISTS` atau tidak ada dependency), sistem tidak akan error saat startup — bug hanya muncul saat fitur pertama kali digunakan. Pastikan semua nomor migration dalam urutan sudah diaplikasikan:
+
+```bash
+# Cek semua tabel yang seharusnya ada dari migration sebelumnya
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c "\dt" | grep -E "vouchers|transaction_groups|..."
+```
+
+### Checklist per CR dengan Migration
+
+- [ ] `docker cp migration.sql container:/tmp/ && docker exec container psql -f /tmp/migration.sql` berhasil tanpa error
+- [ ] Tabel baru: `\dt <table>` menampilkan baris (bukan "Did not find any relation")
+- [ ] Kolom baru: `information_schema.columns` mengembalikan nama kolom
+- [ ] Sequence baru: `\ds <seq>` menampilkan baris
+- [ ] Backend direstart setelah migration apply
+
+---
+
+## STD-021 — Input Validator Harus Sesuai Format Primary Key Aktual
+
+**Berlaku untuk:** Semua endpoint backend yang menerima ID (transaction ID, product ID, group ID, dsb.) sebagai parameter body atau query string.
+
+**Latar Belakang:** BUG-065 — Tombol "Konfirmasi Bayar" di Group Checkout selalu gagal 422 karena validator `body('transaction_ids.*').isUUID()` menolak format `TXN-YYYYMMDD-NNNNN`. Bug ini tidak terdeteksi di code review karena kode terlihat "logis" padahal formatnya salah.
+
+### Aturan
+
+**A. Periksa format aktual ID di database sebelum memilih validator:**
+
+Sebelum menulis validator untuk field ID, jalankan query untuk memastikan format nyata:
+
+```bash
+docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid \
+  -c "SELECT transaction_id FROM transactions LIMIT 3;"
+# Jika hasilnya TXN-20260613-00079 → gunakan .isString().notEmpty(), BUKAN .isUUID()
+```
+
+**B. Padankan validator dengan format ID yang berlaku di proyek ini:**
+
+| Format ID | Contoh | Validator yang Benar |
+|---|---|---|
+| UUID (PostgreSQL native) | `550e8400-e29b-41d4-a716-446655440000` | `.isUUID()` |
+| Transaction ID custom | `TXN-20260613-00079` | `.isString().notEmpty()` |
+| Group ID custom | `GRP-20260613-0001` | `.isString().notEmpty()` |
+| Product ID custom | `PRD-XXXX` atau UUID | `.isString().notEmpty()` |
+| User/cashier/customer ID | UUID (dari auth system) | `.isUUID()` |
+
+**C. Jangan asumsikan format hanya karena nama field mengandung kata "id":**
+
+Field bernama `transaction_id`, `product_id`, `group_id` **tidak otomatis** berarti UUID. Di proyek ini, hanya ID pengguna (user, cashier, customer, helper) yang menggunakan UUID. Semua ID entitas bisnis (transaksi, produk, grup) menggunakan format custom string.
+
+**D. Jika ada keraguan, gunakan `.isString().notEmpty()` sebagai default aman:**
+
+`.isString().notEmpty()` menerima UUID maupun custom string — lebih permissive, validasi format detail cukup dilakukan di service layer jika diperlukan.
+
+### Checklist — setiap kali menulis validator untuk field ID
+
+- [ ] Cek format aktual ID di DB (`SELECT <id_column> FROM <table> LIMIT 3`)
+- [ ] Jika format bukan UUID murni → gunakan `.isString().notEmpty()`
+- [ ] Jika format adalah UUID (user/auth entity) → boleh gunakan `.isUUID()`
+- [ ] Review semua validator `isUUID()` yang ada jika ada CR baru yang menyentuh endpoint terkait
+- [ ] Endpoint terkait dicoba manual (atau fitur dicoba di UI) untuk konfirmasi end-to-end
+
+---
+
+## STD-022 — WS Broadcast: Setiap Event Harus Punya Subscriber di Frontend yang Relevan
+
+**Berlaku untuk:** Semua fitur yang menggunakan WebSocket broadcast — di backend (`broadcastToCustomer`, `broadcastToTenant`, `broadcastToLeaders`) dan di frontend (`useWebSocket().subscribe`).
+
+**Latar Belakang:** BUG-066 — `cashier.service.js` menambahkan event `GROUP_ORDER_PAID` untuk Group Checkout (CR-054), tapi `OrderTrackingPage.jsx` hanya subscribe `ORDER_PAID`. Halaman customer tidak auto-refresh selama berhari-hari sampai bug dilaporkan.
+
+### Aturan
+
+**A. Satu broadcast = satu subscriber (atau lebih):**
+
+Setiap kali backend memanggil `broadcastToCustomer(...)`, `broadcastToTenant(...)`, atau `broadcastToLeaders(...)` dengan event name baru, harus ada komponen frontend yang:
+1. Subscribe ke event tersebut
+2. Bereaksi dengan benar (reload data, update state, dsb.)
+
+**B. Payload broadcast WAJIB menyertakan entity identifier yang cukup:**
+
+Komponen frontend perlu tahu apakah event ini relevan untuk entity yang sedang ditampilkan. Payload HARUS menyertakan salah satu dari:
+
+| Broadcast target | Field wajib di payload |
+|---|---|
+| Customer → halaman order tertentu | `transactionId` atau `transactionIds` (array) |
+| Tenant → halaman tenant tertentu | `transactionId` |
+| Leaders → halaman summary | bebas (biasanya semua data di-reload) |
+| Customer → group checkout | `transactionIds` (array semua TRX dalam group) |
+
+**C. Jangan buat dua event name untuk hal yang sama:**
+
+Contoh salah: `ORDER_PAID` (single) vs `GROUP_ORDER_PAID` (group). Halaman harus subscribe ke keduanya. Lebih baik gunakan satu event name yang konsisten:
+- Jika logika yang sama berlaku di single dan group: gunakan `ORDER_PAID` untuk keduanya
+- Jika perlu disambiguasi: gunakan satu event `ORDER_PAID` dengan field tambahan `isGroup: true`
+
+**D. Untuk Group Checkout dan multi-entity broadcast, gunakan array:**
+
+```js
+// BENAR — subscriber bisa filter per-TRX
+broadcastToCustomer(customerId, {
+  event: 'GROUP_ORDER_PAID',
+  transactionIds: ['TXN-...', 'TXN-...'],  // ← array wajib ada
+  ...
+});
+
+// Frontend filter:
+subscribe('GROUP_ORDER_PAID', (data) => {
+  if (data?.transactionIds?.includes(transactionId)) fetchOrder();
+});
+```
+
+### Checklist — setiap CR yang menyentuh WS broadcast
+
+- [ ] Daftarkan semua `broadcastTo*` calls baru beserta event name dan payload yang akan dikirim
+- [ ] Untuk setiap event baru: pastikan komponen frontend yang relevan sudah subscribe
+- [ ] Verifikasi payload menyertakan identifier entitas yang cukup (transactionId, array, dsb.)
+- [ ] Test end-to-end: trigger event → pastikan halaman auto-update tanpa manual refresh
+- [ ] Jika menggunakan event name baru (berbeda dari existing): audit semua halaman yang seharusnya menerima event tersebut
+
+### Referensi
+
+BUG-064 — `022_group_checkout.sql` tidak diaplikasikan → `transaction_groups` dan `group_id` tidak ada → Group Checkout crash di runtime.
+
+---
+
+## STD-023 — Setiap Format ID Baru Wajib Ditest di Semua UI yang Menerima Input ID
+
+**Berlaku untuk:** Semua CR yang menambahkan format ID baru — group invoice (`GRP-*`), voucher, kode promosi, dan format custom lain.
+
+**Latar Belakang:** BUG-067 — Helper tidak bisa mengambil barang menggunakan group code `GRP-20260614-0001` karena `HandoverOutstandingPanel` filter hanya mencocokkan `transaction_id` (format `TXN-*`). Fitur lookup GRP sudah ada di backend (`_getGroupOrderForBooth`), tapi tidak terhubung ke UI.
+
+### Aturan
+
+**A. Audit semua UI yang menerima input ID saat memperkenalkan format baru:**
+
+| Jenis UI | Contoh komponen | Apa yang harus diperiksa |
+|---|---|---|
+| Kolom search/filter | `HandoverOutstandingPanel`, `ApprovalQueueTab` | Filter logic: apakah format baru bisa dicocokkan? |
+| QR scanner | `QrScannerModal` di Helper, Cashier, Tenant | Hasil scan diteruskan ke mana? Apa yang terjadi jika hasil adalah format baru? |
+| URL param / route | `/cashier/bayar/:id`, `/pesanan/:id` | Apakah backend endpoint menerima format baru? |
+| Input manual | Form dengan `transaction_id` field | Validasi frontend perlu diperbarui |
+
+**B. Setiap format ID harus bisa "masuk" dari semua titik entry yang relevan:**
+
+Untuk `GRP-*` (group invoice):
+- Helper scan QR → harus membuka HandoverDetailView ✅
+- Helper ketik kode → harus sama dengan scan QR ✅
+- Customer page → tidak perlu (tidak ada interaksi customer langsung)
+
+**C. Filter list DILARANG hardcode format ID:**
+
+```js
+// SALAH ❌ — hanya cocok TXN-*
+const filtered = orders.filter(o =>
+  o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase())
+);
+
+// BENAR ✅ — handle format lain secara eksplisit
+const isGroupSearch = /^GRP-/i.test(searchQuery?.trim());
+if (isGroupSearch) {
+  // lookup langsung via API
+} else {
+  const filtered = orders.filter(o => o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase()));
+}
+```
+
+**D. Backend sudah mendukung bukan jaminan frontend bisa menggunakannya:**
+
+`_getGroupOrderForBooth()` sudah ada, tapi `HandoverOutstandingPanel` tidak memanggilnya. Selalu verifikasi bahwa backend lookup terhubung ke semua UI yang relevan.
+
+### Checklist — setiap CR yang menambahkan format ID baru
+
+- [ ] Daftarkan semua format ID baru (contoh: `GRP-YYYYMMDD-NNNN`)
+- [ ] List semua komponen frontend yang menerima input ID (search, scan, route param)
+- [ ] Untuk setiap komponen: verifikasi bahwa format baru bisa masuk dan di-handle
+- [ ] Test manual: ketik format baru di kolom search → pastikan ada response yang benar (bukan "tidak ditemukan" yang salah)
+- [ ] Test QR scan: scan QR yang berisi format baru → pastikan hasilnya sama dengan ketik manual

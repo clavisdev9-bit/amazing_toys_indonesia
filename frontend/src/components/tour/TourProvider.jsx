@@ -141,6 +141,12 @@ export function TourProvider({ children }) {
           try {
             await waitForElement(selectorToWait, 5000);
           } catch (e) {
+            if (step.skipIfMissing) {
+              if (token.cancelled) return;
+              dispatch({ type: 'SET_TRANSITIONING', payload: false });
+              dispatch({ type: 'NEXT_STEP' });
+              return;
+            }
             console.warn(e.message);
           }
         } else {
@@ -167,6 +173,10 @@ export function TourProvider({ children }) {
       } else {
         prevActiveTargetRef.current = null;
         if (step.targetSelector) {
+          if (step.skipIfMissing) {
+            dispatch({ type: 'NEXT_STEP' });
+            return;
+          }
           console.warn(`[Tour] Target not found: ${step.targetSelector}. Step will render centered.`);
         }
       }

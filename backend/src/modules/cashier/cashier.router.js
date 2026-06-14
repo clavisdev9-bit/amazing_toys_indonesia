@@ -203,7 +203,7 @@ router.post('/group-checkout',
   authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
   [
     body('transaction_ids').isArray({ min: 1 }).withMessage('Pilih minimal 1 transaksi.'),
-    body('transaction_ids.*').isUUID().withMessage('transaction_id tidak valid.'),
+    body('transaction_ids.*').isString().notEmpty().withMessage('transaction_id tidak valid.'),
     body('payment_method')
       .isIn(['CASH', 'QRIS', 'EDC', 'TRANSFER'])
       .withMessage('Metode pembayaran tidak valid.'),

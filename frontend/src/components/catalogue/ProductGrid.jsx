@@ -21,6 +21,7 @@ export default function ProductGrid({ products, firstCardTourAttr }) {
           key={p.id}
           product={p}
           tourAttr={idx === 0 ? firstCardTourAttr : undefined}
+          isFirstCard={idx === 0}
         />
       ))}
     </div>

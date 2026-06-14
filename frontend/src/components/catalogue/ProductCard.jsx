@@ -39,7 +39,7 @@ function HeartIcon({ filled }) {
   );
 }
 
-export default function ProductCard({ product, tourAttr }) {
+export default function ProductCard({ product, tourAttr, isFirstCard }) {
   const navigate    = useNavigate();
   const { addItem } = useCart();
   const { t } = useLang();
@@ -156,6 +156,7 @@ export default function ProductCard({ product, tourAttr }) {
             <button
               onClick={handleAddToCart}
               disabled={added}
+              data-tour={isFirstCard ? 'add-to-cart' : undefined}
               className="w-full flex items-center justify-center gap-1 py-2 rounded-[10px] text-xs font-bold transition-all duration-150 border-none cursor-pointer mt-1"
               style={
                 added

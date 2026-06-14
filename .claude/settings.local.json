@@ -80,7 +80,11 @@
       "Bash(git checkout *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Force)",
       "Bash(xargs grep -l \"reset\\\\|forgot\\\\|password\")",
-      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"\\\\d customer_login_attempts\" 2>&1)"
+      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"\\\\d customer_login_attempts\" 2>&1)",
+      "Bash(ls -la \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\backend\\\\migrations\\\\\" | head -50)",
+      "Bash(docker compose *)",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__tabs_context_mcp"
     ]
   }
 }

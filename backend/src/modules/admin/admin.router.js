@@ -570,6 +570,15 @@ router.post('/bca-qris/token-test', ...adminOnly, async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── Data Health ───────────────────────────────────────────────────────────────
+
+router.get('/data-health', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getDataHealth();
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 
 const schedulerService         = require('../scheduler/SchedulerService');

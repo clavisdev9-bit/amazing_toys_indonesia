@@ -1018,6 +1018,29 @@ async function listTransactions({ status, limit = 200 } = {}) {
   return result.rows;
 }
 
+// ── Data Health ───────────────────────────────────────────────────────────────
+
+async function getDataHealth() {
+  const { rows } = await query(`
+    SELECT
+      (SELECT COUNT(*)::int FROM customers)                                          AS customers_total,
+      (SELECT COUNT(*)::int FROM transactions)                                       AS orders_total,
+      (SELECT COUNT(*)::int FROM transactions WHERE status IN ('PAID','COMPLETED','HANDED_OVER')) AS orders_paid,
+      (SELECT COUNT(*)::int FROM transactions WHERE status IN ('PENDING','RESERVED','WAITING_PAYMENT')) AS orders_active,
+      (SELECT COUNT(*)::int FROM products WHERE is_active = TRUE)                   AS products_active,
+      (SELECT COALESCE(SUM(stock_quantity),0)::int FROM products WHERE is_active = TRUE) AS stock_total,
+      (SELECT COUNT(*)::int FROM users WHERE is_active = TRUE AND role != 'ADMIN')  AS staff_active,
+      (SELECT COUNT(*)::int FROM transactions WHERE wa_sent_at IS NOT NULL)         AS wa_sent,
+      (SELECT COUNT(*)::int FROM transactions WHERE wa_delivery_status = 'FAILED')  AS wa_failed,
+      (SELECT COUNT(*)::int FROM stock_sync_log)                                    AS odoo_sync_total,
+      (SELECT COUNT(*)::int FROM stock_sync_log WHERE status = 'ERROR')             AS odoo_sync_error,
+      (SELECT COUNT(*)::int FROM qris_transactions)                                 AS payments_qris,
+      (SELECT COUNT(*)::int FROM voucher_usages)                                    AS voucher_usages,
+      (SELECT COUNT(*)::int FROM customer_login_attempts WHERE locked_until > NOW()) AS blocked_logins
+  `);
+  return rows[0];
+}
+
 module.exports = {
   // Users
   listUsers, createUser, updateUser, resetPassword, deleteUser,
@@ -1043,6 +1066,8 @@ module.exports = {
   getTaxConfig, saveTaxConfig, getOdooTaxList,
   // WA Gateway config
   getWaGatewayConfig, saveWaGatewayConfig,
+  // Data health
+  getDataHealth,
 };
 
 // ── WA Gateway Config ─────────────────────────────────────────────────────────

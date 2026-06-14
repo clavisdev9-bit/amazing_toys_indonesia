@@ -705,8 +705,13 @@ function HandoverDetailView({ order: initialOrder, onBack, onDone }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // Untuk group invoice: re-fetch pakai group_code agar is_group_invoice tetap terbawa
+  const lookupKey = initialOrder.is_group_invoice
+    ? initialOrder.group_code
+    : initialOrder.transaction_id;
+
   useEffect(() => {
-    getBoothOrder(initialOrder.transaction_id)
+    getBoothOrder(lookupKey)
       .then(r => {
         const detail = r.data.data || {};
         setOrder(detail);
@@ -716,7 +721,7 @@ function HandoverDetailView({ order: initialOrder, onBack, onDone }) {
       })
       .catch(() => setError('Gagal memuat detail order'))
       .finally(() => setLoading(false));
-  }, [initialOrder.transaction_id]);
+  }, [lookupKey]);
 
   const checkedCount = itemChecks.filter(Boolean).length;
   const allChecked = items.length > 0 && checkedCount === items.length;
@@ -727,7 +732,9 @@ function HandoverDetailView({ order: initialOrder, onBack, onDone }) {
     setSubmitting(true);
     setError('');
     try {
-      await handoverOrder(order.transaction_id);
+      // Group invoice: handover via group_code agar setiap booth hanya mark item-nya sendiri
+      const handoverId = order.is_group_invoice ? order.group_code : order.transaction_id;
+      await handoverOrder(handoverId);
       setConfirmModal(false);
       onDone();
     } catch (err) {
@@ -863,6 +870,8 @@ function HandoverOutstandingPanel({ searchQuery, onCountUpdate }) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [grpLoading, setGrpLoading] = useState(false);
+  const [grpError, setGrpError] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -878,6 +887,19 @@ function HandoverOutstandingPanel({ searchQuery, onCountUpdate }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // GRP-xxx direct lookup — saat helper scan/ketik kode group invoice
+  useEffect(() => {
+    const q = (searchQuery ?? '').trim();
+    if (!/^GRP-/i.test(q)) { setGrpError(''); return; }
+    if (q.length < 10) return; // tunggu kode lengkap sebelum lookup
+    setGrpLoading(true);
+    setGrpError('');
+    getBoothOrder(q)
+      .then(r => setSelectedOrder(r.data.data))
+      .catch(err => setGrpError(err.response?.data?.message || 'Group invoice tidak ditemukan di booth ini.'))
+      .finally(() => setGrpLoading(false));
+  }, [searchQuery]);
+
   if (selectedOrder) {
     return (
       <HandoverDetailView
@@ -888,17 +910,23 @@ function HandoverOutstandingPanel({ searchQuery, onCountUpdate }) {
     );
   }
 
-  const filtered = orders.filter(o =>
+  const isGroupSearch = /^GRP-/i.test((searchQuery ?? '').trim());
+  const filtered = isGroupSearch ? [] : orders.filter(o =>
     !searchQuery || o.transaction_id.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  if (loading) return <div style={{ padding: 24 }}><Spinner /></div>;
+  if (loading || grpLoading) return <div style={{ padding: 24 }}><Spinner /></div>;
 
   return (
     <div style={{ padding: 16, overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
       <Banner type="amber">📦 {orders.length} pesanan siap diserahkan</Banner>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}><RefreshBtn onClick={load} /></div>
-      {filtered.length === 0 && <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>Tidak ada pesanan untuk diserahkan</p>}
+      {grpError && <Banner type="red">{grpError}</Banner>}
+      {!grpError && filtered.length === 0 && (
+        <p style={{ color: C.muted, textAlign: 'center', padding: '32px 0', fontSize: 13 }}>
+          Tidak ada pesanan untuk diserahkan
+        </p>
+      )}
       {filtered.map(o => (
         <OrderCard
           key={o.transaction_id}

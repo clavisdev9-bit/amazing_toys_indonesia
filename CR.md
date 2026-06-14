@@ -3367,3 +3367,322 @@ Jika `logo_url` kosong (belum ada logo yang diupload), `useEffect` melakukan ear
 - Tidak ada perubahan database
 - Satu komponen `AppMetaSync` menggantikan `TitleSync` (CR-049) — backward-compatible, perilaku title tidak berubah
 - Deployment: `docker compose build frontend && docker compose up -d --no-deps frontend`
+
+---
+
+## CR-051 — Tour Guide UI Redesign (STD-019 Compliance)
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files:**
+- `frontend/src/components/tour/TourTooltip.jsx`
+- `frontend/src/components/tour/TourProgressBar.jsx`
+- `frontend/src/components/tour/TourNavigationButtons.jsx`
+- `frontend/src/components/tour/TourWelcomeModal.jsx`
+
+### Tujuan
+
+Tooltip tour guide mobile sebelumnya menggunakan `bottom: 0` yang menempel edge-to-edge dan tertutup oleh bottom navigation bar (`z-30`). User diminta tampilan yang "lebih proper dan bersahabat". CR ini menulis ulang seluruh komponen tour untuk memenuhi STD-019.
+
+### Perubahan
+
+#### TourTooltip.jsx — Floating Card
+
+| # | Aspek | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | Posisi mobile | `bottom: 0`, edge-to-edge | `position: fixed, bottom: 72px, left: 12, right: 12` |
+| 2 | Sudut | Tidak rounded bawah | `borderRadius: 20` (semua sudut) |
+| 3 | Animasi masuk | Tidak ada | Spring: `cubic-bezier(0.34, 1.56, 0.64, 1)` 300ms |
+| 4 | Header card | — | Accent strip 4px biru, drag handle, tombol ✕ bulat |
+| 5 | z-index | — | `zIndex: 50` (di atas overlay z-40 dan highlight z-42) |
+
+#### TourProgressBar.jsx — Gradient Bar
+
+```jsx
+// "Langkah X / Y" + persen label
+// Bar 5px gradient #3B5BDB → #748FFC
+// Transisi width 350ms cubic-bezier
+```
+
+#### TourNavigationButtons.jsx — Mobile-Responsive
+
+- Mobile: `height: 40` per tombol, Back fixed 80px + Next `flex-1`
+- Teks tombol diubah ke Bahasa Indonesia: "Lanjut →", "← Kembali"
+- Loading label: `"Navigating..."` → `"Memuat..."`
+- Spinner gunakan `className="animate-spin"` (Tailwind keyframes) bukan inline style
+
+#### TourWelcomeModal.jsx — Brand Header
+
+- Header gradient `#3B5BDB → #748FFC` dengan ikon 🎪
+- Subtitle menggunakan `usePublicConfig()` → `config?.event_name || 'SOS'`
+- Teks konten diperbaiki: `"memesan makanan"` → `"memesan produk di sini"`
+
+### Catatan
+
+- Z-index stack: TourOverlay z-40 → TourHighlight z-42 → TourTooltip z-50 → TourWelcomeModal z-9999
+- STD-019 ditetapkan: tooltip mobile harus floating card `bottom ≥ 64px`, tidak boleh bottom sheet edge-to-edge
+
+---
+
+## CR-052 — Admin UI Clean-up: Hapus DataHealthWidget & Logo Preview White
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files:**
+- `frontend/src/App.jsx`
+- `frontend/src/pages/admin/tabs/ConfigTab.jsx`
+
+### Perubahan
+
+#### 1. Hapus DataHealthWidget dari Sidebar Admin
+
+`DataHealthWidget` adalah widget sidebar tambahan di halaman admin yang ditampilkan via prop `sidebarExtra`. Widget ini dihapus karena tidak relevan dan mengganggu layout.
+
+```jsx
+// App.jsx — DIHAPUS:
+import DataHealthWidget from './components/admin/DataHealthWidget';
+// ...
+sidebarExtra={<DataHealthWidget />}
+
+// Setelah: tidak ada import, tidak ada prop sidebarExtra
+```
+
+#### 2. Background Logo Preview — Gray → White
+
+Di tab Konfigurasi Admin, container preview logo yang sudah terpasang berubah dari abu-abu ke putih agar preview logo lebih akurat (terutama untuk logo dengan background transparan).
+
+```jsx
+// ConfigTab.jsx — baris 169:
+// Sebelum:
+<div className="... bg-gray-50 ...">
+// Sesudah:
+<div className="... bg-white ...">
+```
+
+### Catatan
+
+- Tidak ada perubahan backend atau API
+- Tidak ada perubahan database
+
+---
+
+## CR-053 — Dynamic Event Name: Semua Modul
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files:**
+- `frontend/src/hooks/useAppLogo.js`
+- `frontend/src/services/sendEReceipt.js`
+- `frontend/src/context/LangContext.jsx`
+- `frontend/src/pages/admin/AdminPage.jsx`
+- `frontend/src/pages/customer/ProfilePage.jsx`
+- `frontend/src/pages/public/MaintenancePage.jsx`
+- `backend/src/services/email.service.js`
+- `backend/src/modules/wa/wa.service.js`
+- `backend/src/modules/scheduler/jobs/TxnNotifJob.js`
+
+### Tujuan
+
+Mengganti semua teks hardcoded `"Amazing Toys Fair 2026"` di seluruh codebase agar selalu membaca dari field **"Nama Event"** di admin config (`event_name` di `data/system-config.json`). Perubahan ini melengkapi CR-049 (title) dan CR-050 (favicon) yang sudah mendokumentasikan perubahan spesifik di `App.jsx`.
+
+**Constraint:**
+- Tidak mempengaruhi modul lain
+- Tidak mengubah flow integrasi Odoo
+
+### Arsitektur Sumber Data
+
+| Layer | Mekanisme | Dipakai oleh |
+|---|---|---|
+| Backend sync | `getSystemConfig()` dari `admin.service.js` | `email.service.js`, `wa.service.js` |
+| Backend file-read | `fs.readFileSync('data/system-config.json')` | `TxnNotifJob.js` (scheduler) |
+| Frontend React | `usePublicConfig()` hook (`GET /api/v1/config/public`) | `AdminPage`, `ProfilePage`, `MaintenancePage` |
+| Frontend non-React | `getPublicConfigAsync()` (export baru) | `sendEReceipt.js` |
+
+### Perubahan Detail
+
+#### `useAppLogo.js` — Tambah Export Non-React
+
+```js
+// Export baru untuk dipakai di service/utils (bukan React component):
+export function getPublicConfigAsync() {
+  return fetchCached();
+}
+```
+
+#### `sendEReceipt.js` — Dynamic event name + venue
+
+```js
+import { getPublicConfigAsync } from '../hooks/useAppLogo';
+const cfg = await getPublicConfigAsync();
+const eventName  = cfg?.event_name  || 'SOS';
+const eventVenue = cfg?.venue        || '';
+```
+
+#### `LangContext.jsx` — Hapus Hardcoded Subtitle
+
+Login dan register subtitle yang berisi `'Amazing Toys Fair 2026'` di semua 3 bahasa (ID/EN/ZH) diubah menjadi string kosong `''`. Subtitle ini akan diisi dinamis oleh komponen terkait via `usePublicConfig`.
+
+#### `AdminPage.jsx`, `ProfilePage.jsx`, `MaintenancePage.jsx` — usePublicConfig
+
+```jsx
+import { usePublicConfig } from '../../hooks/useAppLogo';
+const config    = usePublicConfig();
+const eventName = config?.event_name || 'SOS';
+// Dipakai di JSX: "Pelanggan {eventName}", "Full Access — {eventName}", dll.
+```
+
+#### `email.service.js` — Helper Async
+
+```js
+const { getSystemConfig } = require('../modules/admin/admin.service');
+
+async function _getEventName() {
+  const cfg = await getSystemConfig();
+  return cfg.event_name || 'SOS';
+}
+// Dipakai di: sendLoginAlert, sendOTPEmail, sendNewDeviceAlert
+```
+
+#### `wa.service.js` — Helper dengan Venue & Tanggal
+
+```js
+async function _getEventConfig() {
+  const cfg = await getSystemConfig();
+  return {
+    eventName:  cfg.event_name        || 'SOS',
+    venue:      cfg.venue             || '',
+    dateStart:  cfg.event_date_start  || '',
+    dateEnd:    cfg.event_date_end    || '',
+  };
+}
+// Dipakai di: sendOTP, sendGreeting (dengan venue/date), sendLockoutNotif
+```
+
+#### `TxnNotifJob.js` — Synchronous File Read
+
+Scheduler job tidak bisa menggunakan async module-level read karena berjalan di interval. Menggunakan fungsi `_readConfig()` yang sudah ada di file:
+
+```js
+const eventName = _readConfig().event_name || 'SOS';
+const message = `⏳ *Pengingat Pesanan ${eventName}*\n\n...`;
+```
+
+### Titik yang Sudah Tercakup CR Sebelumnya
+
+| File | CR | Perubahan |
+|---|---|---|
+| `App.jsx` | CR-049 | `document.title` sync |
+| `App.jsx` | CR-050 | Favicon sync |
+| `ThermalReceipt.jsx` | CR-013 | Receipt header event name |
+| `print.service.js` | CR-013 | ESC/POS receipt header |
+
+### Catatan
+
+- Fallback selalu `'SOS'` (bukan string kosong) agar teks tetap bermakna jika config belum diisi admin
+- Tidak ada perubahan database
+- Tidak ada perubahan endpoint API (kecuali tambahan field di `/config/public` yang sudah dikerjakan di CR-013, CR-022, CR-028)
+
+---
+
+## CR-054 — Group Checkout: Cashier Multi-TRX Invoice Merger
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files (new):**
+- `frontend/src/pages/cashier/GroupMergePage.jsx` *(new)*
+- `frontend/src/pages/cashier/GroupPaymentPage.jsx` *(new)*
+- `frontend/src/components/cashier/PrintGroupReceiptButton.jsx` *(new)*
+
+**Files (existing — sudah ada sebelumnya):**
+- `frontend/src/api/cashier.js` — sudah ada `getCustomerActiveTrx`, `groupCheckout`, `getGroupDetail`
+- `frontend/src/pages/cashier/CashierDashboardPage.jsx` — sudah ada logika navigasi ke group-merge
+- `frontend/src/App.jsx` — sudah ada import dan route `/cashier/group-merge`, `/cashier/group-bayar`
+- `backend/src/modules/cashier/cashier.router.js` — sudah ada `POST /cashier/group-checkout`, `GET /cashier/groups/:groupId`
+
+### Latar Belakang
+
+Satu customer bisa memiliki lebih dari 1 transaksi aktif (RESERVED/WAITING_PAYMENT) dari beberapa booth berbeda. Sebelumnya, kasir harus memproses masing-masing transaksi terpisah. CR ini menambahkan alur **Group Checkout** yang memungkinkan kasir menggabungkan semua transaksi aktif customer menjadi satu invoice group dengan satu pembayaran.
+
+**Constraint:** Jangan ubah `PaymentPage.jsx` / flow `/cashier/bayar/:id`. Jika customer hanya punya 1 TRX aktif, flow lama tetap berjalan.
+
+### Alur Group Checkout
+
+```
+Kasir scan QR customer
+  ↓
+CashierDashboardPage: getCustomerActiveTrx({ phone })
+  ├─ 1 TRX aktif → navigate ke /cashier/bayar/:id (flow lama, tidak berubah)
+  └─ >1 TRX aktif → navigate ke /cashier/group-merge
+       ↓
+GroupMergePage: kasir pilih TRX yang digabung (semua checked by default)
+       ↓ "Lanjut ke Pembayaran →"
+GroupPaymentPage: bayar + print/kirim receipt group
+       ↓
+Success screen: groupCode QR + breakdown per booth
+```
+
+### GroupMergePage.jsx
+
+- Menerima `location.state = { transactions: TRX[], scannedId: string }`
+- Info customer dari `transactions[0]` (nama + telepon)
+- Alert: ungu jika >1 TRX ("X transaksi aktif"), amber jika hanya 1 TRX
+- Checklist setiap TRX — semua checked by default, minimal 1 harus dipilih
+- TRX yang di-scan oleh kasir diberi label **"Di-scan"** (badge violet)
+- Strip bawah: jumlah TRX terpilih + total amount
+- Batal → `/cashier`, Lanjut → `/cashier/group-bayar` dengan `{ selectedTrx, allTrx, customer }`
+
+### GroupPaymentPage.jsx
+
+Layout 2-kolom mengikuti `PaymentPage.jsx`:
+- **Kiri (460px):** Group chip (purple), rincian item per booth, form pembayaran
+- **Kanan (flex-1):** Product browser — kasir bisa tambah produk sebelum bayar
+
+**4 metode pembayaran:** CASH, QRIS, EDC, TRANSFER
+
+| Metode | Input Tambahan |
+|---|---|
+| CASH | Uang Diterima → tampilkan kembalian real-time |
+| QRIS | QR dari `selectedTrx[0].transaction_id` untuk di-scan customer |
+| EDC | No. Referensi / Approval |
+| TRANSFER | No. Referensi / Approval |
+
+**API call:** `groupCheckout({ transaction_ids, payment_method, cash_received?, payment_ref? })`
+
+**Success screen:**
+- `groupCode` mono large + QRCodeSVG
+- Breakdown item per booth
+- 3 tombol: **Cetak** (PrintGroupReceiptButton), **📱 WhatsApp**, **📧 Email**
+- Alert kuning: notifikasi dikirim ke booth-booth terkait
+- **Transaksi Baru** → `/cashier` | **Lihat Rekap** → `/cashier/rekap`
+
+### PrintGroupReceiptButton.jsx
+
+Print receipt thermal 280px (monospace) via `window.open + print`:
+
+```
+INVOICE GROUP
+[groupCode]
+[customer name · phone]
+─────────────────
+[Nama Booth]
+  Produk A ×2    Rp xxx
+  Produk B ×1    Rp xxx
+─────────────────
+TOTAL             Rp xxx
+─────────────────
+Metode: CASH
+Kasir: [nama]
+Waktu: [datetime]
+─────────────────
+Tunjukkan struk ini di setiap booth
+untuk mengambil barang Anda.
+```
+
+### Catatan Desain
+
+| Aspek | Keputusan |
+|---|---|
+| Flow lama tidak berubah | 1 TRX aktif → `PaymentPage` via `/cashier/bayar/:id` — tidak dimodifikasi |
+| Produk tambahan | Ditambahkan ke `selectedTrx[0]` via `addItemToTransaction`; `extraAmount` di-track untuk kalkulasi total |
+| Backend sudah siap | `groupCheckout` + `getGroupDetail` endpoint sudah ada sejak implementasi backend sebelumnya |
+| Module isolation | GroupMergePage dan GroupPaymentPage tidak menyentuh `PaymentPage`, `CartContext`, atau flow Odoo integration |

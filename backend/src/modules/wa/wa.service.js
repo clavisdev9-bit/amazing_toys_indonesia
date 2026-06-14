@@ -15,6 +15,17 @@
 
 const { query } = require('../../config/database');
 const logger    = require('../../config/logger');
+const { getSystemConfig } = require('../admin/admin.service');
+
+async function _getEventConfig() {
+  const cfg = await getSystemConfig();
+  return {
+    eventName:  cfg.event_name  || 'SOS',
+    venue:      cfg.venue       || '',
+    dateStart:  cfg.event_date_start || '',
+    dateEnd:    cfg.event_date_end   || '',
+  };
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -239,9 +250,10 @@ async function sendOTP(phone, otpCode, customerName = 'Pelanggan') {
   }
   if (!phone) return { status: 'FAILED', error: 'Nomor telepon kosong.' };
 
+  const { eventName } = await _getEventConfig();
   const message =
     `Halo *${customerName}*!\n\n` +
-    `Kode verifikasi Amazing Toys Fair 2026 Anda:\n\n` +
+    `Kode verifikasi *${eventName}* Anda:\n\n` +
     `🔑 *${otpCode}*\n\n` +
     `Berlaku *5 menit*. Jangan bagikan kode ini ke siapapun.\n\n` +
     `Jika Anda tidak meminta kode ini, abaikan pesan ini.`;
@@ -271,13 +283,18 @@ async function sendGreeting(phone, customerName = 'Tamu') {
   }
   if (!phone) return { status: 'SKIPPED' };
 
+  const { eventName, venue, dateStart, dateEnd } = await _getEventConfig();
+  const scheduleLines = (dateStart && dateEnd)
+    ? `📅 *Jadwal:* ${dateStart} – ${dateEnd}\n`
+    : '';
+  const venueLine = venue ? `📍 *Lokasi:* ${venue}\n` : '';
   const message =
     `Halo *${customerName}*! 🎉\n\n` +
-    `Selamat datang di *Amazing Toys Fair 2026*!\n\n` +
-    `Anda sudah berhasil terdaftar. Nikmati pengalaman belanja mainan terbaik untuk buah hati Anda! 🧸\n\n` +
-    `📅 *Jadwal:* 15–20 Juli 2026\n` +
-    `📍 *Lokasi:* Jakarta Convention Center\n\n` +
-    `Selamat berbelanja! 🛍️`;
+    `Selamat datang di *${eventName}*!\n\n` +
+    `Anda sudah berhasil terdaftar. Nikmati pengalaman berbelanja terbaik! 🧸\n\n` +
+    scheduleLines +
+    venueLine +
+    `\nSelamat berbelanja! 🛍️`;
 
   try {
     const result = await _callGateway(settings, phone, message);
@@ -297,10 +314,11 @@ async function sendLockoutNotif(phone, lockoutMinutes = 5) {
   }
   if (!phone) return { status: 'SKIPPED' };
 
+  const { eventName } = await _getEventConfig();
   const message =
     `⚠️ *Pemberitahuan Keamanan*\n\n` +
     `Akun Anda terkunci sementara selama *${lockoutMinutes} menit* karena terlalu banyak percobaan login.\n\n` +
-    `Jika ini bukan Anda, segera hubungi petugas booth Amazing Toys Fair 2026.\n\n` +
+    `Jika ini bukan Anda, segera hubungi petugas booth *${eventName}*.\n\n` +
     `Setelah ${lockoutMinutes} menit, Anda dapat mencoba login kembali. 🔒`;
 
   try {
