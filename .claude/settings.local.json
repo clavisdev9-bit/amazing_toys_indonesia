@@ -77,7 +77,10 @@
       "Bash(python tools/generate_flow_pptx.py)",
       "Bash(node -e \"const s=require\\('./backend/node_modules/sharp'\\); console.log\\('sharp ok'\\)\")",
       "Bash(dir \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\frontend\\\\src\\\\components\\\\helper\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Force)",
+      "Bash(xargs grep -l \"reset\\\\|forgot\\\\|password\")",
+      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"\\\\d customer_login_attempts\" 2>&1)"
     ]
   }
 }

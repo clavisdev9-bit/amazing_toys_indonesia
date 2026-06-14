@@ -31,6 +31,7 @@ const printRouter        = require('./modules/print/print.router');
 const { paymentsRouter: bcaQrisPaymentsRouter, webhookRouter: bcaQrisWebhookRouter } = require('./modules/bca-qris/bca-qris.router');
 const { voucherRouter, adminVoucherRouter } = require('./modules/vouchers/vouchers.routes');
 const helperRouter       = require('./modules/helper/helper.router');
+const customerRouter     = require('./modules/customer/customer.router');
 
 // WebSocket
 const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
@@ -106,6 +107,7 @@ app.get(`${API}/config/public`, async (_req, res, next) => {
   } catch (err) { next(err); }
 });
 app.use(`${API}/auth`,          authRouter);
+app.use(`${API}/customer`,      customerRouter);
 app.use(`${API}/products`,      productsRouter);
 app.use(`${API}/tenants`,       tenantsRouter);
 app.use(`${API}/orders`,        ordersRouter);
@@ -288,6 +290,24 @@ server.listen(PORT, async () => {
     logger.info('[Schema] item_delete_requests table verified (idempotent check done).');
   } catch (e) {
     logger.warn('[Schema] item_delete_requests schema check warning:', e.message);
+  }
+
+  // ── Idempotent schema guard (migration 025: wa_expiry_notif_sent_at) ────────
+  // BUG-061: column was only in migrations/025_txn_expiry_notif.sql (not run
+  // automatically), so TxnNotifJob SQL failed with "column does not exist".
+  try {
+    await dbQuery(
+      `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wa_expiry_notif_sent_at TIMESTAMPTZ DEFAULT NULL`,
+    );
+    await dbQuery(
+      `CREATE INDEX IF NOT EXISTS idx_transactions_wa_expiry_notif
+         ON transactions (expires_at)
+         WHERE wa_expiry_notif_sent_at IS NULL
+           AND status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')`,
+    );
+    logger.info('[Schema] Migration 025 verified — transactions.wa_expiry_notif_sent_at ready.');
+  } catch (e) {
+    logger.warn('[Schema] Migration 025 schema check warning:', e.message);
   }
 
   // DB pool is ready on first query; initialize scheduler after server is up.

@@ -3261,3 +3261,109 @@ Angka stok ditampilkan dengan warna berdasarkan kondisi:
 - Kolom "Barcode" (QR button, dari CR-043) tetap ada — tidak dihapus
 - Tidak ada perubahan API — `stock_quantity` sudah ada di response `getAdminProducts`
 - Frontend di-rebuild via `docker compose build frontend && docker compose up -d --no-deps frontend`
+
+---
+
+## CR-049 — Dynamic Page Title dari "Nama Event" (Admin Config)
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files:** `frontend/src/App.jsx`
+
+### Tujuan
+
+Browser tab title (`<title>`) harus menampilkan nama event yang dikonfigurasi admin di halaman `/admin` → tab **Konfigurasi** → field **"Nama Event"** (`event_name`). Sebelumnya title hardcoded sebagai `"Amazing Toys SOS · Hybrid"` di `index.html` dan tidak bisa diubah tanpa rebuild.
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | `<title>` di `index.html` | `Amazing Toys SOS · Hybrid` (hardcoded, tidak berubah) | Tetap sebagai fallback saat config belum load |
+| 2 | `App.jsx` — import | — | `import { usePublicConfig } from './hooks/useAppLogo'` |
+| 3 | `App.jsx` — komponen baru | — | `TitleSync` — reads `config.event_name`, sets `document.title` |
+| 4 | `App.jsx` — render | `<WSInit />` | `<WSInit /> <TitleSync />` |
+
+### Detail Teknis
+
+```jsx
+// CR-049: sync browser tab title to event_name from admin config
+function TitleSync() {
+  const config = usePublicConfig();
+  useEffect(() => {
+    if (config?.event_name) document.title = config.event_name;
+  }, [config?.event_name]);
+  return null;
+}
+```
+
+- `usePublicConfig()` menggunakan cache modul-level di `useAppLogo.js` — tidak ada fetch tambahan, request `/api/v1/config/public` sudah dilakukan saat app mount pertama kali.
+- `document.title` hanya diupdate jika `event_name` truthy — title fallback `index.html` tetap berlaku saat config belum selesai load atau saat offline.
+- `TitleSync` (kemudian di-rename `AppMetaSync` pada CR-050) adalah null-render component, tidak menambah DOM node apapun.
+
+### Catatan
+
+- Tidak ada perubahan backend atau API
+- Tidak ada perubahan database
+- Deployment: `docker compose build frontend && docker compose up -d --no-deps frontend`
+
+---
+
+## CR-050 — Dynamic Favicon dari "Logo Aplikasi" (Admin Config)
+
+**Date:** 2026-06-14
+**Status:** Done
+**Files:** `frontend/src/App.jsx`
+
+### Tujuan
+
+Browser favicon (ikon tab) harus menampilkan logo yang dikonfigurasi admin di halaman `/admin` → tab **Konfigurasi** → **"Logo Aplikasi"** (`logo_url`). Sebelumnya favicon hardcoded sebagai emoji 🧸 (SVG data URL) di `index.html` dan tidak bisa diubah tanpa rebuild.
+
+Berkaitan langsung dengan CR-049 (dynamic title) — keduanya menggunakan `usePublicConfig()` dan sumber yang sama.
+
+### Perubahan
+
+| # | Apa | Sebelum | Sesudah |
+|---|---|---|---|
+| 1 | `index.html` — `<link rel="icon">` | `data:image/svg+xml,...🧸` (hardcoded) | Tetap sebagai fallback saat config belum load |
+| 2 | `App.jsx` — `TitleSync` | Hanya update `document.title` | Di-rename `AppMetaSync`, juga update favicon |
+| 3 | Favicon update logic | — | Query/create `<link rel="icon">`, set `href = logo_url`, hapus `type` attribute |
+
+### Detail Teknis
+
+```jsx
+// CR-049 + CR-050: sync browser tab title and favicon from admin config
+function AppMetaSync() {
+  const config = usePublicConfig();
+  useEffect(() => {
+    if (config?.event_name) document.title = config.event_name;
+  }, [config?.event_name]);
+  useEffect(() => {
+    if (!config?.logo_url) return;
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = config.logo_url;
+    link.removeAttribute('type');
+  }, [config?.logo_url]);
+  return null;
+}
+```
+
+**Kenapa `removeAttribute('type')`:**  
+`index.html` menyertakan `type="image/svg+xml"`. Jika logo yang diupload adalah PNG/JPG/WebP, browser bisa menolak favicon karena tipe tidak cocok. Menghapus atribut `type` membiarkan browser auto-detect format dari konten response header.
+
+**Fallback aman:**  
+Jika `logo_url` kosong (belum ada logo yang diupload), `useEffect` melakukan early return — favicon emoji dari `index.html` tetap tampil.
+
+**Null-render pattern:**  
+`AppMetaSync` tidak merender DOM node apapun, hanya efek samping DOM imperatives. Cocok untuk metadata sync yang tidak perlu JSX.
+
+### Catatan
+
+- Tidak ada perubahan backend atau API
+- Tidak ada perubahan database
+- Satu komponen `AppMetaSync` menggantikan `TitleSync` (CR-049) — backward-compatible, perilaku title tidak berubah
+- Deployment: `docker compose build frontend && docker compose up -d --no-deps frontend`

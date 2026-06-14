@@ -75,6 +75,9 @@
 | [BUG-057](#bug-057) | 2026-06-13 | Tombol 🗑️ di `/cashier/bayar/:id` → Internal Server Error — `item_delete_requests.product_id` bertipe `INTEGER` sedangkan `products.product_id` adalah `VARCHAR(20)` | Database + Backend | ✅ Resolved | — |
 | [BUG-058](#bug-058) | 2026-06-13 | Klik "Setujui" di `/leader/hapus-approval` → Internal Server Error — menghapus item terakhir transaksi menyebabkan `total_amount = 0`, melanggar `transactions_total_amount_check (total_amount > 0)` | Backend | ✅ Resolved | — |
 | [BUG-059](#bug-059) | 2026-06-13 | Customer cancel transaksi yang sudah di-approve parsial oleh helper → stok kembali +4 (seharusnya +2) — `cancelOrder()` menggunakan `item.quantity` (original) bukan `item.approved_quantity` (yang benar-benar dikurangi) | Backend | ✅ Resolved | — |
+| [BUG-060](#bug-060) | 2026-06-14 | Field "Batas Waktu Checkout (menit)" di admin tidak bisa diketik — `onChange` pakai `parseInt \|\| 30`, field snap balik ke 30 setiap user clear untuk mengetik ulang | Frontend | ✅ Resolved | — |
+| [BUG-061](#bug-061) | 2026-06-14 | WA notifikasi "hampir kadaluarsa" tidak terkirim (TXN-20260613-00080) — 3 root cause: (1) `c.phone` harus `c.phone_number`, (2) status `PENDING` tidak dicakup, (3) kolom `wa_expiry_notif_sent_at` tidak ada di schema guard | Backend/Scheduler/Database | ✅ Resolved | — |
+| [BUG-062](#bug-062) | 2026-06-14 | Registrasi `081180003939` — customer lapor "registrasi failed" padahal OTP terkirim — `sendOTP()` dipanggil sebelum `INSERT INTO pending_registrations`; jika DB gagal OTP terkirim tapi tidak bisa diverifikasi | Backend/Auth | ✅ Resolved | — |
 
 ---
 
@@ -4683,3 +4686,193 @@ docker compose up -d --no-deps backend
 ### Recurrence Prevention
 
 Lihat STD-014 di STANDARD.md — setiap fungsi yang merestorasi stok dari cancel/expire wajib mempertimbangkan `approval_status` dan `approved_quantity`.
+
+---
+
+## BUG-060 — Field "Batas Waktu Checkout (menit)" di Admin Tidak Bisa Diketik
+
+**Tanggal:** 2026-06-14  
+**Layer:** Frontend  
+**Status:** ✅ Resolved
+
+**Symptom:**  
+Field "Batas Waktu Checkout (menit)" pada tab Konfigurasi di halaman Admin tidak bisa diisi nilai baru. Setiap kali user menghapus angka yang ada untuk mengetik angka baru, field langsung kembali ke nilai `30`.
+
+**Root Cause:**  
+`onChange` handler menggunakan pola `parseInt(e.target.value, 10) || 30`:
+
+```jsx
+// SEBELUM (bug):
+onChange={(e) => set('txn_timeout_checkout', parseInt(e.target.value, 10) || 30)}
+```
+
+Ketika user menghapus seluruh isi field (backspace), `e.target.value` menjadi `""`. `parseInt("", 10)` mengembalikan `NaN`. `NaN || 30` = `30`. Sehingga `set()` dipanggil dengan `30`, field langsung kembali ke nilai semula. User tidak pernah bisa mengosongkan field untuk mengetik angka baru.
+
+**Fix:**  
+Simpan string kosong saat field dikosongkan, bukan fallback ke default:
+
+```jsx
+// SESUDAH (benar):
+value={config.txn_timeout_checkout ?? ''}
+onChange={(e) => set('txn_timeout_checkout', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+```
+
+Dengan ini, `value=''` membuat number input tampil kosong, dan user bisa mengetik nilai baru. React number input dengan `value={NaN}` juga merender sebagai kosong — pattern yang digunakan untuk field serupa seperti `max_items_per_order`.
+
+**Perubahan File:**
+
+- `frontend/src/pages/admin/tabs/ConfigTab.jsx` — baris 301-303
+
+**Deployment:**
+
+```bash
+docker compose build frontend
+docker compose up -d --no-deps frontend
+```
+
+**Recurrence Prevention:**  
+Lihat STD-015 di STANDARD.md — jangan gunakan `parseInt(...) || fallback` pada `onChange` input numerik yang boleh dikosongkan.
+
+---
+
+## BUG-061 — WA Notifikasi "Hampir Kadaluarsa" Tidak Terkirim (TXN-20260613-00080)
+
+**Tanggal:** 2026-06-14  
+**Layer:** Backend / Scheduler / Database  
+**Status:** ✅ Resolved
+
+**Symptom:**  
+Notifikasi WA pengingat "pesanan hampir kadaluarsa" (`Notif Limit Pesanan (menit)`) tidak dikirim ke customer untuk transaksi `TXN-20260613-00080`, meskipun konfigurasi sudah diset.
+
+**Root Cause — 3 penyebab bersamaan:**
+
+**RC-1: `c.phone` bukan kolom yang ada (harus `c.phone_number`)**  
+Di `TxnNotifJob.js` baris 138:
+```sql
+COALESCE(t.customer_phone, c.phone) AS phone
+```
+Tabel `customers` menggunakan kolom `phone_number`, bukan `phone`. Ini menyebabkan SQL query gagal dengan error "column c.phone does not exist". Error ini di-catch oleh blok try-catch di `execute()` dan diabaikan (silent fail) — `notified = 0` tanpa pesan error yang jelas.
+
+**RC-2: Status `PENDING` tidak dicakup**  
+Query hanya filter `status IN ('RESERVED', 'WAITING_PAYMENT')`. Transaksi dengan mode SELF_ORDER atau mode HELPER_APPROVE (setelah disetujui helper, status = `PENDING`) tidak akan pernah menerima notifikasi. Namun `TxnExpireJob` mengexpire PENDING, jadi mereka bisa expired tanpa notif.
+
+**RC-3: Kolom `wa_expiry_notif_sent_at` tidak ada di schema guard app.js**  
+Kolom ini hanya didefinisikan di `backend/migrations/025_txn_expiry_notif.sql` yang tidak dieksekusi secara otomatis saat container start. Jika migration belum dijalankan manual, kolom tidak ada dan query gagal.
+
+**Fix:**
+
+```js
+// TxnNotifJob.js — RC-1: c.phone → c.phone_number
+// TxnNotifJob.js — RC-2: tambah 'PENDING' ke status filter
+COALESCE(t.customer_phone, c.phone_number) AS phone,
+...
+WHERE t.status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')
+```
+
+```js
+// app.js — RC-3: tambah idempotent schema guard untuk wa_expiry_notif_sent_at
+await dbQuery(
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wa_expiry_notif_sent_at TIMESTAMPTZ DEFAULT NULL`,
+);
+await dbQuery(
+  `CREATE INDEX IF NOT EXISTS idx_transactions_wa_expiry_notif
+     ON transactions (expires_at)
+     WHERE wa_expiry_notif_sent_at IS NULL
+       AND status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')`,
+);
+```
+
+**Perubahan File:**
+
+- `backend/src/modules/scheduler/jobs/TxnNotifJob.js` — baris 138, 147
+- `backend/src/app.js` — tambah schema guard sebelum `initializeScheduledJobs()`
+
+**Deployment:**
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+**Recurrence Prevention:**  
+Lihat STD-016 di STANDARD.md — setiap kolom baru yang digunakan oleh job/scheduler wajib memiliki idempotent schema guard di `app.js`, dan query JOIN wajib mereferensi nama kolom yang sesuai dengan schema tabel target.
+
+---
+
+## BUG-062 — Registrasi Berhasil di Backend tapi Customer Lapor "Registrasi Failed" + OTP Terkirim
+
+**Tanggal:** 2026-06-14  
+**Layer:** Backend / Auth  
+**Status:** ✅ Resolved
+
+**Symptom:**  
+QC test registrasi dengan nomor `081180003939` — customer melaporkan "registrasi failed", tetapi OTP WhatsApp tetap diterima. Record di tabel `pending_registrations` terbukti tersimpan.
+
+**Investigasi:**
+
+Log backend menunjukkan:
+- `00:55:34` — Login attempt → `"Akun tidak ditemukan"` (user coba login dulu)
+- `00:56:00` — `[WA-OTP] OTP terkirim` — registrasi backend **berhasil**
+- `01:00:39` — Login attempt lagi → `"Akun tidak ditemukan"` (21 detik sebelum OTP expired)
+- Tidak ada error backend antara 00:56 dan 01:00
+
+Dari log, backend **berhasil**: OTP terkirim, `pending_registrations` tersimpan, backend return 202. Frontend menampilkan step OTP. Namun customer tidak menyelesaikan verifikasi OTP (navigasi ke halaman login alih-alih memasukkan kode OTP).
+
+**Root Cause — Architectural Bug:**
+
+Di `registerCustomer()` (`auth.service.js`), `sendOTP()` dipanggil **sebelum** `INSERT INTO pending_registrations`:
+
+```js
+// SEBELUM (bug):
+const waResult = await sendOTP(phone_number, otpPlain, full_name);  // ← OTP terkirim dulu
+if (waResult.status === 'FAILED') throw new AppError(...);
+
+await query(`INSERT INTO pending_registrations ...`);               // ← DB disimpan setelah
+```
+
+**Skenario failure:** Jika `INSERT INTO pending_registrations` gagal (constraint violation, DB error, dsb.) setelah OTP sudah terkirim:
+- Customer menerima OTP di WhatsApp
+- Tidak ada record di `pending_registrations` → verifikasi OTP (`verifyRegisterOtp`) akan gagal "sesi registrasi tidak ditemukan"
+- Customer kebingungan: menerima OTP tapi tidak bisa menyelesaikan registrasi
+
+**Fix:**
+
+Swap urutan — simpan `pending_registrations` **dulu**, baru kirim OTP:
+
+```js
+// SESUDAH (fix):
+await query(`INSERT INTO pending_registrations ...`);               // ← DB disimpan dulu
+// STD-018: DB record harus ada sebelum OTP dikirim
+
+const waResult = await sendOTP(phone_number, otpPlain, full_name);  // ← OTP dikirim setelah
+if (waResult.status === 'FAILED') throw new AppError(...);
+```
+
+Jika `sendOTP` gagal setelah INSERT: pending record tetap ada → user retry → `ON CONFLICT DO UPDATE` generate OTP baru → OTP baru dikirim. Tidak ada data kotor.
+
+**Fix Tambahan — BUG-061 RC-4 (ditemukan saat investigasi):**
+
+`TxnNotifJob.js` masih memiliki bug yang menyebabkan query gagal setiap menit:
+```sql
+-- SEBELUM (bug): ten.name tidak ada di tabel tenants
+COALESCE(ten.tenant_name, ten.name) AS booth_name
+
+-- SESUDAH (fix): hanya ten.tenant_name
+ten.tenant_name AS booth_name
+```
+Error ini menyebabkan seluruh notif WA tidak terkirim (query fail → catch → return `{ notified: 0 }`).
+
+**Perubahan File:**
+
+- `backend/src/modules/auth/auth.service.js` — `registerCustomer()`: pindah INSERT sebelum sendOTP
+- `backend/src/modules/scheduler/jobs/TxnNotifJob.js` — baris 139: `COALESCE(ten.tenant_name, ten.name)` → `ten.tenant_name`
+
+**Deployment:**
+
+```bash
+docker compose build backend
+docker compose up -d --no-deps backend
+```
+
+**Recurrence Prevention:**  
+Lihat STD-018 di STANDARD.md — OTP wajib dikirim setelah record database yang menjadi acuan verifikasi berhasil disimpan.

@@ -368,12 +368,22 @@ export default function CustomerShell() {
               🗺️
             </button>
           )}
-          <button
-            onClick={handleLogout}
-            className="text-xs font-semibold text-[#FF6B6B] hover:text-red-600 transition-colors"
+          <NavLink
+            to="/profil"
+            className="flex items-center justify-center transition-transform duration-150 active:scale-90"
+            style={({ isActive }) => ({
+              width: 32, height: 32,
+              borderRadius: 10,
+              background: isActive ? 'rgba(59,91,219,0.12)' : 'rgba(248,249,254,0.80)',
+              border: isActive ? '1.5px solid rgba(59,91,219,0.30)' : '1.5px solid rgba(200,210,240,0.50)',
+            })}
+            aria-label="Profil Saya"
           >
-            {t('shell.logout')}
-          </button>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B5BDB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          </NavLink>
         </div>
       </header>
 

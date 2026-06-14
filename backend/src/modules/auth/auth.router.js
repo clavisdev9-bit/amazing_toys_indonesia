@@ -28,7 +28,27 @@ router.post('/register',
   async (req, res, next) => {
     try {
       const data = await authService.registerCustomer(req.body);
-      res.status(201).json({ success: true, message: 'Registrasi berhasil.', data });
+      res.status(202).json({ success: true, message: 'Kode OTP dikirim ke WhatsApp Anda.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
+ * POST /api/v1/auth/register/verify-otp
+ * Step 2 registrasi: verifikasi OTP WA → akun aktif → issue token
+ * Body: { tempToken, otpCode }
+ */
+router.post('/register/verify-otp',
+  [
+    body('tempToken').notEmpty().withMessage('tempToken wajib diisi.'),
+    body('otpCode').trim().notEmpty().isLength({ min: 6, max: 6 }).isNumeric()
+      .withMessage('Kode OTP harus 6 digit angka.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await authService.verifyRegisterOtp(req.body);
+      res.status(201).json({ success: true, message: 'Registrasi berhasil. Selamat datang!', data });
     } catch (err) { next(err); }
   }
 );

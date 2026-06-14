@@ -467,6 +467,7 @@ const DEFAULT_SYSTEM_CONFIG = {
   printer_usb_name: '',         // Windows: nama printer (mis. "EPSON TM-T82"), Linux: /dev/usb/lp0
   // Per-cashier overrides: [{ user_id, printer_type, printer_ip, printer_port, printer_usb_name }]
   printer_assignments: [],
+  order_notif_limit_minutes: '5',
 };
 
 async function getSystemConfig() {

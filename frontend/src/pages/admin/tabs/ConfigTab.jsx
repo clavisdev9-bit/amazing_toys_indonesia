@@ -299,8 +299,8 @@ export default function ConfigTab() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Input label="Batas Waktu Checkout (menit)" type="number" min="1" max="1440"
-                    value={config.txn_timeout_checkout ?? 30}
-                    onChange={(e) => set('txn_timeout_checkout', parseInt(e.target.value, 10) || 30)} />
+                    value={config.txn_timeout_checkout ?? ''}
+                    onChange={(e) => set('txn_timeout_checkout', e.target.value === '' ? '' : parseInt(e.target.value, 10))} />
                   <p className="text-xs text-gray-400 mt-1">
                     Timer "Bayar dalam X menit" di halaman konfirmasi order customer. Sumber: <code className="bg-gray-100 px-1 rounded">TXN_PENDING_TIMEOUT_MINUTES</code>
                   </p>
@@ -308,6 +308,19 @@ export default function ConfigTab() {
                 <Input label="Maks Item per Order" type="number" min="1" max="100"
                   value={config.max_items_per_order ?? 20}
                   onChange={(e) => set('max_items_per_order', parseInt(e.target.value, 10))} />
+              </div>
+              <div>
+                <Input
+                  label="Notif Limit Pesanan (menit)"
+                  type="text"
+                  value={config.order_notif_limit_minutes ?? '5'}
+                  onChange={(e) => set('order_notif_limit_minutes', e.target.value)}
+                  placeholder="5"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Kirim notifikasi WA ke customer X menit sebelum pesanan kadaluarsa.
+                  Contoh: <code className="bg-gray-100 px-1 rounded">5</code> = notif dikirim 5 menit sebelum expired.
+                </p>
               </div>
             </div>
           </section>

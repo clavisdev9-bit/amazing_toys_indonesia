@@ -289,4 +289,28 @@ async function sendGreeting(phone, customerName = 'Tamu') {
   }
 }
 
-module.exports = { sendOrderQR, getWaConfig, sendTestMessage, sendOTP, sendGreeting };
+async function sendLockoutNotif(phone, lockoutMinutes = 5) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') {
+    logger.debug('[WA] Lockout notif dilewati — provider DISABLED');
+    return { status: 'SKIPPED' };
+  }
+  if (!phone) return { status: 'SKIPPED' };
+
+  const message =
+    `⚠️ *Pemberitahuan Keamanan*\n\n` +
+    `Akun Anda terkunci sementara selama *${lockoutMinutes} menit* karena terlalu banyak percobaan login.\n\n` +
+    `Jika ini bukan Anda, segera hubungi petugas booth Amazing Toys Fair 2026.\n\n` +
+    `Setelah ${lockoutMinutes} menit, Anda dapat mencoba login kembali. 🔒`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA] Lockout notif terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA] Gagal kirim lockout notif', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+module.exports = { sendOrderQR, getWaConfig, sendTestMessage, sendOTP, sendGreeting, sendLockoutNotif };

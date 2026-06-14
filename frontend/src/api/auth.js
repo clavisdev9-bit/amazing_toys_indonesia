@@ -1,6 +1,10 @@
 import client from './client';
 
+// Registrasi step 1: kirim data → terima tempToken + OTP WA
 export const register = (data) => client.post('/auth/register', data);
+
+// Registrasi step 2: verifikasi OTP → akun aktif → terima token
+export const verifyRegisterOtp = (payload) => client.post('/auth/register/verify-otp', payload);
 
 // Customer login — step 1: kirim nomor → WA OTP atau langsung token (trusted device)
 export const loginCustomer = (phone_number, deviceId, deviceInfo) =>

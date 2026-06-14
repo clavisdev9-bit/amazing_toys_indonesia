@@ -5,6 +5,7 @@ const schedulerService = require('./SchedulerService');
 const productSyncJob   = require('./jobs/ProductSyncJob');
 const stockSyncJob     = require('./jobs/StockSyncJob');
 const txnExpireJob     = require('./jobs/TxnExpireJob');
+const txnNotifJob      = require('./jobs/TxnNotifJob');
 
 const DEFAULT_PRODUCT_INTERVAL = 60; // minutes
 const DEFAULT_STOCK_INTERVAL   = 60;
@@ -30,6 +31,7 @@ async function initializeScheduledJobs(getConfigFn) {
     schedulerService.removeJob(productSyncJob.JOB_NAME);
     schedulerService.removeJob(stockSyncJob.JOB_NAME);
     schedulerService.removeJob(txnExpireJob.JOB_NAME);
+    schedulerService.removeJob(txnNotifJob.JOB_NAME);
 
     schedulerService.registerJob(
       productSyncJob.JOB_NAME,
@@ -54,6 +56,13 @@ async function initializeScheduledJobs(getConfigFn) {
       txnExpireJob.JOB_NAME,
       DEFAULT_EXPIRE_INTERVAL,
       () => txnExpireJob.execute(),
+    );
+
+    // Notif WA "hampir kadaluarsa" — jalankan setiap 1 menit agar tepat waktu
+    schedulerService.registerJob(
+      txnNotifJob.JOB_NAME,
+      1,
+      () => txnNotifJob.execute(),
     );
 
     // CP-1 — confirm odoo.stock.sync is in the registry after registration

@@ -15,6 +15,7 @@
   "map_image_url": "https://i.postimg.cc/hGH72FSV/50b01c0d-849c-4bc1-b65d-97f5a427000c.jpg",
   "printer_ip": "",
   "printer_port": 9100,
+  "order_notif_limit_minutes": "5",
   "printer_assignments": [
     {
       "user_id": "c02fc2eb-db4b-4410-a563-da88f62c8251",

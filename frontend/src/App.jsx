@@ -6,6 +6,7 @@ import { LangProvider } from './context/LangContext';
 import { WishlistProvider } from './context/WishlistContext';
 import { useAuth } from './hooks/useAuth';
 import { useWebSocket } from './hooks/useWebSocket';
+import { usePublicConfig } from './hooks/useAppLogo';
 import {
   TourProvider,
   TourOverlay,
@@ -41,6 +42,7 @@ import OrderTrackingPage from './pages/customer/OrderTrackingPage';
 import PaymentConfirmedPage from './pages/customer/PaymentConfirmedPage';
 import ReceiptPickupPage from './pages/customer/ReceiptPickupPage';
 import PickupStatusPage from './pages/customer/PickupStatusPage';
+import ProfilePage from './pages/customer/ProfilePage';
 
 // Cashier pages
 import CashierDashboardPage from './pages/cashier/CashierDashboardPage';
@@ -112,6 +114,26 @@ function WSInit() {
   return null;
 }
 
+// CR-049 + CR-050: sync browser tab title and favicon from admin config
+function AppMetaSync() {
+  const config = usePublicConfig();
+  useEffect(() => {
+    if (config?.event_name) document.title = config.event_name;
+  }, [config?.event_name]);
+  useEffect(() => {
+    if (!config?.logo_url) return;
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = config.logo_url;
+    link.removeAttribute('type');
+  }, [config?.logo_url]);
+  return null;
+}
+
 function AppRoutes() {
   const { logout } = useAuth();
   const navigate   = useNavigate();
@@ -131,6 +153,7 @@ function AppRoutes() {
   return (
     <>
       <WSInit />
+      <AppMetaSync />
       <TourWelcomeModal />
       <TourOverlay />
       <TourHighlight />
@@ -174,6 +197,7 @@ function AppRoutes() {
               <Route path="/product_cart/:id" element={<ProductCartPage />} />
               <Route path="/keranjang" element={<CartPage />} />
               <Route path="/checkout/sukses" element={<CheckoutSuccessPage />} />
+              <Route path="/profil" element={<ProfilePage />} />
             </Route>
           </Route>
 

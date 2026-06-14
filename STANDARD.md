@@ -1,7 +1,7 @@
 # Coding Standard — Amazing Toys Fair 2026
-**Project:** Amazing Toys Fair 2026 — SOS × Odoo 18 Integration  
+**Project:** Amazing Toy Show— SOS × Odoo 18 Integration  
 **Maintained by:** clavis Development  
-**Last updated:** 2026-06-13
+**Last updated:** 2026-06-14
 
 ---
 
@@ -678,3 +678,202 @@ Fungsi berikut yang sudah difix (jangan rollback):
 
 BUG-059 — `cancelOrder()` restore `quantity=4` padahal `approved_quantity=2` → stok +4 bukan +2.  
 DOC.md § Peta Lengkap: Status Transaksi vs Stok — tabel lengkap semua event deduction dan restoration.
+
+---
+
+## STD-015 — Input Numerik yang Boleh Dikosongkan: Jangan Gunakan `parseInt(...) || fallback` pada `onChange`
+
+**Berlaku untuk:** Semua React controlled `<input type="number">` atau komponen `<Input>` yang bisa dikosongkan user untuk mengetik ulang.
+
+### Masalah
+
+Pattern `onChange={(e) => set(key, parseInt(e.target.value, 10) || DEFAULT)}` menyebabkan field tidak bisa diketik ulang:
+
+1. User tekan backspace untuk menghapus isi → `e.target.value = ""`
+2. `parseInt("", 10)` = `NaN`
+3. `NaN || DEFAULT` = `DEFAULT`
+4. Field langsung kembali ke nilai default — user tidak bisa mengetik nilai baru
+
+### Aturan
+
+Gunakan pola yang memperbolehkan empty state selama proses pengetikan:
+
+```jsx
+// BENAR: simpan empty string saat dikosongkan
+value={config.my_field ?? ''}
+onChange={(e) => set('my_field', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+
+// ALTERNATIF: biarkan NaN tersimpan (number input merender NaN sebagai kosong)
+value={config.my_field ?? ''}
+onChange={(e) => set('my_field', parseInt(e.target.value, 10))}
+
+// SALAH — || fallback mencegah pengosongan field:
+onChange={(e) => set('my_field', parseInt(e.target.value, 10) || 30)}
+```
+
+`?? DEFAULT` pada `value={}` boleh untuk menghindari `undefined`, tapi JANGAN pakai `|| fallback` pada `onChange`.
+
+### Referensi
+
+BUG-060 — "Batas Waktu Checkout (menit)" snap ke 30 setiap kali user clear field untuk mengetik ulang.  
+BUG-042 — Input qty di modal approve item snap ke 1 (pattern yang sama).
+
+---
+
+## STD-016 — Kolom yang Dipakai Scheduler/Job Wajib Ada di Idempotent Schema Guard `app.js`; Nama Kolom JOIN Harus Sesuai Schema
+
+**Berlaku untuk:** Semua background job / scheduler yang membaca atau menulis kolom database; semua SQL query yang JOIN ke tabel lain.
+
+### Masalah
+
+**A — Kolom tidak ada di schema guard:**  
+`TxnNotifJob.js` menggunakan `wa_expiry_notif_sent_at` yang hanya ada di `migrations/025_txn_expiry_notif.sql`. File migration tidak dieksekusi otomatis saat container start → kolom tidak ada → query gagal → `{ notified: 0 }` tanpa log yang mudah ditemukan.
+
+**B — Nama kolom JOIN salah:**  
+`TxnNotifJob.js` menggunakan `c.phone` tapi `customers` memiliki `c.phone_number`. Error "column does not exist" di-catch dan diabaikan (silent fail) — tidak ada notifikasi terkirim, tidak ada error yang terlihat.
+
+### Aturan
+
+**A. Schema Guard wajib di `app.js`:**
+```js
+// Tambahkan di server.listen callback, setelah guard lain
+await dbQuery(
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS my_column TIMESTAMPTZ DEFAULT NULL`
+);
+```
+
+**B. Verifikasi nama kolom saat JOIN — referensi kolom telepon:**
+
+| Tabel | Kolom Telepon |
+|---|---|
+| `transactions` | `customer_phone` (VARCHAR 20) |
+| `customers` | `phone_number` (VARCHAR 20) |
+| `transaction_groups` | `customer_phone` |
+
+Grep ke codebase jika ragu: cari query lain yang JOIN ke tabel tersebut sebagai referensi.
+
+**C. Catch block kritis harus log error:**  
+Blok `try { rows = result.rows } catch (err) { return { notified: 0 } }` yang tidak men-log error menyembunyikan bug. Selalu `logger.error(err.message)` sebelum return.
+
+**D. Cakup semua status non-terminal yang bisa expired:**  
+Jika `TxnExpireJob` mengexpire status X, maka `TxnNotifJob` harus juga meng-cover status X, kecuali status tersebut tidak pernah memiliki nomor telepon.
+
+### Checklist Saat Membuat Job Baru
+
+- [ ] Setiap kolom baru ada di `ADD COLUMN IF NOT EXISTS` guard di `app.js`
+- [ ] Nama kolom JOIN diverifikasi ke schema aktual (bukan asumsi)
+- [ ] Catch block path kritis men-log error message
+- [ ] Semua status yang bisa expired dan memiliki phone number dicakup
+
+### Referensi
+
+BUG-061 — `TxnNotifJob` silent fail: `c.phone` salah + kolom `wa_expiry_notif_sent_at` tidak di schema guard + status `PENDING` tidak dicakup.
+
+---
+
+## STD-017 — Browser Metadata (Title + Favicon) Wajib Bersumber dari Admin Config via `usePublicConfig()`
+
+**Berlaku untuk:** Semua metadata browser-level (title, favicon, atau apapun yang tampil di tab/bookmark) pada seluruh halaman SPA.
+
+### Aturan
+
+**A. Jangan hardcode title atau favicon di `index.html` secara permanen:**  
+`index.html` hanya boleh berisi nilai fallback yang aktif sebelum config load. Nilai sebenarnya harus diambil dari `config.event_name` (title) dan `config.logo_url` (favicon).
+
+**B. Gunakan satu null-render component terpusat (`AppMetaSync`):**  
+Semua update metadata browser dikelola di satu tempat — komponen `AppMetaSync` di `App.jsx`. Jangan set `document.title` atau manipulasi favicon di komponen individual (halaman, layout, dll).
+
+```jsx
+// Pattern standar — AppMetaSync di App.jsx
+function AppMetaSync() {
+  const config = usePublicConfig();
+
+  // Title
+  useEffect(() => {
+    if (config?.event_name) document.title = config.event_name;
+  }, [config?.event_name]);
+
+  // Favicon
+  useEffect(() => {
+    if (!config?.logo_url) return;
+    let link = document.querySelector("link[rel~='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = config.logo_url;
+    link.removeAttribute('type'); // biarkan browser detect format dari Content-Type
+  }, [config?.logo_url]);
+
+  return null;
+}
+```
+
+**C. Guard truthy sebelum update:**  
+Jangan update jika nilai belum ada (`if (!config?.logo_url) return`). Fallback `index.html` tetap aktif selama config belum load, saat offline, atau saat field belum diisi admin.
+
+**D. `removeAttribute('type')` pada favicon:**  
+Jika `index.html` memiliki `type="image/svg+xml"` pada `<link rel="icon">` dan logo yang diupload adalah PNG/JPG/WebP, browser akan menolak favicon. Selalu hapus atribut `type` saat update favicon secara programatik.
+
+### Mapping Config → Metadata
+
+| Browser metadata | Field admin | Config key |
+|---|---|---|
+| Tab title (`document.title`) | "Nama Event" | `config.event_name` |
+| Favicon (`<link rel="icon">`) | "Logo Aplikasi" | `config.logo_url` |
+
+### Pengecualian
+
+Halaman yang perlu title spesifik per-route (misal: `"Bayar — Amazing Toys Fair"`) boleh set `document.title` secara lokal, tapi harus menggunakan `event_name` sebagai suffix: `document.title = \`${pageTitle} — ${config.event_name}\``.
+
+### Referensi
+
+CR-049 — Dynamic title dari `event_name`.  
+CR-050 — Dynamic favicon dari `logo_url`.
+
+---
+
+## STD-018 — OTP Wajib Dikirim Setelah Record Database Tersimpan
+
+**Berlaku untuk:** Semua flow yang menghasilkan OTP dan menyimpan data ke database (registrasi customer, reset password, dsb.).
+
+### Aturan
+
+**A. Simpan record database DULU, baru kirim OTP:**  
+Urutan yang benar: `INSERT/UPDATE` ke DB → berhasil → `sendOTP()`. Jangan kirim OTP sebelum record yang menjadi acuan verifikasi tersimpan.
+
+```js
+// BENAR — DB dulu, OTP setelah
+await query(`INSERT INTO pending_registrations ...`);
+const waResult = await sendOTP(phone_number, otpCode, fullName);
+if (waResult.status === 'FAILED') throw new AppError('Gagal mengirim OTP.', 503);
+```
+
+```js
+// SALAH — OTP dulu sebelum DB
+const waResult = await sendOTP(phone_number, otpCode, fullName); // ← bug
+await query(`INSERT INTO pending_registrations ...`);            // ← terlambat
+```
+
+**B. Alasan — "Orphan OTP" scenario:**  
+Jika OTP dikirim dulu dan INSERT DB kemudian gagal:
+- Customer menerima OTP di WhatsApp
+- Tidak ada record di DB → saat customer submit OTP → error "sesi tidak ditemukan"
+- Customer kebingungan: OTP datang tapi registrasi tidak selesai
+
+**C. Jika `sendOTP` gagal setelah DB save — biarkan record ada:**  
+Pending record yang sudah tersimpan tidak perlu dihapus. Pada retry berikutnya, `ON CONFLICT DO UPDATE` akan generate OTP baru dan mengirim ulang. Record lama tidak menimbulkan masalah karena `expires_at` pendek (5 menit).
+
+**D. Login flow — contoh yang benar (`loginCustomer`):**  
+`customerOtpSvc.storeOTP(customerId, otpHash)` dipanggil sebelum `sendOTP()`. Ikuti pola yang sama.
+
+### Checklist
+
+- [ ] `INSERT`/`UPDATE` record verifikasi dipanggil dan `await`-ed sebelum `sendOTP()`
+- [ ] Jika `sendOTP` gagal, pending record dibiarkan (bukan dihapus) agar user bisa retry
+- [ ] `expires_at` pada pending record pendek (≤ 10 menit) agar tidak ada akumulasi data kotor
+
+### Referensi
+
+BUG-062 — `registerCustomer()`: `sendOTP()` dipanggil sebelum `INSERT INTO pending_registrations`, menyebabkan orphan OTP jika DB gagal.
