@@ -61,9 +61,11 @@ import StockReportPage from './pages/tenant/StockReportPage';
 // Helper pages
 import HelperPage             from './pages/helper/HelperPage';
 import HelperOrderSuccessPage from './pages/helper/HelperOrderSuccessPage';
+import HandoverPage           from './pages/helper/HandoverPage';
 
 // Admin page
-import AdminPage from './pages/admin/AdminPage';
+import AdminPage              from './pages/admin/AdminPage';
+import PreorderShipmentPage   from './pages/admin/PreorderShipmentPage';
 // Leader pages
 import LeaderDashboardPage from './pages/leader/LeaderDashboardPage';
 import SalesReportPage from './pages/leader/SalesReportPage';
@@ -94,6 +96,7 @@ const TENANT_NAV = [
 
 const ADMIN_NAV = [
   { to: '/admin', icon: '🛡️', label: 'Administrator Panel' },
+  { to: '/admin/preorder', icon: '📦', label: 'Pengiriman Pre-Order' },
 ];
 
 const LEADER_NAV = [
@@ -221,6 +224,7 @@ function AppRoutes() {
           {/* Helper routes */}
           <Route element={<RequireRole allowedRoles={['HELPER']} />}>
             <Route path="/helper" element={<HelperPage />} />
+            <Route path="/helper/preorder-handover" element={<HandoverPage />} />
             <Route element={<StaffShell navItems={[]} title="Helper" />}>
               <Route path="/helper/order-success" element={<HelperOrderSuccessPage />} />
             </Route>
@@ -272,6 +276,7 @@ function AppRoutes() {
             <Route element={<StaffShell navItems={ADMIN_NAV} title="Administrator" />}>
               <Route path="/admin" element={<AdminPage />} />
             </Route>
+            <Route path="/admin/preorder" element={<PreorderShipmentPage />} />
           </Route>
 
           {/* 404 */}

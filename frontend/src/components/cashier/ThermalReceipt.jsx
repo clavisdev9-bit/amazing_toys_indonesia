@@ -179,6 +179,7 @@ export default function ThermalReceipt({
   const items         = txn?.items ?? [];
   const taxRate       = parseFloat(txn?.tax_rate ?? 0);
   const itemCount     = items.filter(i => i.approval_status !== 'REJECTED').reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity ?? 1), 0);
+  const isPreorder    = (txn?.order_type ?? success?.orderType) === 'PREORDER';
 
   const tenantMap = new Map();
   for (const item of items) {
@@ -228,6 +229,31 @@ export default function ThermalReceipt({
       )}
 
       <hr style={S.ruleDashed} />
+
+      {/* CR-05X: PRE-ORDER warning box */}
+      {isPreorder && (
+        <>
+          <div style={{ border: '1px solid #000', padding: '6px 8px', marginBottom: '8px', textAlign: 'center' }}>
+            <div style={{ fontFamily: SANS, fontSize: '11px', fontWeight: '600', letterSpacing: '1px', color: '#000' }}>
+              *** PRE-ORDER TRANSACTION ***
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '2px' }}>
+              Barang akan dikirim — tidak diambil di booth.
+            </div>
+            {txn?.shipping_name && (
+              <div style={{ fontFamily: SANS, fontSize: '10px', color: '#000', marginTop: '4px', fontWeight: '600' }}>
+                Dikirim ke: {txn.shipping_name}
+                {txn.shipping_city ? `, ${txn.shipping_city}` : ''}
+              </div>
+            )}
+            {txn?.shipping_address && (
+              <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '1px' }}>
+                {txn.shipping_address}
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Items */}
       <div style={S.sectionTitle}>Items Purchased</div>
@@ -280,8 +306,8 @@ export default function ThermalReceipt({
 
       <hr style={S.ruleDouble} />
 
-      {/* Pickup reminder */}
-      {tenantGroups.length > 0 && (
+      {/* Pickup reminder — hidden for pre-order */}
+      {!isPreorder && tenantGroups.length > 0 && (
         <>
           <div style={S.sectionTitle}>Collect your items at</div>
           {tenantGroups.map((g, i) => (

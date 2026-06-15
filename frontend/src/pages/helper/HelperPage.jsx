@@ -242,6 +242,17 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
         })}
       </nav>
 
+      {/* CR-05X: Pre-Order Serah Terima link */}
+      <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 0' }}>
+        <Link
+          to="/helper/preorder-handover"
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 11px', color: '#EA580C', fontWeight: 700, fontSize: 13, textDecoration: 'none' }}
+        >
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#EA580C', flexShrink: 0 }} />
+          <span style={{ flex: 1, lineHeight: 1.35 }}>📦 Pre-Order</span>
+        </Link>
+      </div>
+
       {/* Footer: user + logout */}
       <div style={{ padding: '10px 12px', borderTop: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -310,6 +321,12 @@ function MembuatOrderPanel({ searchQuery }) {
   const [confirmModal, setConfirmModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // CR-05X: Shipping fields for preorder
+  const [shipName, setShipName] = useState('');
+  const [shipPhone, setShipPhone] = useState('');
+  const [shipAddress, setShipAddress] = useState('');
+  const [shipCity, setShipCity] = useState('');
+  const [shipProvince, setShipProvince] = useState('');
 
   useEffect(() => {
     getBoothProducts()
@@ -346,8 +363,10 @@ function MembuatOrderPanel({ searchQuery }) {
     .filter(([, qty]) => qty > 0)
     .map(([pid, qty]) => {
       const p = products.find(x => x.product_id === pid);
-      return { product_id: pid, qty, product_name: p?.product_name, price: p?.price };
+      return { product_id: pid, qty, product_name: p?.product_name, price: p?.price, is_preorder: p?.is_preorder };
     });
+
+  const hasPreorder = cartItems.some(i => i.is_preorder);
 
   const subtotal = cartItems.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
   const taxAmt = Math.round(subtotal * 0.12);
@@ -356,14 +375,28 @@ function MembuatOrderPanel({ searchQuery }) {
   async function handleCreateOrder() {
     if (cartItems.length === 0) return;
     setError('');
+    // Validate shipping fields for preorder
+    if (hasPreorder) {
+      if (!shipName.trim()) { setError('Nama penerima wajib diisi untuk Pre-Order.'); return; }
+      if (!shipAddress.trim()) { setError('Alamat pengiriman wajib diisi untuk Pre-Order.'); return; }
+    }
     setSubmitting(true);
     try {
-      const res = await createHelperOrder({
+      const payload = {
         items: cartItems.map(i => ({ product_id: i.product_id, qty: i.qty })),
         customer_phone: phone || null,
-      });
+      };
+      if (hasPreorder) {
+        payload.shipping_name    = shipName.trim();
+        payload.shipping_phone   = shipPhone.trim() || null;
+        payload.shipping_address = shipAddress.trim();
+        payload.shipping_city    = shipCity.trim() || null;
+        payload.shipping_province = shipProvince.trim() || null;
+      }
+      const res = await createHelperOrder(payload);
       setCart({});
       setPhone('');
+      setShipName(''); setShipPhone(''); setShipAddress(''); setShipCity(''); setShipProvince('');
       setConfirmModal(false);
       navigate('/helper/order-success', { state: res.data.data });
     } catch (err) {
@@ -431,7 +464,11 @@ function MembuatOrderPanel({ searchQuery }) {
                 {oos && <span style={{ fontSize: 10, background: C.crimsonLight, color: C.crimsonDark, padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>Habis</span>}
                 {p.is_display_only && <span style={{ fontSize: 10, background: '#FFF3E0', color: '#BF6000', padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>Display Only</span>}
                 {p.is_on_hold && <span style={{ fontSize: 10, background: '#FEF3C7', color: '#92400E', padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>On Hold</span>}
+                {p.is_preorder && <span style={{ fontSize: 10, background: '#FED7AA', color: '#EA580C', padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>PRE-ORDER</span>}
               </div>
+              {p.is_preorder && p.preorder_note && (
+                <p style={{ margin: '2px 0 0', fontSize: 10.5, color: '#EA580C', fontStyle: 'italic' }}>{p.preorder_note}</p>
+              )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               <button
@@ -477,6 +514,33 @@ function MembuatOrderPanel({ searchQuery }) {
             onChange={e => setPhone(e.target.value)}
             style={{ width: '100%', boxSizing: 'border-box', marginTop: 10, padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', background: C.warmBg, color: '#2a1e10', outline: 'none' }}
           />
+
+          {/* CR-05X: Shipping address for pre-order items */}
+          {hasPreorder && (
+            <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, background: '#FFF7ED', border: '1.5px solid #FED7AA' }}>
+              <p style={{ margin: '0 0 8px', fontSize: 12, fontWeight: 800, color: '#EA580C' }}>📦 Alamat Pengiriman (Pre-Order)</p>
+              {[
+                { label: 'Nama Penerima *', val: shipName, set: setShipName, placeholder: 'Nama lengkap penerima', req: true },
+                { label: 'No. HP Penerima', val: shipPhone, set: setShipPhone, placeholder: '08xxxxxxxxxx', req: false },
+                { label: 'Alamat Lengkap *', val: shipAddress, set: setShipAddress, placeholder: 'Jl. ..., No. ...', req: true },
+                { label: 'Kota / Kabupaten', val: shipCity, set: setShipCity, placeholder: 'Jakarta Selatan', req: false },
+                { label: 'Provinsi', val: shipProvince, set: setShipProvince, placeholder: 'DKI Jakarta', req: false },
+              ].map(({ label, val, set, placeholder, req }) => (
+                <div key={label} style={{ marginBottom: 6 }}>
+                  <p style={{ margin: '0 0 2px', fontSize: 11, fontWeight: 700, color: '#92400E' }}>{label}</p>
+                  <input
+                    type="text"
+                    value={val}
+                    onChange={e => set(e.target.value)}
+                    placeholder={placeholder}
+                    required={req}
+                    style={{ width: '100%', boxSizing: 'border-box', padding: '6px 8px', borderRadius: 7, border: `1.5px solid ${req && !val.trim() ? '#FCA5A5' : '#FED7AA'}`, fontSize: 12.5, fontFamily: 'inherit', background: '#fff', outline: 'none' }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           <button
             onClick={() => { setError(''); setConfirmModal(true); }}
             style={{ width: '100%', marginTop: 10, padding: '10px 0', borderRadius: 10, background: C.olive, color: '#fff', border: 'none', fontWeight: 800, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit' }}
@@ -491,7 +555,15 @@ function MembuatOrderPanel({ searchQuery }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 340, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
             <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 16, color: '#2a1e10' }}>Konfirmasi Order</h3>
+            {hasPreorder && (
+              <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 700, color: '#EA580C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6, padding: '4px 8px' }}>
+                ⚠ Order ini berisi PRE-ORDER — barang akan dikirim ke alamat customer.
+              </p>
+            )}
             <p style={{ margin: '0 0 4px', fontSize: 13, color: '#5a4e3e' }}>Buat order senilai <strong>{formatRupiah(total)}</strong>?</p>
+            {hasPreorder && shipName && (
+              <p style={{ margin: '0 0 4px', fontSize: 12, color: C.muted }}>Dikirim ke: <strong>{shipName}</strong>{shipCity ? `, ${shipCity}` : ''}</p>
+            )}
             <p style={{ margin: '0 0 16px', fontSize: 12, color: C.muted }}>
               {phone ? `QR akan dikirim ke ${phone}` : 'Tidak ada nomor HP — customer scan langsung di layar'}
             </p>

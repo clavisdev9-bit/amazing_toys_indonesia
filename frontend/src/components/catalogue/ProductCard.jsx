@@ -109,6 +109,16 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
           : <span className="text-5xl">🧸</span>
         }
 
+        {/* PRE-ORDER badge overlay */}
+        {product.is_preorder && (
+          <span
+            className="absolute top-2 left-2 text-[9px] font-black px-1.5 py-0.5 rounded-md tracking-wide"
+            style={{ background: 'rgba(234,88,12,0.92)', color: '#fff', backdropFilter: 'blur(6px)' }}
+          >
+            PRE-ORDER
+          </span>
+        )}
+
         {/* Wishlist button */}
         <button
           onClick={handleWish}
@@ -141,13 +151,21 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
         <p className="text-[13px] font-bold truncate" style={{ color: 'rgba(25,35,90,0.90)' }}>
           {product.name}
         </p>
+        {product.is_preorder && product.preorder_note && (
+          <p className="text-[10px] truncate" style={{ color: '#EA580C' }}>
+            {product.preorder_note}
+          </p>
+        )}
         <p className="text-[11px] font-semibold" style={{ color: 'rgba(80,95,160,0.70)' }}>
           {product.tenant_name || ''}
         </p>
 
         <div className="flex items-center justify-between gap-1">
           <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}</span>
-          <StockBadge level={stockLevel} label={t(stockKey)} />
+          {product.is_preorder
+            ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-[8px]" style={{ background: 'rgba(255,237,213,0.85)', color: '#EA580C', border: '1px solid rgba(234,88,12,0.15)' }}>Pre-Order</span>
+            : <StockBadge level={stockLevel} label={t(stockKey)} />
+          }
         </div>
 
         {/* Add to cart button — hidden in helper/approve mode */}

@@ -32,6 +32,7 @@ const { paymentsRouter: bcaQrisPaymentsRouter, webhookRouter: bcaQrisWebhookRout
 const { voucherRouter, adminVoucherRouter } = require('./modules/vouchers/vouchers.routes');
 const helperRouter       = require('./modules/helper/helper.router');
 const customerRouter     = require('./modules/customer/customer.router');
+const preorderRouter     = require('./modules/preorder/preorder.router');
 
 // WebSocket
 const { setupWebSocket, wsBroadcast } = require('./ws/websocket');
@@ -124,6 +125,7 @@ app.use(`${API}/admin/vouchers`, adminVoucherRouter);
 app.use(`${API}/admin`,        adminRouter);
 app.use(`${API}/receipts`,     receiptsRouter);
 app.use(`${API}/print`,        printRouter);
+app.use(`${API}/preorder`,     preorderRouter);
 app.use(`${API}/payments/bca`, bcaQrisPaymentsRouter);
 app.use(`${API}/webhook`,      bcaQrisWebhookRouter);
 
@@ -141,34 +143,32 @@ const PORT   = parseInt(process.env.PORT || '3000', 10);
 const server = http.createServer(app);
 setupWebSocket(server);
 
+// Runs a list of idempotent DDL statements at startup; logs result; never throws.
+async function runSchemaGuard(label, statements) {
+  try {
+    for (const sql of statements) await dbQuery(sql);
+    logger.info(`[Schema] ${label} ready.`);
+  } catch (e) {
+    logger.warn(`[Schema] ${label} warning:`, e.message);
+  }
+}
+
 server.listen(PORT, async () => {
   logger.info(`[Server] Amazing Toys SOS API running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   logger.info(`[Server] WebSocket available at ws://localhost:${PORT}/ws`);
 
-  // ── Idempotent schema guard (migrations 015 + 017) ───────────────────────
-  // Ensures HELPER_APPROVE columns always exist regardless of whether
-  // the migration SQL files were manually applied to this Docker environment.
-  // Uses ADD COLUMN IF NOT EXISTS so repeated startup calls are safe.
-  const helperApproveColumns = [
-    // Migration 015
+  // ── Idempotent schema guards (ADD/CREATE IF NOT EXISTS — safe to re-run) ──────
+  await runSchemaGuard('Migrations 015+017 — HELPER_APPROVE columns', [
     `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'`,
     `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_at         TIMESTAMPTZ`,
     `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approved_by         UUID`,
     `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS timer_locked_until  TIMESTAMPTZ`,
     `ALTER TABLE transactions       ADD COLUMN IF NOT EXISTS approval_note       TEXT`,
-    // Migration 017
     `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS approved_quantity   INTEGER`,
     `ALTER TABLE transaction_items  ADD COLUMN IF NOT EXISTS rejection_reason    TEXT`,
-  ];
-  try {
-    for (const sql of helperApproveColumns) await dbQuery(sql);
-    logger.info('[Schema] HELPER_APPROVE columns verified (migrations 015 + 017 idempotent check done).');
-  } catch (e) {
-    logger.warn('[Schema] HELPER_APPROVE column check warning — some columns may be missing:', e.message);
-  }
+  ]);
 
-  // ── Idempotent schema guard (CR-041: OTP + trusted devices) ─────────────────
-  const cr041Statements = [
+  await runSchemaGuard('Migrations 018-021 — CR-041 OTP/device tables', [
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS email       VARCHAR(255)`,
     `ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
     `CREATE TABLE IF NOT EXISTS login_otps (
@@ -207,19 +207,9 @@ server.listen(PORT, async () => {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_device ON refresh_tokens(user_id, device_id)`,
     `CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token       ON refresh_tokens(token_hash)`,
-  ];
-  try {
-    for (const sql of cr041Statements) await dbQuery(sql);
-    logger.info('[Schema] CR-041 OTP/device tables verified (migrations 018-021 idempotent check done).');
-  } catch (e) {
-    logger.warn('[Schema] CR-041 schema check warning:', e.message);
-  }
+  ]);
 
-  // ── Idempotent schema guard (migration 024: customer OTP + trusted devices) ──
-  // customer_otps and customer_trusted_devices are used by /masuk (customer login).
-  // These tables were added after the CR-041 guard was written and were never
-  // included, causing "relation customer_otps does not exist" on login.
-  const migration024Statements = [
+  await runSchemaGuard('Migration 024 — customer OTP/trusted devices', [
     `CREATE TABLE IF NOT EXISTS customer_otps (
        id            SERIAL PRIMARY KEY,
        customer_id   UUID        NOT NULL REFERENCES customers(customer_id) ON DELETE CASCADE,
@@ -245,16 +235,9 @@ server.listen(PORT, async () => {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_customer_trusted_devices_lookup
        ON customer_trusted_devices (customer_id, device_id)`,
-  ];
-  try {
-    for (const sql of migration024Statements) await dbQuery(sql);
-    logger.info('[Schema] Migration 024 verified — customer_otps + customer_trusted_devices ready.');
-  } catch (e) {
-    logger.warn('[Schema] Migration 024 schema check warning:', e.message);
-  }
+  ]);
 
-  // ── Idempotent schema guard (CR: item delete approval workflow) ─────────────
-  const deleteRequestStatements = [
+  await runSchemaGuard('Item delete approval workflow', [
     `CREATE TABLE IF NOT EXISTS item_delete_requests (
        request_id     SERIAL        PRIMARY KEY,
        transaction_id VARCHAR(50)   REFERENCES transactions(transaction_id) ON DELETE SET NULL,
@@ -284,31 +267,44 @@ server.listen(PORT, async () => {
      END $$`,
     `CREATE INDEX IF NOT EXISTS idx_delete_requests_cashier ON item_delete_requests(cashier_id, status)`,
     `CREATE INDEX IF NOT EXISTS idx_delete_requests_status  ON item_delete_requests(status, created_at DESC)`,
-  ];
-  try {
-    for (const sql of deleteRequestStatements) await dbQuery(sql);
-    logger.info('[Schema] item_delete_requests table verified (idempotent check done).');
-  } catch (e) {
-    logger.warn('[Schema] item_delete_requests schema check warning:', e.message);
-  }
+  ]);
 
-  // ── Idempotent schema guard (migration 025: wa_expiry_notif_sent_at) ────────
-  // BUG-061: column was only in migrations/025_txn_expiry_notif.sql (not run
-  // automatically), so TxnNotifJob SQL failed with "column does not exist".
-  try {
-    await dbQuery(
-      `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wa_expiry_notif_sent_at TIMESTAMPTZ DEFAULT NULL`,
-    );
-    await dbQuery(
-      `CREATE INDEX IF NOT EXISTS idx_transactions_wa_expiry_notif
-         ON transactions (expires_at)
-         WHERE wa_expiry_notif_sent_at IS NULL
-           AND status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')`,
-    );
-    logger.info('[Schema] Migration 025 verified — transactions.wa_expiry_notif_sent_at ready.');
-  } catch (e) {
-    logger.warn('[Schema] Migration 025 schema check warning:', e.message);
-  }
+  await runSchemaGuard('Migration 025 — wa_expiry_notif_sent_at', [
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wa_expiry_notif_sent_at TIMESTAMPTZ DEFAULT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_transactions_wa_expiry_notif
+       ON transactions (expires_at)
+       WHERE wa_expiry_notif_sent_at IS NULL
+         AND status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')`,
+  ]);
+
+  await runSchemaGuard('Migration 029 — CR-05X pre-order', [
+    // txn_status_enum — ADD VALUE IF NOT EXISTS is safe to re-run (PostgreSQL ≥ 9.1)
+    `ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'AWAITING_SHIPMENT'`,
+    `ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'SHIPPED'`,
+    `ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'ARRIVED'`,
+    `ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'PREORDER_HANDOVER'`,
+    // actor_role_enum — ADMIN melakukan ship/arrived; audit_log harus menerima role ini
+    `ALTER TYPE actor_role_enum ADD VALUE IF NOT EXISTS 'ADMIN'`,
+    // products
+    `ALTER TABLE products ADD COLUMN IF NOT EXISTS is_preorder   BOOLEAN DEFAULT FALSE`,
+    `ALTER TABLE products ADD COLUMN IF NOT EXISTS preorder_note TEXT`,
+    // transactions — order type & shipping
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS order_type        VARCHAR(20) DEFAULT 'REGULAR'`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_name     VARCHAR(100)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_phone    VARCHAR(20)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_address  TEXT`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_city     VARCHAR(100)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipping_province VARCHAR(100)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS courier           VARCHAR(50)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tracking_number   VARCHAR(100)`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS shipped_at        TIMESTAMPTZ`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS arrived_at        TIMESTAMPTZ`,
+    `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS handed_over_at    TIMESTAMPTZ`,
+    // index
+    `CREATE INDEX IF NOT EXISTS idx_transactions_order_type
+       ON transactions (order_type, status)
+       WHERE order_type = 'PREORDER'`,
+  ]);
 
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());

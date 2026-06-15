@@ -4,8 +4,8 @@ function PrinterIcon() {
   return (
     <svg
       aria-hidden="true"
-      width="16"
-      height="16"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -27,10 +27,7 @@ export default function PrintReceiptButton({ txn, onOpenModal }) {
       type="button"
       onClick={onOpenModal}
       disabled={disabled}
-      className={`inline-flex items-center gap-2 bg-white text-emerald-700 border border-emerald-600
-        rounded-md px-4 py-2 text-sm font-medium hover:bg-emerald-50
-        focus:outline-none focus:ring-2 focus:ring-emerald-500
-        ${disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
+      className={`inline-flex items-center justify-center gap-2 bg-white text-emerald-700 border border-emerald-600 rounded-md px-3 py-1.5 text-xs font-medium hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${disabled ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
     >
       <PrinterIcon />
       Print receipt

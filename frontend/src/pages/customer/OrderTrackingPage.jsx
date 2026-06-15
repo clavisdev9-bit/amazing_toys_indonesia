@@ -270,7 +270,8 @@ function AuthenticatedOrderView({ transactionId }) {
   // Active for any non-terminal status (includes PENDING_APPROVAL for helper-approval flow).
   useEffect(() => {
     const isActive = order?.status
-      && ['PENDING', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL'].includes(order.status);
+      && ['PENDING', 'RESERVED', 'WAITING_PAYMENT', 'PENDING_APPROVAL',
+          'AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED'].includes(order.status);
     if (!isActive) return;
     const id = setInterval(fetchOrder, 15_000);
     return () => clearInterval(id);
@@ -483,6 +484,63 @@ function AuthenticatedOrderView({ transactionId }) {
           );
         })}
       </div>
+
+      {/* CR-05X: Pre-Order stepper */}
+      {order.order_type === 'PREORDER' && (() => {
+        const PREORDER_STEPS = [
+          { key: 'PAID',             label: 'Pembayaran',      icon: '💳' },
+          { key: 'AWAITING_SHIPMENT',label: 'Menunggu Kirim',  icon: '📦' },
+          { key: 'SHIPPED',          label: 'Dalam Pengiriman',icon: '🚚' },
+          { key: 'ARRIVED',          label: 'Tiba di Indonesia',icon: '🏠' },
+          { key: 'PREORDER_HANDOVER',label: 'Serah Terima',    icon: '🤝' },
+          { key: 'COMPLETED',        label: 'Selesai',         icon: '✅' },
+        ];
+        const ORDER = PREORDER_STEPS.map(s => s.key);
+        const curIdx = ORDER.indexOf(order.status);
+        return (
+          <div className="bg-orange-50 border-b border-orange-100 px-4 py-4">
+            <p className="text-xs font-bold text-orange-600 uppercase tracking-wide mb-3">📦 Status Pre-Order</p>
+            {/* Shipping info if available */}
+            {order.shipping_name && (
+              <div className="mb-3 text-xs text-orange-700 bg-orange-100 rounded-lg px-3 py-2">
+                Dikirim ke: <strong>{order.shipping_name}</strong>
+                {order.shipping_city ? `, ${order.shipping_city}` : ''}
+                {order.courier ? <span className="ml-1">· {order.courier} {order.tracking_number}</span> : ''}
+              </div>
+            )}
+            <div className="flex items-start gap-0">
+              {PREORDER_STEPS.map((step, idx) => {
+                const done    = curIdx >= idx;
+                const current = curIdx === idx;
+                const last    = idx === PREORDER_STEPS.length - 1;
+                return (
+                  <div key={step.key} className="flex flex-col items-center flex-1">
+                    <div className="flex items-center w-full">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mx-auto"
+                        style={{
+                          background: done ? (current ? '#EA580C' : '#4A7C59') : '#E5DDD0',
+                          color: done ? '#fff' : '#8a7968',
+                          boxShadow: current ? '0 0 0 3px rgba(234,88,12,0.25)' : 'none',
+                        }}
+                      >
+                        {done ? (current ? step.icon : '✓') : idx + 1}
+                      </div>
+                      {!last && (
+                        <div className="flex-1 h-0.5 mx-0.5" style={{ background: curIdx > idx ? '#4A7C59' : '#E5DDD0' }} />
+                      )}
+                    </div>
+                    <p className="text-[9px] text-center mt-1 font-medium leading-tight px-0.5"
+                      style={{ color: current ? '#EA580C' : done ? '#4A7C59' : '#8a7968', maxWidth: 52 }}>
+                      {step.label}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {(order.status === 'PAID' || order.status === 'DONE') && (
         <div className="p-4">

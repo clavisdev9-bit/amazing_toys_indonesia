@@ -85,6 +85,11 @@
 | [BUG-067](#bug-067) | 2026-06-15 | Group invoice `GRP-*` tidak bisa digunakan untuk ambil barang di halaman helper — `HandoverOutstandingPanel` hanya filter by `transaction_id`, tidak handle format `GRP-*`; `handoverOrder` tidak punya logik group sehingga item multi-booth saling merusak; setiap booth butuh independent handover | Frontend + Backend | ✅ Resolved | CR-054 |
 | [CR-062](#cr-062) | 2026-06-15 | ThermalGroupReceipt: Struk thermal untuk Group Invoice Checkout — QR group code, breakdown per booth, per-booth pickup reminder, daftar TXN | Frontend | ✅ Done | CR-054 |
 | [CR-063](#cr-063) | 2026-06-15 | Tab "Group Invoice" di `/cashier` — list GRP-* hari ini, expand per row untuk detail TRX + reprint struk | Frontend + Backend | ✅ Done | — |
+| [BUG-068](#bug-068) | 2026-06-15 | Tab "Group Invoice" expand row gagal — `operator does not exist: character varying = uuid` di `getGroupDetail` karena PostgreSQL menginfer tipe `$1` sebagai UUID dari perbandingan pertama, lalu `group_code = $1` gagal | Backend | ✅ Resolved | CR-063 |
+| [BUG-069](#bug-069) | 2026-06-15 | `/helper/preorder-handover` → "Gagal memuat data pre-order." — SQL invalid boolean expression `ti.approved_quantity IS NOT NULL AND ti.approved_quantity OR ti.quantity` (seharusnya `COALESCE`) | Backend | ✅ Resolved | CR-05X |
+| [BUG-070](#bug-070) | 2026-06-15 | Status `AWAITING_SHIPMENT` tidak tampil di `/pesanan` — Badge style dan i18n key 4 status pre-order belum didefinisikan | Frontend | ✅ Resolved | CR-05X |
+| [BUG-071](#bug-071) | 2026-06-15 | Semua endpoint pre-order gagal — `txn_status_enum` tidak punya 4 nilai CR-05X (`AWAITING_SHIPMENT`, `SHIPPED`, `ARRIVED`, `PREORDER_HANDOVER`) | Database | ✅ Resolved | CR-05X |
+| [BUG-072](#bug-072) | 2026-06-15 | Klik "Konfirmasi Kirim" di `/admin/preorder` → Internal Server Error — `actor_role_enum` tidak punya nilai `ADMIN`; `writeAuditLog` gagal karena `preorder.service.js` hardcode `actorRole: 'ADMIN'` yang tidak terdaftar di enum | Database + Backend | ✅ Resolved | CR-05X |
 
 ---
 
@@ -5490,3 +5495,256 @@ Route `GET /api/v1/cashier/groups` ditempatkan **sebelum** `GET /api/v1/cashier/
 ### Catatan
 
 Route ordering penting: Express mencocokkan `/groups` sebelum `/groups/:groupId` — jika urutannya terbalik, request ke `/groups` akan menjadi `groups/undefined` dan masuk ke handler detail (dengan 404).
+
+---
+
+## BUG-068 — Tab "Group Invoice" Expand Row Gagal — `operator does not exist: character varying = uuid`
+
+**Date:** 2026-06-15  
+**CR Terkait:** CR-063  
+**Layer:** Backend  
+**Status:** ✅ Resolved
+
+### Symptom
+
+Klik row di tab "Group Invoice" pada `/cashier` → panel expand menampilkan **"Gagal memuat detail group."** Tidak ada feedback visual lain.
+
+### Root Cause
+
+Di `getGroupDetail` (`cashier.service.js`):
+
+```sql
+-- BROKEN
+WHERE g.group_id = $1 OR g.group_code = $1
+```
+
+PostgreSQL **menginfer tipe parameter `$1`** dari ekspresi pertama yang menggunakannya. Karena `group_id` bertipe `uuid`, PostgreSQL menetapkan `$1` sebagai `uuid`. Ketika ekspresi kedua `group_code = $1` dievaluasi, PostgreSQL mencoba `character varying = uuid` — operator ini tidak ada — dan query gagal dengan:
+
+```
+error: operator does not exist: character varying = uuid
+```
+
+Ini terjadi ketika nilai yang dikirim adalah `'GRP-20260615-0001'` (string, bukan UUID). Sebelum CR-063, `getGroupDetail` hanya dipanggil secara internal dengan `group_id` (UUID), sehingga bug ini tidak pernah terpicu. CR-063 memanggil `getGroupDetail(group.group_code)` langsung dari frontend — pertama kalinya fungsi ini menerima nilai GRP-*.
+
+### Fix
+
+Cast `group_id` ke `text` sebelum perbandingan sehingga `$1` diinfer sebagai `text`:
+
+```sql
+-- FIXED
+WHERE g.group_id::text = $1 OR g.group_code = $1
+```
+
+Dengan ini:
+- `$1` diinfer sebagai `text` dari perbandingan pertama
+- `group_code = $1` → `character varying = text` — valid ✅
+- Jika `$1` adalah UUID string → `group_id::text` cocok
+- Jika `$1` adalah GRP-* string → `group_code` cocok
+
+### File
+
+`backend/src/modules/cashier/cashier.service.js` baris 417.
+
+### Kenapa Tidak Terdeteksi Sebelumnya
+
+`getGroupDetail` punya tanda tangan `getGroupDetail(groupId)` yang menyiratkan bisa menerima UUID atau group_code. Tapi seluruh call site sebelumnya selalu mengirim UUID (internal call dari `groupCheckout` tidak ada, route `/groups/:groupId` tidak pernah dipanggil dari UI lama dengan GRP-* code). Ini adalah **latent bug** yang baru terpicu saat CR-063 menambahkan call site baru.
+
+---
+
+## BUG-069 — `/helper/preorder-handover` Gagal Memuat Data Pre-Order
+
+**Date:** 2026-06-15
+**CR Terkait:** CR-05X
+**Layer:** Backend
+**Status:** ✅ Resolved
+
+### Symptom
+
+Halaman `/helper/preorder-handover` langsung menampilkan **"Gagal memuat data pre-order."** saat dibuka. Tidak ada data yang tampil.
+
+### Root Cause
+
+Di `getPreorderList` (`preorder.service.js`), ekspresi SQL di dalam `json_build_object` menggunakan operator boolean yang tidak valid:
+
+```sql
+-- BROKEN
+'quantity', ti.approved_quantity IS NOT NULL AND ti.approved_quantity
+            OR ti.quantity,
+```
+
+PostgreSQL mengurai ini sebagai:
+```
+((ti.approved_quantity IS NOT NULL) AND ti.approved_quantity) OR ti.quantity
+```
+
+- `ti.approved_quantity IS NOT NULL` → `boolean` ✅
+- `AND ti.approved_quantity` → `AND integer` ❌ — PostgreSQL butuh `boolean`, bukan `integer`
+
+Query langsung gagal dengan error tipe data → backend throw 500 → frontend catch → tampil "Gagal memuat data pre-order."
+
+### Fix
+
+Ganti dengan `COALESCE`:
+
+```sql
+-- FIXED
+'quantity', COALESCE(ti.approved_quantity, ti.quantity),
+```
+
+`COALESCE` mengembalikan `approved_quantity` jika tidak NULL (mode HELPER_APPROVE), fallback ke `quantity` (mode normal).
+
+### File
+
+`backend/src/modules/preorder/preorder.service.js` baris 76.
+
+### Kenapa Tidak Terdeteksi Sebelumnya
+
+Halaman pre-order handover baru dibuat (CR-05X) dan belum pernah diakses di environment yang berjalan. Bug tersembunyi karena sintaks SQL ini lolos dari linting JavaScript — hanya terpicu saat query dieksekusi di PostgreSQL runtime.
+
+---
+
+## BUG-070 — Status Pre-Order Tidak Tampil di Halaman Orders (Badge Raw Key)
+
+**Date:** 2026-06-15
+**CR Terkait:** CR-05X
+**Layer:** Frontend
+**Status:** ✅ Resolved
+
+### Symptom
+
+Halaman `/pesanan` (order history) dan `/pesanan/:id` (order tracking) menampilkan raw key `badge.AWAITING_SHIPMENT` alih-alih label yang bermakna untuk transaksi pre-order yang sudah dibayar. Status terlihat seperti tidak ada atau tidak dikenali.
+
+### Root Cause
+
+Tiga masalah yang saling terkait:
+
+**1. `LangContext.jsx`** — Empat status pre-order (`AWAITING_SHIPMENT`, `SHIPPED`, `ARRIVED`, `PREORDER_HANDOVER`) tidak didaftarkan di bagian `badge.*` untuk semua 3 bahasa (ID, EN, ZH). Fungsi `t()` fallback ke key itu sendiri (e.g., `"badge.AWAITING_SHIPMENT"`), yang kemudian ditampilkan mentah oleh `Badge` component.
+
+**2. `Badge.jsx`** — Keempat status pre-order tidak ada di object `styles`. Badge tampil dengan style gray default (`bg-gray-100 text-gray-600`) tanpa warna yang membedakan status pengiriman.
+
+**3. `OrderTrackingPage.jsx:273`** — Polling fallback (`setInterval` 15 detik) hanya aktif untuk status `PENDING`, `RESERVED`, `WAITING_PAYMENT`, `PENDING_APPROVAL`. Status aktif pre-order (`AWAITING_SHIPMENT`, `SHIPPED`, `ARRIVED`) tidak termasuk — halaman tidak auto-refresh saat barang dalam perjalanan.
+
+### Fix
+
+**`Badge.jsx`** — Tambah 4 style baru:
+- `AWAITING_SHIPMENT` → `bg-orange-100 text-orange-800`
+- `SHIPPED` → `bg-blue-100 text-blue-800`
+- `ARRIVED` → `bg-teal-100 text-teal-800`
+- `PREORDER_HANDOVER` → `bg-purple-100 text-purple-800`
+
+**`LangContext.jsx`** — Tambah translations di ID/EN/ZH:
+- ID: Menunggu Kirim / Dalam Pengiriman / Tiba di Indonesia / Serah Terima
+- EN: Awaiting Shipment / Shipped / Arrived / Handover
+- ZH: 等待发货 / 已发货 / 已到达 / 交货中
+
+**`OrderTrackingPage.jsx`** — Tambah `'AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED'` ke array polling fallback.
+
+### Files
+
+- `frontend/src/components/ui/Badge.jsx`
+- `frontend/src/context/LangContext.jsx`
+- `frontend/src/pages/customer/OrderTrackingPage.jsx` baris 273
+
+### Kenapa Tidak Terdeteksi Sebelumnya
+
+CR-05X menambahkan backend pre-order flow lengkap tapi lupa mendaftarkan status-status baru ke sistem display (Badge + i18n). Karena `t()` fallback ke raw key dan Badge fallback ke gray, tidak ada error yang muncul — hanya tampilan yang salah. Polling juga tidak ditambahkan karena developer tidak menyadari bahwa list aktif status di baris 273 perlu diupdate.
+
+---
+
+## BUG-071 — Semua Endpoint Pre-Order Gagal: `txn_status_enum` Tidak Memiliki Nilai CR-05X
+
+**Date:** 2026-06-15
+**CR Terkait:** CR-05X
+**Layer:** Database (PostgreSQL ENUM) + Backend Schema Guard
+**Status:** ✅ Resolved
+
+### Symptom
+
+1. Halaman `/admin/preorder` menampilkan **"Gagal memuat data pre-order."** di semua tab
+2. Halaman `/helper/preorder-handover` juga menampilkan error yang sama (meskipun BUG-069 sudah diperbaiki)
+3. Proses pembayaran pesanan pre-order kemungkinan gagal set status ke `AWAITING_SHIPMENT`
+
+### Root Cause
+
+Kolom `status` pada tabel `transactions` bertipe PostgreSQL ENUM `txn_status_enum`. Migration `029_cr05x_preorder.sql` menambahkan kolom-kolom baru dan index, **tapi lupa menambahkan 4 nilai baru ke enum**:
+- `AWAITING_SHIPMENT`
+- `SHIPPED`
+- `ARRIVED`
+- `PREORDER_HANDOVER`
+
+Akibatnya setiap query yang menyertakan nilai-nilai ini (termasuk `t.status = ANY($1)` di `getPreorderList`) langsung gagal dengan:
+```
+invalid input value for enum txn_status_enum: "AWAITING_SHIPMENT"
+```
+
+Frontend menangkap error ini dan menampilkan "Gagal memuat data pre-order."
+
+Enum sebelum fix hanya memiliki 9 nilai: `CANCELLED, COMPLETED, EXPIRED, HANDED_OVER, PAID, PENDING, PENDING_APPROVAL, RESERVED, WAITING_PAYMENT`.
+
+### Fix
+
+**3 lapisan fix:**
+
+**1. Database (immediate):**
+```sql
+ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'AWAITING_SHIPMENT';
+ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'SHIPPED';
+ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'ARRIVED';
+ALTER TYPE txn_status_enum ADD VALUE IF NOT EXISTS 'PREORDER_HANDOVER';
+```
+Dijalankan langsung via `docker exec hybrid_postgres psql`.
+
+**2. `backend/migrations/029_cr05x_preorder.sql`** — Tambah 4 `ALTER TYPE` statements di awal migration sebelum `ALTER TABLE`.
+
+**3. `backend/src/app.js` schema guard** — Tambah 4 `ALTER TYPE` ke array `cr05xStatements` agar enum otomatis diupdate saat deployment baru (idempotent: `ADD VALUE IF NOT EXISTS`).
+
+### Files
+
+- `backend/migrations/029_cr05x_preorder.sql`
+- `backend/src/app.js` baris ~316
+
+### Kenapa Tidak Terdeteksi Sebelumnya
+
+Developer CR-05X menambahkan status baru di `status.machine.js` dan backend service, tetapi lupa bahwa kolom `status` di tabel `transactions` menggunakan PostgreSQL ENUM yang harus diupdate secara eksplisit. Berbeda dengan `VARCHAR`, ENUM menolak nilai yang tidak terdaftar. Karena migration file-nya tidak pernah dijalankan ulang (postgres data volume persists), dan tidak ada test yang menyentuh endpoint preorder end-to-end, bug ini tidak terdeteksi hingga fitur diakses pertama kali.
+
+---
+
+## BUG-072 — Klik "Konfirmasi Kirim" di `/admin/preorder` → Internal Server Error
+
+**Symptom:**  
+Admin klik tombol "Konfirmasi Kirim" (Input Resi & Kirim) di `/admin/preorder` tab "Menunggu Kirim" → muncul error banner "Internal server error." tanpa detail lebih lanjut.
+
+**Root Cause:**  
+`writeAuditLog` di `preorder.service.js` hardcode `actorRole: 'ADMIN'`, tetapi tabel `audit_log` menggunakan PostgreSQL ENUM `actor_role_enum` yang hanya berisi: `CUSTOMER, CASHIER, TENANT, LEADER, SYSTEM, HELPER`. Nilai `'ADMIN'` tidak pernah ditambahkan ke enum ini, sehingga setiap INSERT ke `audit_log` dari fungsi preorder gagal dengan:
+
+```
+invalid input value for enum actor_role_enum: "ADMIN"
+```
+
+Masalah ini terjadi di seluruh fungsi preorder:
+- `updateShipment` (`PATCH /:txnId/ship`) — setelah set status SHIPPED
+- `confirmArrived` (`PATCH /:txnId/arrived`) — setelah set status ARRIVED
+- `handover` (`PATCH /:txnId/handover`) — jika aktor adalah ADMIN
+
+Masalah kedua: `actorId: null` → `String(null)` = literal string `"null"` tersimpan di `actor_id`, kehilangan audit trail siapa yang melakukan aksi.
+
+**Fix:**
+
+**1. Tambah `'ADMIN'` ke `actor_role_enum`** — immediate DB + migration + schema guard (3-layer):
+```sql
+ALTER TYPE actor_role_enum ADD VALUE IF NOT EXISTS 'ADMIN';
+```
+- DB langsung: `docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid`
+- `backend/migrations/029_cr05x_preorder.sql` — tambah di bagian enum
+- `backend/src/app.js` schema guard `runSchemaGuard('Migration 029 — CR-05X pre-order', [...])` — tambah baris enum
+
+**2. Pass actorId/actorRole dari router** — fungsi `updateShipment` dan `confirmArrived` sekarang menerima `actorId, actorRole` sebagai parameter, diteruskan dari `req.user.userId` dan `req.user.role` di router.
+
+**Files Changed:**
+- `backend/migrations/029_cr05x_preorder.sql`
+- `backend/src/app.js`
+- `backend/src/modules/preorder/preorder.service.js`
+- `backend/src/modules/preorder/preorder.router.js`
+
+**Kenapa Tidak Terdeteksi Sebelumnya:**  
+`actor_role_enum` dibuat saat `audit_log` table pertama kali dibuat. Role `ADMIN` ada di `user_role_enum` (untuk login/auth) tetapi tidak pernah ditambahkan ke `actor_role_enum` (untuk audit). Semua module lain yang menulis audit log menggunakan role `CASHIER`, `HELPER`, `LEADER`, atau `SYSTEM` — tidak ada yang menggunakan `ADMIN` sebelum CR-05X. Bug baru terlihat saat admin pertama kali melakukan aksi yang menulis audit log.

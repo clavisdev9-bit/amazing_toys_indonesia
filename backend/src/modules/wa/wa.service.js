@@ -331,4 +331,128 @@ async function sendLockoutNotif(phone, lockoutMinutes = 5) {
   }
 }
 
-module.exports = { sendOrderQR, getWaConfig, sendTestMessage, sendOTP, sendGreeting, sendLockoutNotif };
+// ── CR-05X Pre-Order WA Templates ────────────────────────────────────────────
+
+/**
+ * Kirim konfirmasi pembayaran pre-order ke customer.
+ * Fire-and-forget safe.
+ *
+ * @param {string} phone
+ * @param {string} customerName
+ * @param {string} total         - formatted rupiah string
+ * @param {string} estimasiNote  - catatan preorder_note dari produk, bisa kosong
+ */
+async function sendPreorderConfirmed(phone, customerName, total, estimasiNote = '') {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const { eventName } = await _getEventConfig();
+  const estLine = estimasiNote ? `\n📋 ${estimasiNote}` : '';
+  const message =
+    `Hai *${customerName}* 👋\n\n` +
+    `Pembayaran *${total}* dikonfirmasi ✅\n\n` +
+    `Barang *Pre-Order* Anda akan dikirim setelah siap.${estLine}\n\n` +
+    `Kami akan menghubungi Anda kembali saat barang dikirim.\n\n` +
+    `Terima kasih berbelanja di *${eventName}*! 🧸`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_confirmed terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_confirmed', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+/**
+ * Kirim notifikasi barang dikirim ke customer.
+ * Fire-and-forget safe.
+ */
+async function sendPreorderShipped(phone, customerName, courier, trackingNumber) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const message =
+    `📦 *Barang Dikirim!*\n\n` +
+    `Halo *${customerName}*, pesanan Pre-Order Anda sudah dalam perjalanan.\n\n` +
+    `🚚 Ekspedisi: *${courier || '-'}*\n` +
+    `📝 No. Resi: *${trackingNumber || '-'}*\n\n` +
+    `Estimasi tiba 3–5 hari kerja.`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_shipped terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_shipped', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+/**
+ * Kirim notifikasi barang sudah sampai di Indonesia ke customer.
+ * Fire-and-forget safe.
+ */
+async function sendPreorderArrived(phone, customerName) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const message =
+    `📍 *Barang Sudah Sampai di Indonesia!*\n\n` +
+    `Halo *${customerName}*, barang Pre-Order Anda telah tiba.\n\n` +
+    `Tim kami akan segera menghubungi Anda untuk jadwal penyerahan barang.\n\n` +
+    `Terima kasih atas kesabaran Anda! 🙏`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_arrived terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_arrived', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+/**
+ * Kirim notifikasi barang sudah diserahkan ke customer.
+ * Fire-and-forget safe.
+ */
+async function sendPreorderCompleted(phone, customerName) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const { eventName } = await _getEventConfig();
+  const message =
+    `🤝 *Barang Sudah Diserahkan!*\n\n` +
+    `Halo *${customerName}*, transaksi Pre-Order Anda telah selesai.\n\n` +
+    `Terima kasih telah berbelanja di *${eventName}* 2026! 🎉\n\n` +
+    `Sampai jumpa di event berikutnya! 🧸`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_completed terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_completed', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+module.exports = {
+  sendOrderQR,
+  getWaConfig,
+  sendTestMessage,
+  sendOTP,
+  sendGreeting,
+  sendLockoutNotif,
+  // CR-05X Pre-Order
+  sendPreorderConfirmed,
+  sendPreorderShipped,
+  sendPreorderArrived,
+  sendPreorderCompleted,
+};

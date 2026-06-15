@@ -75,16 +75,28 @@ router.post('/orders',
     body('customer_id')
       .optional({ nullable: true })
       .isUUID().withMessage('customer_id harus UUID.'),
+    // CR-05X: shipping fields (optional, required only if preorder items exist — validated in service)
+    body('shipping_name').optional({ nullable: true }).isString(),
+    body('shipping_phone').optional({ nullable: true }).isString(),
+    body('shipping_address').optional({ nullable: true }).isString(),
+    body('shipping_city').optional({ nullable: true }).isString(),
+    body('shipping_province').optional({ nullable: true }).isString(),
   ],
   validate,
   async (req, res, next) => {
     try {
       const data = await helperSvc.createHelperOrder({
-        helperId:       req.user.userId,
-        helperTenantId: req.user.tenantId,
-        items:          req.body.items,
-        customerPhone:  req.body.customer_phone || null,
-        customerId:     req.body.customer_id    || null,
+        helperId:         req.user.userId,
+        helperTenantId:   req.user.tenantId,
+        items:            req.body.items,
+        customerPhone:    req.body.customer_phone   || null,
+        customerId:       req.body.customer_id      || null,
+        // CR-05X pre-order shipping
+        shippingName:     req.body.shipping_name     || null,
+        shippingPhone:    req.body.shipping_phone    || null,
+        shippingAddress:  req.body.shipping_address  || null,
+        shippingCity:     req.body.shipping_city     || null,
+        shippingProvince: req.body.shipping_province || null,
       });
       res.status(201).json({ success: true, message: 'Order berhasil dibuat.', data });
     } catch (err) { next(err); }

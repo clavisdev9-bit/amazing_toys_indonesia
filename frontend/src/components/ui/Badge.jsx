@@ -12,6 +12,11 @@ const styles = {
   CANCELLED:       'bg-red-100 text-red-800',
   EXPIRED:         'bg-gray-100 text-gray-600',
   DONE:            'bg-green-100 text-green-800',
+  // CR-05X Pre-Order statuses
+  AWAITING_SHIPMENT: 'bg-orange-100 text-orange-800',
+  SHIPPED:           'bg-blue-100 text-blue-800',
+  ARRIVED:           'bg-teal-100 text-teal-800',
+  PREORDER_HANDOVER: 'bg-purple-100 text-purple-800',
   AVAILABLE:       'bg-green-100 text-green-700',
   LOW_STOCK:       'bg-orange-100 text-orange-700',
   OUT_OF_STOCK:    'bg-red-100 text-red-700',

@@ -15,15 +15,21 @@ const { AppError } = require('../../middlewares/error.middleware');
  * Transition map: fromStatus → Set<toStatus>
  */
 const TRANSITIONS = {
-  PENDING_APPROVAL: new Set(['PENDING', 'CANCELLED']),                           // CR-040 Model D
-  PENDING:          new Set(['WAITING_PAYMENT', 'CANCELLED', 'EXPIRED', 'PAID']), // legacy compat
-  RESERVED:         new Set(['WAITING_PAYMENT', 'CANCELLED', 'EXPIRED']),
-  WAITING_PAYMENT:  new Set(['PAID', 'CANCELLED', 'EXPIRED']),
-  PAID:             new Set(['HANDED_OVER']),
-  HANDED_OVER:      new Set(['COMPLETED']),
-  CANCELLED:        new Set(),
-  EXPIRED:          new Set(),
-  COMPLETED:        new Set(),
+  PENDING_APPROVAL:   new Set(['PENDING', 'CANCELLED']),                           // CR-040 Model D
+  PENDING:            new Set(['WAITING_PAYMENT', 'CANCELLED', 'EXPIRED', 'PAID']), // legacy compat
+  RESERVED:           new Set(['WAITING_PAYMENT', 'CANCELLED', 'EXPIRED']),
+  WAITING_PAYMENT:    new Set(['PAID', 'CANCELLED', 'EXPIRED']),
+  PAID:               new Set(['HANDED_OVER', 'AWAITING_SHIPMENT']),               // AWAITING_SHIPMENT: CR-05X PREORDER
+  HANDED_OVER:        new Set(['COMPLETED']),
+  // ── CR-05X Pre-Order statuses ────────────────────────────────────────────────
+  AWAITING_SHIPMENT:  new Set(['SHIPPED']),
+  SHIPPED:            new Set(['ARRIVED']),
+  ARRIVED:            new Set(['PREORDER_HANDOVER']),
+  PREORDER_HANDOVER:  new Set(['COMPLETED']),
+  // ────────────────────────────────────────────────────────────────────────────
+  CANCELLED:          new Set(),
+  EXPIRED:            new Set(),
+  COMPLETED:          new Set(),
 };
 
 /**
@@ -31,14 +37,19 @@ const TRANSITIONS = {
  * Roles listed here are the ONLY ones allowed to perform the transition.
  */
 const ALLOWED_ACTORS = {
-  PENDING:         ['HELPER'],                                       // helper approves → PENDING
-  RESERVED:        ['HELPER'],
-  WAITING_PAYMENT: ['CASHIER', 'LEADER', 'ADMIN'],
-  PAID:            ['CASHIER', 'LEADER', 'ADMIN'],
-  CANCELLED:       ['HELPER', 'CASHIER', 'LEADER', 'ADMIN'],
-  EXPIRED:         ['SYSTEM'],
-  HANDED_OVER:     ['HELPER', 'TENANT', 'LEADER', 'ADMIN'],
-  COMPLETED:       ['HELPER', 'TENANT', 'LEADER', 'ADMIN', 'SYSTEM'],
+  PENDING:            ['HELPER'],                                       // helper approves → PENDING
+  RESERVED:           ['HELPER'],
+  WAITING_PAYMENT:    ['CASHIER', 'LEADER', 'ADMIN'],
+  PAID:               ['CASHIER', 'LEADER', 'ADMIN'],
+  CANCELLED:          ['HELPER', 'CASHIER', 'LEADER', 'ADMIN'],
+  EXPIRED:            ['SYSTEM'],
+  HANDED_OVER:        ['HELPER', 'TENANT', 'LEADER', 'ADMIN'],
+  COMPLETED:          ['HELPER', 'TENANT', 'LEADER', 'ADMIN', 'SYSTEM'],
+  // ── CR-05X Pre-Order actors ──────────────────────────────────────────────────
+  AWAITING_SHIPMENT:  ['SYSTEM'],                    // auto-triggered after PAID (preorder)
+  SHIPPED:            ['ADMIN'],                      // admin input resi
+  ARRIVED:            ['ADMIN'],                      // admin konfirmasi sampai Indonesia
+  PREORDER_HANDOVER:  ['HELPER', 'ADMIN'],            // helper serahkan ke customer
 };
 
 /**
@@ -87,6 +98,14 @@ function isCashierProcessable(status) {
 }
 
 /**
+ * Check if a status is a pre-order shipment status (post-PAID pre-order flow).
+ * CR-05X: AWAITING_SHIPMENT, SHIPPED, ARRIVED, PREORDER_HANDOVER
+ */
+function isPreorderStatus(status) {
+  return ['AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED', 'PREORDER_HANDOVER'].includes(status);
+}
+
+/**
  * Normalise legacy PENDING → WAITING_PAYMENT for display purposes only.
  * Never use this to UPDATE the DB; PENDING rows should stay PENDING.
  */
@@ -94,4 +113,4 @@ function displayStatus(status) {
   return status === 'PENDING' ? 'WAITING_PAYMENT' : status;
 }
 
-module.exports = { validateTransition, isCashierProcessable, displayStatus, TRANSITIONS, ALLOWED_ACTORS };
+module.exports = { validateTransition, isCashierProcessable, isPreorderStatus, displayStatus, TRANSITIONS, ALLOWED_ACTORS };

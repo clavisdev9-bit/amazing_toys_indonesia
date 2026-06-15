@@ -226,8 +226,13 @@ const T = {
     'badge.PREPARING':        'Menyiapkan',
     'badge.RESERVED':         'Reserved',
     'badge.WAITING_PAYMENT':  'Menunggu Bayar',
-    'badge.HANDED_OVER':      'Diserahkan',
-    'badge.COMPLETED':        'Selesai',
+    'badge.HANDED_OVER':        'Diserahkan',
+    'badge.COMPLETED':          'Selesai',
+    // CR-05X Pre-Order
+    'badge.AWAITING_SHIPMENT':  'Menunggu Kirim',
+    'badge.SHIPPED':            'Dalam Pengiriman',
+    'badge.ARRIVED':            'Tiba di Indonesia',
+    'badge.PREORDER_HANDOVER':  'Serah Terima',
 
     // Shell notification card
     'shell.readyToPay': 'Pesanan Siap Bayar!',
@@ -598,8 +603,13 @@ const T = {
     'badge.PREPARING':        'Preparing',
     'badge.RESERVED':         'Reserved',
     'badge.WAITING_PAYMENT':  'Waiting for Payment',
-    'badge.HANDED_OVER':      'Handed Over',
-    'badge.COMPLETED':        'Completed',
+    'badge.HANDED_OVER':        'Handed Over',
+    'badge.COMPLETED':          'Completed',
+    // CR-05X Pre-Order
+    'badge.AWAITING_SHIPMENT':  'Awaiting Shipment',
+    'badge.SHIPPED':            'Shipped',
+    'badge.ARRIVED':            'Arrived',
+    'badge.PREORDER_HANDOVER':  'Handover',
 
     // Shell notification card
     'shell.readyToPay': 'Order Ready to Pay!',
@@ -970,8 +980,13 @@ const T = {
     'badge.PREPARING':        '准备中',
     'badge.RESERVED':         '已预留',
     'badge.WAITING_PAYMENT':  '等待付款',
-    'badge.HANDED_OVER':      '已交接',
-    'badge.COMPLETED':        '已完成',
+    'badge.HANDED_OVER':        '已交接',
+    'badge.COMPLETED':          '已完成',
+    // CR-05X Pre-Order
+    'badge.AWAITING_SHIPMENT':  '等待发货',
+    'badge.SHIPPED':            '已发货',
+    'badge.ARRIVED':            '已到达',
+    'badge.PREORDER_HANDOVER':  '交货中',
 
     // Shell notification card
     'shell.readyToPay': '订单待付款！',

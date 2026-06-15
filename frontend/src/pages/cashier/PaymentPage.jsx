@@ -305,14 +305,21 @@ export default function PaymentPage() {
 
   if (loading) return <Spinner />;
 
-  // ── Success screen (unchanged) ────────────────────────────────────────────
+  // ── Success screen ────────────────────────────────────────────────────────
   if (success) {
+    const isPreorderSuccess = success.orderType === 'PREORDER';
     return (
       <>
         <div className="max-w-lg bg-white rounded-xl border p-6 text-center">
           <div className="text-5xl mb-3">✅</div>
           <h2 className="text-xl font-bold text-gray-900 mb-1">{t('payment.success')}</h2>
           <p className="text-sm text-gray-500 mb-4">{formatDate(success.paidAt)}</p>
+          {isPreorderSuccess && (
+            <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 text-left text-sm">
+              <p className="font-bold text-orange-700 mb-0.5">📦 Pre-Order Dikonfirmasi</p>
+              <p className="text-orange-600 text-xs">Pembayaran diterima. Customer <strong>tidak perlu ke pickup area</strong> — barang akan dikirim setelah tiba di Indonesia.</p>
+            </div>
+          )}
           <div className="bg-gray-50 rounded-lg p-4 text-left mb-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">{t('confirmed.txnId')}</span>
@@ -378,6 +385,24 @@ export default function PaymentPage() {
 
           {txn && (
             <>
+              {/* CR-05X: PRE-ORDER banner */}
+              {txn.order_type === 'PREORDER' && (
+                <div className="rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm">
+                  <p className="font-bold text-orange-700 mb-1">⚠ PRE-ORDER TRANSACTION</p>
+                  <p className="text-orange-600 text-xs mb-1">Barang tidak diambil di booth — akan dikirim ke alamat customer setelah siap.</p>
+                  {txn.shipping_name && (
+                    <p className="text-xs text-orange-700 font-medium">
+                      Dikirim ke: <strong>{txn.shipping_name}</strong>
+                      {txn.shipping_city ? `, ${txn.shipping_city}` : ''}
+                      {txn.shipping_province ? `, ${txn.shipping_province}` : ''}
+                    </p>
+                  )}
+                  {txn.shipping_address && (
+                    <p className="text-xs text-orange-600 mt-0.5">{txn.shipping_address}</p>
+                  )}
+                </div>
+              )}
+
               {/* Transaction detail */}
               <div className="bg-white rounded-xl border p-4">
                 <div className="flex items-start justify-between mb-2">

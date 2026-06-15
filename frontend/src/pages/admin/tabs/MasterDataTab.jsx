@@ -26,6 +26,7 @@ const EMPTY_FORM = {
   product_id: '', product_name: '', category: '', price: '',
   tenant_id: '', barcode: '', stock_quantity: '0', description: '', image_url: '',
   odoo_categ_id: null, odoo_categ_name: '', is_active: true,
+  is_preorder: false, preorder_note: '',
 };
 
 function fileToBase64(file) {
@@ -159,6 +160,36 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
           </span>
         </div>
       )}
+      {/* CR-05X: Pre-Order toggle */}
+      <div className="border-t border-gray-100 pt-3 flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, is_preorder: !f.is_preorder, preorder_note: f.is_preorder ? '' : f.preorder_note }))}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1 ${form.is_preorder ? 'bg-orange-500' : 'bg-gray-300'}`}>
+            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${form.is_preorder ? 'translate-x-4' : 'translate-x-1'}`} />
+          </button>
+          <label className="text-sm font-medium text-gray-700 cursor-pointer select-none"
+            onClick={() => setForm((f) => ({ ...f, is_preorder: !f.is_preorder, preorder_note: f.is_preorder ? '' : f.preorder_note }))}>
+            Produk ini adalah Pre-Order
+          </label>
+          {form.is_preorder && (
+            <span className="text-xs font-semibold bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">PRE-ORDER</span>
+          )}
+        </div>
+        {form.is_preorder && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-600">Catatan Pre-Order (estimasi waktu, dsb.)</label>
+            <textarea
+              rows={2}
+              value={form.preorder_note}
+              onChange={(e) => setForm((f) => ({ ...f, preorder_note: e.target.value }))}
+              placeholder="Contoh: Estimasi tiba di Indonesia bulan Agustus 2026"
+              className="border border-orange-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none bg-orange-50"
+            />
+          </div>
+        )}
+      </div>
     </>
   );
 }
@@ -377,6 +408,8 @@ export default function MasterDataTab() {
       odoo_categ_id:   p.odoo_categ_id ?? null,
       odoo_categ_name: odooCat?.completeName ?? '',
       is_active:       p.is_active ?? true,
+      is_preorder:     p.is_preorder ?? false,
+      preorder_note:   p.preorder_note || '',
     });
     setFormError('');
     setEditModal(p);
@@ -397,6 +430,8 @@ export default function MasterDataTab() {
         description:    form.description || undefined,
         categ_id:       form.odoo_categ_id,
         categ_name:     form.odoo_categ_name || undefined,
+        is_preorder:    form.is_preorder,
+        preorder_note:  form.is_preorder ? (form.preorder_note || null) : null,
       });
       addToast('Produk berhasil dibuat.', 'success');
       setCreateModal(false);
@@ -425,6 +460,8 @@ export default function MasterDataTab() {
         categ_id:       form.odoo_categ_id,
         categ_name:     form.odoo_categ_name || null,
         is_active:      form.is_active,
+        is_preorder:    form.is_preorder,
+        preorder_note:  form.is_preorder ? (form.preorder_note || null) : null,
       });
       addToast('Produk diperbarui.', 'success');
       setEditModal(null);

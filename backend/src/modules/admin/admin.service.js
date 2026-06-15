@@ -156,7 +156,7 @@ async function adminListProducts({ tenantId, search, includeInactive = true, pag
   };
 }
 
-async function adminCreateProduct({ product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, categ_id, categ_name }) {
+async function adminCreateProduct({ product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, categ_id, categ_name, is_preorder, preorder_note }) {
   if (!product_id || !product_name || !category || !price || !tenant_id || !barcode) {
     throw new AppError('product_id, product_name, category, price, tenant_id, barcode wajib diisi.', 422);
   }
@@ -167,12 +167,14 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
   const bcExists = await query('SELECT product_id FROM products WHERE barcode = $1', [barcode]);
   if (bcExists.rows.length > 0) throw new AppError('Barcode sudah digunakan produk lain.', 409);
 
+  const isPreorderBool = is_preorder === true || is_preorder === 'true';
   const result = await query(
-    `INSERT INTO products (product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id, odoo_categ_name)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+    `INSERT INTO products (product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id, odoo_categ_name, is_preorder, preorder_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
     [product_id, product_name, category, parseFloat(price), tenant_id, barcode,
      parseInt(stock_quantity) || 0, image_url || null, description || null,
-     categ_id || null, categ_name || null]
+     categ_id || null, categ_name || null,
+     isPreorderBool, isPreorderBool ? (preorder_note || null) : null]
   );
   // Auto-sync new product to Odoo (fire-and-forget — does not block response)
   _autoSyncProduct(result.rows[0].product_id);
@@ -180,7 +182,7 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
 }
 
 async function adminUpdateProduct(productId, data) {
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer'];
+  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note'];
   if (data.categ_id !== undefined) data = { ...data, odoo_categ_id: data.categ_id || null };
   if (data.categ_name !== undefined) data = { ...data, odoo_categ_name: data.categ_name || null };
   const fields = [];

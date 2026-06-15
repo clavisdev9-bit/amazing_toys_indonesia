@@ -55,15 +55,27 @@ export default function ProductDetailPage() {
       {/* Info */}
       <div className="p-4 bg-white">
         <div className="flex items-start justify-between gap-2">
-          <h1 className="text-lg font-bold text-gray-900">{product.product_name}</h1>
-          <Badge status={product.stock_status} />
+          <div className="flex-1 min-w-0">
+            {product.is_preorder && (
+              <span className="inline-block text-[10px] font-black px-2 py-0.5 rounded-md mb-1 tracking-wide" style={{ background: '#FEF3C7', color: '#EA580C', border: '1px solid rgba(234,88,12,0.2)' }}>
+                PRE-ORDER
+              </span>
+            )}
+            <h1 className="text-lg font-bold text-gray-900">{product.product_name}</h1>
+            {product.is_preorder && product.preorder_note && (
+              <p className="text-sm mt-0.5" style={{ color: '#EA580C' }}>{product.preorder_note}</p>
+            )}
+          </div>
+          {!product.is_preorder && <Badge status={product.stock_status} />}
         </div>
         <p className="text-2xl font-bold text-blue-700 mt-1">{formatRupiah(product.price)}</p>
 
         <div className="mt-3 text-sm text-gray-600 space-y-1">
           <p>{t('product.booth')}: <span className="font-medium">{product.tenant_name}</span></p>
           <p>{t('product.location')}: <span className="font-medium">{product.booth_location}</span></p>
-          <p>{t('product.stock')}: <span className="font-medium">{product.stock_quantity} pcs</span></p>
+          {!product.is_preorder && (
+            <p>{t('product.stock')}: <span className="font-medium">{product.stock_quantity} pcs</span></p>
+          )}
         </div>
 
         {product.description && (

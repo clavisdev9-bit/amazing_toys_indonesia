@@ -414,7 +414,7 @@ async function getGroupDetail(groupId) {
     `SELECT g.*, u.display_name AS cashier_name
      FROM transaction_groups g
      LEFT JOIN users u ON u.user_id = g.cashier_id
-     WHERE g.group_id = $1 OR g.group_code = $1`,
+     WHERE g.group_id::text = $1 OR g.group_code = $1`,
     [groupId],
   );
   const group = groupRes.rows[0];

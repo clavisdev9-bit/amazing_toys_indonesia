@@ -49,7 +49,10 @@ async function _getTaxSettings() {
  * @param {string}   [opts.customerId]    UUID if customer has an account
  * @returns {object} transaction record with QR payload + Layer delivery status
  */
-async function createHelperOrder({ helperId, helperTenantId, items, customerPhone, customerId }) {
+async function createHelperOrder({
+  helperId, helperTenantId, items, customerPhone, customerId,
+  shippingName, shippingPhone, shippingAddress, shippingCity, shippingProvince,
+}) {
   if (!items || items.length === 0) throw new AppError('Pilih minimal satu produk.', 422);
   if (!helperTenantId) throw new AppError('Helper tidak terikat ke booth manapun.', 403);
 
@@ -62,7 +65,8 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
     const productIds = items.map(i => i.product_id);
     const productRows = await client.query(
       `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status,
-              is_display_only, is_on_hold, max_per_customer, bundle_group
+              is_display_only, is_on_hold, max_per_customer, bundle_group,
+              is_preorder, preorder_note
        FROM products
        WHERE product_id = ANY($1) AND tenant_id = $2 AND is_active = TRUE
        FOR UPDATE`,
@@ -132,6 +136,17 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
       }
     }
 
+    // 4b. Pre-Order check — CR-05X
+    const hasPreorder = productRows.rows.some(p => p.is_preorder);
+    if (hasPreorder) {
+      if (!shippingName || !shippingName.trim()) {
+        throw new AppError('Nama penerima pengiriman wajib diisi karena ada produk Pre-Order.', 422);
+      }
+      if (!shippingAddress || !shippingAddress.trim()) {
+        throw new AppError('Alamat pengiriman wajib diisi karena ada produk Pre-Order.', 422);
+      }
+    }
+
     // 5. Calculate totals
     const taxCfg      = await _getTaxSettings();
     const TAX_RATE    = taxCfg.active ? taxCfg.rate : 0;
@@ -177,19 +192,24 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
     const qrPayload     = await generateTransactionQR(transactionId);
     const expiresAt     = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
-    // 9. Insert transaction (RESERVED) — CR-036 kolom ikut di INSERT
+    // 9. Insert transaction (RESERVED) — CR-036 kolom + CR-05X preorder kolom
+    const orderType = hasPreorder ? 'PREORDER' : 'REGULAR';
     await client.query(
       `INSERT INTO transactions
          (transaction_id, customer_id, customer_phone, status,
           subtotal_amount, tax_rate, tax_amount, total_amount,
           qr_payload, expires_at,
           created_by_role, created_by_user, reserved_at,
-          public_token, public_token_exp, wa_delivery_status)
+          public_token, public_token_exp, wa_delivery_status,
+          order_type, shipping_name, shipping_phone,
+          shipping_address, shipping_city, shipping_province)
        VALUES ($1, $2, $3, 'RESERVED',
                $4, $5, $6, $7,
                $8, $9,
                'HELPER', $10, NOW(),
-               $11, $12, 'PENDING')`,
+               $11, $12, 'PENDING',
+               $13, $14, $15,
+               $16, $17, $18)`,
       [
         transactionId,
         customerId    || null,
@@ -198,6 +218,12 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
         qrPayload, expiresAt,
         helperId,
         publicToken, publicTokenExp,
+        orderType,
+        hasPreorder ? (shippingName   || null) : null,
+        hasPreorder ? (shippingPhone  || null) : null,
+        hasPreorder ? (shippingAddress || null) : null,
+        hasPreorder ? (shippingCity   || null) : null,
+        hasPreorder ? (shippingProvince || null) : null,
       ],
     );
 
@@ -219,7 +245,7 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
     await writeAuditLog({
       action: 'TXN_RESERVED', actorId: helperId, actorRole: 'HELPER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { helperTenantId, customerId, customerPhone: effectivePhone, totalAmount, items: items.length },
+      newValue: { helperTenantId, customerId, customerPhone: effectivePhone, totalAmount, items: items.length, orderType },
     });
 
     // 11. WS broadcast ke dashboard/leader
@@ -232,6 +258,12 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
       .map(i => `${productMap[i.product_id].product_name} ×${i.qty}`)
       .join(', ');
 
+    // Preorder: kumpulkan estimasi note dari produk preorder
+    const preorderNote = hasPreorder
+      ? productRows.rows.filter(p => p.is_preorder && p.preorder_note)
+          .map(p => p.preorder_note).join('; ')
+      : null;
+
     return {
       transactionId, status: 'RESERVED',
       subtotal, taxRate: TAX_RATE, taxAmount, totalAmount,
@@ -240,11 +272,15 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
       effectivePhone, customerId,
       itemSummary,
       boothId: helperTenantId,
+      orderType,
+      hasPreorder,
+      preorderNote,
       items: items.map(i => ({
         product_id:   i.product_id,
         product_name: productMap[i.product_id].product_name,
         qty:          i.qty,
         unit_price:   productMap[i.product_id].price,
+        is_preorder:  productMap[i.product_id].is_preorder || false,
       })),
     };
   });
@@ -326,6 +362,9 @@ async function createHelperOrder({ helperId, helperTenantId, items, customerPhon
                         : null,
     waDeliveryStatus: txResult.effectivePhone ? 'PENDING' : 'SKIPPED',
     boothId:          helperTenantId,
+    orderType:        txResult.orderType,
+    hasPreorder:      txResult.hasPreorder,
+    preorderNote:     txResult.preorderNote,
     items:            txResult.items,
   };
 }
@@ -726,7 +765,8 @@ async function getBoothProducts(helperTenantId) {
   const result = await query(
     `SELECT product_id, product_name, category, price, barcode,
             stock_quantity, stock_status, image_url, description,
-            is_display_only, is_on_hold, max_per_customer, bundle_group
+            is_display_only, is_on_hold, max_per_customer, bundle_group,
+            is_preorder, preorder_note
      FROM products
      WHERE tenant_id = $1 AND is_active = TRUE
      ORDER BY category, product_name`,

@@ -1276,3 +1276,75 @@ Level H digunakan karena thermal print bisa blur — error correction 30% masih 
 - `ThermalReceipt.jsx` — referensi canonical untuk single TXN
 - `ThermalGroupReceipt.jsx` — referensi canonical untuk group invoice
 - `PrintGroupReceiptButton.jsx` — referensi canonical untuk print-via-DOM-ref pattern
+
+---
+
+## STD-025 — Query PostgreSQL dengan Satu Parameter di Dua Kolom Tipe Berbeda: Wajib Cast Eksplisit
+
+**Berlaku untuk:** Semua query SQL di backend yang menggunakan satu parameter (`$N`) dalam kondisi `OR` melibatkan kolom bertipe berbeda — khususnya `uuid` vs `varchar`/`text`.
+
+**Latar Belakang:** BUG-068 — `getGroupDetail` menggunakan `WHERE group_id = $1 OR group_code = $1`. PostgreSQL menginfer tipe `$1` sebagai `uuid` dari ekspresi pertama. Ketika `group_code = $1` dievaluasi (`character varying = uuid`), query gagal karena operator tidak ada.
+
+### Aturan
+
+**A. Jangan gunakan satu parameter `$N` untuk kolom dengan tipe berbeda tanpa cast:**
+
+```sql
+-- SALAH ❌ — PostgreSQL infer $1 sebagai uuid, lalu group_code = uuid gagal
+WHERE group_id = $1 OR group_code = $1
+
+-- BENAR ✅ — cast kolom uuid ke text; $1 diinfer sebagai text; keduanya text = text
+WHERE group_id::text = $1 OR group_code = $1
+```
+
+**B. Aturan inferensi tipe PostgreSQL:**
+
+PostgreSQL menentukan tipe parameter dari ekspresi **pertama** yang menggunakannya dalam query. Jika ekspresi pertama adalah `uuid_column = $1`, maka `$1` bertipe `uuid`. Semua perbandingan lain dengan `$1` harus kompatibel.
+
+```
+Urutan ekspresi      Tipe $1 yang diinfer   Ekspresi kedua         Hasil
+─────────────────────────────────────────────────────────────────────────
+uuid_col = $1        uuid                   varchar_col = $1       ❌ ERROR
+varchar_col = $1     text                   uuid_col = $1          ✅ OK (implicit cast)
+uuid_col::text = $1  text                   varchar_col = $1       ✅ OK
+```
+
+**C. Tipe yang sering menyebabkan masalah di proyek ini:**
+
+| Kolom | Tipe | Aman dibandingkan dengan |
+|---|---|---|
+| `group_id`, `user_id`, `cashier_id`, `customer_id` | `uuid` | hanya `uuid` atau setelah `::text` |
+| `transaction_id`, `group_code`, `product_id` | `varchar` | `text`, `varchar` — aman |
+
+**D. Pattern aman untuk lookup "by id OR by code":**
+
+```sql
+-- Pattern: cari by UUID primary key ATAU by human-readable code
+-- Selalu cast UUID ke text agar parameter diinfer sebagai text
+WHERE entity_id::text = $1 OR entity_code = $1
+```
+
+**E. Alternatif: pisahkan menjadi dua parameter dengan cast eksplisit di SQL:**
+
+Jika perlu lookup berdasarkan format yang sudah diketahui, gunakan logika di aplikasi:
+
+```js
+// Di service layer — tentukan kolom berdasarkan format input
+const isUUID = /^[0-9a-f-]{36}$/.test(identifier);
+const whereClause = isUUID ? 'WHERE group_id = $1' : 'WHERE group_code = $1';
+```
+
+Namun untuk kode yang lebih ringkas dan aman, `entity_id::text = $1 OR entity_code = $1` lebih disukai.
+
+### Checklist — setiap kali menulis query lookup dengan OR pada kolom berbeda tipe
+
+- [ ] Identifikasi tipe masing-masing kolom yang dibandingkan dengan parameter yang sama
+- [ ] Jika ada kolom `uuid` dalam kondisi `OR` bersama kolom `varchar/text`:
+  - Cast kolom UUID ke text: `uuid_column::text = $N`
+  - Tempatkan ekspresi ini **pertama** agar parameter diinfer sebagai text
+- [ ] Test query langsung di psql dengan nilai non-UUID (contoh: `'GRP-...'`) untuk verifikasi
+- [ ] Jika query existing punya pola `WHERE uuid_col = $1 OR varchar_col = $1` → fix sebelum menambahkan call site baru yang mengirim non-UUID
+
+### Referensi
+
+BUG-021 (STD-012) — tipe kolom FK harus sama dengan kolom yang direferensi.

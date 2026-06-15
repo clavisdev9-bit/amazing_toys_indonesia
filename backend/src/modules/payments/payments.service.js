@@ -7,6 +7,7 @@ const notificationsSvc           = require('../notifications/notifications.servi
 const { broadcastToCustomer, broadcastToTenant } = require('../../ws/websocket');
 const { fireWebhook }            = require('../../utils/webhook');
 const { isCashierProcessable }   = require('../orders/status.machine');
+const waSvc                      = require('../wa/wa.service');
 const logger                     = require('../../config/logger');
 
 /**
@@ -21,7 +22,9 @@ async function lookupTransaction(transactionId) {
             t.expires_at, t.customer_phone AS walk_in_phone,
             c.full_name AS customer_name, c.phone_number AS customer_phone,
             c.email AS customer_email,
-            t.created_at AS checkout_time, t.created_by_role
+            t.created_at AS checkout_time, t.created_by_role,
+            t.order_type, t.shipping_name, t.shipping_phone,
+            t.shipping_address, t.shipping_city, t.shipping_province
      FROM transactions t
      LEFT JOIN customers c ON c.customer_id = t.customer_id
      WHERE t.transaction_id = $1`,
@@ -145,6 +148,15 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       [paymentMethod, paymentRef || null, cashReceived || null, cashChange, cashierId, txn.total_amount, transactionId]
     );
 
+    // CR-05X: jika PREORDER, langsung transisi ke AWAITING_SHIPMENT (tidak masuk pickup queue)
+    const isPreorder = txn.order_type === 'PREORDER';
+    if (isPreorder) {
+      await client.query(
+        `UPDATE transactions SET status = 'AWAITING_SHIPMENT' WHERE transaction_id = $1`,
+        [transactionId],
+      );
+    }
+
     // Update cashier session recap
     const amountCol = {
       CASH:     'total_cash',
@@ -180,20 +192,27 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
 
     // Notify registered customer's browser
     if (txn.customer_id) {
-      try { broadcastToCustomer(txn.customer_id, { event: 'ORDER_PAID', transactionId }); }
-      catch (e) { logger.warn('WS customer ORDER_PAID failed', { error: e.message }); }
+      try {
+        broadcastToCustomer(txn.customer_id, {
+          event: isPreorder ? 'PREORDER_CONFIRMED' : 'ORDER_PAID',
+          transactionId,
+          orderType: txn.order_type || 'REGULAR',
+        });
+      } catch (e) { logger.warn('WS customer ORDER_PAID failed', { error: e.message }); }
     }
 
-    // Notify HELPER/TENANT booth that order is ready for handover (Model C)
-    for (const tenant of tenantResult.rows) {
-      try {
-        broadcastToTenant(tenant.tenant_id, {
-          event: 'ORDER_PAID',
-          transactionId,
-          message: `Order ${transactionId} sudah dibayar — siapkan barang!`,
-        });
-      } catch (e) { logger.warn('WS tenant ORDER_PAID failed', { error: e.message }); }
-      notificationsSvc.sendOrderNotification(tenant, transactionId).catch(() => {});
+    // Notify HELPER/TENANT booth that order is ready for handover (Model C) — skip for preorder
+    if (!isPreorder) {
+      for (const tenant of tenantResult.rows) {
+        try {
+          broadcastToTenant(tenant.tenant_id, {
+            event: 'ORDER_PAID',
+            transactionId,
+            message: `Order ${transactionId} sudah dibayar — siapkan barang!`,
+          });
+        } catch (e) { logger.warn('WS tenant ORDER_PAID failed', { error: e.message }); }
+        notificationsSvc.sendOrderNotification(tenant, transactionId).catch(() => {});
+      }
     }
 
     const paidAt = new Date().toISOString();
@@ -210,9 +229,36 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       customerId: txn.customer_id,
     });
 
+    // CR-05X: kirim WA konfirmasi preorder setelah payment (fire-and-forget)
+    const effectivePhone = txn.customer_phone || null;
+    if (isPreorder && effectivePhone) {
+      const totalFormatted = new Intl.NumberFormat('id-ID', {
+        style: 'currency', currency: 'IDR', minimumFractionDigits: 0,
+      }).format(txn.total_amount);
+      // Ambil preorder_note dari produk dalam transaksi (non-blocking)
+      query(
+        `SELECT DISTINCT p.preorder_note FROM transaction_items ti
+         JOIN products p ON p.product_id = ti.product_id
+         WHERE ti.transaction_id = $1 AND p.is_preorder = TRUE AND p.preorder_note IS NOT NULL`,
+        [transactionId],
+      ).then(async (noteRes) => {
+        const estimasiNote = noteRes.rows.map(r => r.preorder_note).filter(Boolean).join('; ');
+        const custRow = await query(
+          `SELECT c.full_name FROM customers c
+           JOIN transactions t ON t.customer_id = c.customer_id
+           WHERE t.transaction_id = $1`,
+          [transactionId],
+        ).catch(() => ({ rows: [] }));
+        const customerName = custRow.rows[0]?.full_name || 'Customer';
+        waSvc.sendPreorderConfirmed(effectivePhone, customerName, totalFormatted, estimasiNote)
+          .catch(err => logger.warn('[WA-PREORDER] sendPreorderConfirmed error', { error: err.message }));
+      }).catch(() => {});
+    }
+
     return {
       transactionId,
-      status: 'PAID',
+      status: isPreorder ? 'AWAITING_SHIPMENT' : 'PAID',
+      orderType: txn.order_type || 'REGULAR',
       paymentMethod,
       cashChange,
       paidAt,
