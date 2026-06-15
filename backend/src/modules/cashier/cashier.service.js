@@ -449,6 +449,26 @@ async function getGroupDetail(groupId) {
   return { ...group, transactions: txnRes.rows };
 }
 
+/**
+ * List group invoices untuk hari ini (max 100).
+ */
+async function listGroups() {
+  const res = await query(
+    `SELECT g.group_id, g.group_code, g.customer_name, g.customer_phone,
+            g.total_amount, g.payment_method, g.payment_status, g.created_at,
+            u.display_name AS cashier_name,
+            COUNT(t.transaction_id)::int AS transaction_count
+     FROM transaction_groups g
+     LEFT JOIN users u ON u.user_id = g.cashier_id
+     LEFT JOIN transactions t ON t.group_id = g.group_id
+     WHERE g.created_at >= CURRENT_DATE
+     GROUP BY g.group_id, u.display_name
+     ORDER BY g.created_at DESC
+     LIMIT 100`,
+  );
+  return res.rows;
+}
+
 module.exports = {
   getDailyRecap,
   getCashierTransactions,
@@ -460,4 +480,5 @@ module.exports = {
   getCustomerActiveTrx,
   groupCheckout,
   getGroupDetail,
+  listGroups,
 };

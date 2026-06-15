@@ -1,13 +1,28 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../../api/client';
-import { getTransactions, getExpiredTransactions, getCustomerActiveTrx } from '../../api/cashier';
+import { getTransactions, getExpiredTransactions, getCustomerActiveTrx, listGroups, getGroupDetail } from '../../api/cashier';
 import { lookupPayment } from '../../api/payments';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
+import PrintGroupReceiptButton from '../../components/cashier/PrintGroupReceiptButton';
+
+function buildBoothBreakdown(groupDetail) {
+  const map = {};
+  (groupDetail.transactions ?? []).forEach(txn => {
+    (txn.items ?? []).forEach(item => {
+      const key = item.tenant_name
+        ? `${item.tenant_name} – ${item.booth_location || 'Booth'}`
+        : (item.booth_location || 'Booth');
+      if (!map[key]) map[key] = [];
+      map[key].push(item);
+    });
+  });
+  return map;
+}
 
 export default function CashierDashboardPage() {
   const navigate = useNavigate();
@@ -19,6 +34,8 @@ export default function CashierDashboardPage() {
   const [recent, setRecent]           = useState([]);
   const [queue, setQueue]             = useState([]);
   const [expired, setExpired]         = useState([]);
+  const [groups, setGroups]           = useState([]);
+  const [expandedGroup, setExpandedGroup] = useState(null); // { code, loading, detail }
   const [activeTab, setActiveTab]     = useState('queue');
 
   const loadQueue = useCallback(() => {
@@ -32,6 +49,26 @@ export default function CashierDashboardPage() {
       .then(r => setExpired(r.data.data || []))
       .catch(() => {});
   }, []);
+
+  const loadGroups = useCallback(() => {
+    listGroups()
+      .then(r => setGroups(r.data.data || []))
+      .catch(() => {});
+  }, []);
+
+  async function handleGroupExpand(group) {
+    if (expandedGroup?.code === group.group_code) {
+      setExpandedGroup(null);
+      return;
+    }
+    setExpandedGroup({ code: group.group_code, loading: true, detail: null });
+    try {
+      const res = await getGroupDetail(group.group_code);
+      setExpandedGroup({ code: group.group_code, loading: false, detail: res.data.data });
+    } catch {
+      setExpandedGroup({ code: group.group_code, loading: false, detail: null });
+    }
+  }
 
   useEffect(() => {
     loadQueue();
@@ -164,6 +201,14 @@ export default function CashierDashboardPage() {
         >
           Kadaluarsa {expired.length > 0 && <span className="ml-1 bg-red-100 text-red-600 text-xs rounded-full px-1.5 py-0.5">{expired.length}</span>}
         </button>
+        <button
+          onClick={() => { setActiveTab('groups'); loadGroups(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'groups' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500'
+          }`}
+        >
+          Group Invoice {groups.length > 0 && <span className="ml-1 bg-violet-100 text-violet-700 text-xs rounded-full px-1.5 py-0.5">{groups.length}</span>}
+        </button>
       </div>
 
       {/* Queue tab — RESERVED + WAITING_PAYMENT + PENDING orders */}
@@ -260,6 +305,91 @@ export default function CashierDashboardPage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+      {/* Group Invoice tab */}
+      {activeTab === 'groups' && (
+        <div>
+          <div className="flex justify-end mb-2">
+            <button onClick={loadGroups} className="text-xs text-violet-600 hover:underline">{t('helper.refresh')}</button>
+          </div>
+          {groups.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-8">Belum ada group invoice hari ini.</p>
+          ) : (
+            <div className="bg-white rounded-xl border overflow-hidden divide-y">
+              {groups.map(grp => {
+                const isOpen = expandedGroup?.code === grp.group_code;
+                return (
+                  <div key={grp.group_id}>
+                    {/* Row header — clickable */}
+                    <button
+                      onClick={() => handleGroupExpand(grp)}
+                      className="w-full px-4 py-3 text-left hover:bg-violet-50 flex items-center justify-between gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono text-sm font-bold text-violet-700">{grp.group_code}</span>
+                          <span className="text-xs text-gray-400 font-normal">
+                            {grp.transaction_count} TRX · {grp.payment_method}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">
+                          {grp.customer_name || grp.customer_phone || 'Walk-in'}{grp.customer_phone && grp.customer_name ? ` · ${grp.customer_phone}` : ''} · {formatDate(grp.created_at)}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                        <span className="text-sm font-bold text-blue-700">{formatRupiah(grp.total_amount)}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">PAID</span>
+                      </div>
+                      <span className="text-gray-400 text-sm ml-1">{isOpen ? '▲' : '▼'}</span>
+                    </button>
+
+                    {/* Expanded detail panel */}
+                    {isOpen && (
+                      <div className="bg-violet-50 border-t border-violet-100 px-4 py-3">
+                        {expandedGroup.loading ? (
+                          <p className="text-xs text-gray-400 py-2">Memuat detail…</p>
+                        ) : expandedGroup.detail ? (
+                          <>
+                            {/* Transaction list */}
+                            <div className="space-y-1.5 mb-3">
+                              {expandedGroup.detail.transactions.map(txn => (
+                                <div key={txn.transaction_id} className="flex justify-between items-center text-xs">
+                                  <span className="font-mono text-gray-700">{txn.transaction_id}</span>
+                                  <span className="text-gray-500 mx-2 truncate">
+                                    {(txn.items?.[0]?.tenant_name) || ''}
+                                    {(txn.items?.[0]?.booth_location) ? ` · ${txn.items[0].booth_location}` : ''}
+                                  </span>
+                                  <span className="font-semibold text-gray-800 shrink-0">{formatRupiah(txn.total_amount)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Print receipt button */}
+                            <div className="flex justify-end">
+                              <PrintGroupReceiptButton
+                                groupCode={grp.group_code}
+                                customer={{ name: grp.customer_name, phone: grp.customer_phone }}
+                                boothBreakdown={buildBoothBreakdown(expandedGroup.detail)}
+                                totalAmount={grp.total_amount}
+                                cashReceived={null}
+                                cashChange={null}
+                                paymentMethod={grp.payment_method}
+                                cashierName={grp.cashier_name || ''}
+                                paidAt={grp.created_at}
+                                transactionIds={expandedGroup.detail.transactions.map(t => t.transaction_id)}
+                              />
+                            </div>
+                          </>
+                        ) : (
+                          <p className="text-xs text-red-400 py-2">Gagal memuat detail group.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -22,4 +22,5 @@ export const getPendingDeleteRequests = () => client.get('/cashier/delete-reques
 export const getCustomerActiveTrx = ({ phone, name } = {}) =>
   client.get('/cashier/customer-transactions', { params: { phone, name } });
 export const groupCheckout = (data) => client.post('/cashier/group-checkout', data);
+export const listGroups    = ()         => client.get('/cashier/groups');
 export const getGroupDetail = (groupId) => client.get(`/cashier/groups/${groupId}`);

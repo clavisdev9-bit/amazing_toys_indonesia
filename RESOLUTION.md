@@ -83,6 +83,8 @@
 | [BUG-065](#bug-065) | 2026-06-15 | Klik "Konfirmasi Bayar" di `/cashier/group-bayar` gagal 422 — validator `body('transaction_ids.*').isUUID()` menolak format `TXN-YYYYMMDD-NNNNN` yang bukan UUID | Backend | ✅ Resolved | CR-054 |
 | [BUG-066](#bug-066) | 2026-06-15 | `/pesanan/:id` tidak auto-refresh setelah Group Checkout — backend broadcast `GROUP_ORDER_PAID` tapi frontend hanya subscribe `ORDER_PAID`; polling juga tidak cover `PENDING_APPROVAL` | Frontend + Backend | ✅ Resolved | CR-054 |
 | [BUG-067](#bug-067) | 2026-06-15 | Group invoice `GRP-*` tidak bisa digunakan untuk ambil barang di halaman helper — `HandoverOutstandingPanel` hanya filter by `transaction_id`, tidak handle format `GRP-*`; `handoverOrder` tidak punya logik group sehingga item multi-booth saling merusak; setiap booth butuh independent handover | Frontend + Backend | ✅ Resolved | CR-054 |
+| [CR-062](#cr-062) | 2026-06-15 | ThermalGroupReceipt: Struk thermal untuk Group Invoice Checkout — QR group code, breakdown per booth, per-booth pickup reminder, daftar TXN | Frontend | ✅ Done | CR-054 |
+| [CR-063](#cr-063) | 2026-06-15 | Tab "Group Invoice" di `/cashier` — list GRP-* hari ini, expand per row untuk detail TRX + reprint struk | Frontend + Backend | ✅ Done | — |
 
 ---
 
@@ -5300,3 +5302,191 @@ EduPlayZone helper scan GRP-20260614-0001:
 ```
 
 Kedua booth menggunakan **kode yang sama** (`GRP-20260614-0001`) dan masing-masing hanya menyelesaikan item milik booth mereka sendiri.
+
+---
+
+## CR-062 — ThermalGroupReceipt: Struk Thermal untuk Group Invoice Checkout
+
+**Date:** 2026-06-15  
+**CR Terkait:** CR-054 (Group Checkout)  
+**Layer:** Frontend  
+**Status:** ✅ Done
+
+### Deskripsi
+
+Implementasi komponen struk thermal untuk Group Invoice Checkout. Sebelumnya, `PrintGroupReceiptButton` menghasilkan HTML inline sederhana tanpa QR code dan tanpa konsistensi visual dengan `ThermalReceipt.jsx` (struk transaksi tunggal). CR ini membuat `ThermalGroupReceipt.jsx` baru yang mengikuti pola yang sama, dan mengupgrade `PrintGroupReceiptButton.jsx` untuk menggunakan komponen tersebut via DOM ref.
+
+### Files yang Diubah
+
+| File | Perubahan |
+|---|---|
+| `frontend/src/components/cashier/ThermalGroupReceipt.jsx` | **Baru** — komponen struk thermal untuk group invoice |
+| `frontend/src/components/cashier/PrintGroupReceiptButton.jsx` | **Replace** — dari HTML string inline ke `useRef` + `ThermalGroupReceipt` |
+| `frontend/src/pages/cashier/GroupPaymentPage.jsx` | Tambah props `cashReceived`, `cashChange`, `paymentRef`, `transactionIds`; update `boothBreakdown` key ke `TenantName – BoothLocation` |
+
+### Spesifikasi ThermalGroupReceipt
+
+**Props:**
+```js
+{
+  groupCode,       // "GRP-20260615-0001"
+  customer,        // { name, phone }
+  boothBreakdown,  // { "ToysWorld – Hall A, A1": [{ product_name, quantity, subtotal }] }
+  totalAmount,
+  cashReceived,    // number | null
+  cashChange,      // number | null
+  paymentMethod,   // "CASH" | "QRIS" | "EDC" | "TRANSFER"
+  paymentRef,      // string | undefined (EDC/TRANSFER ref)
+  cashierName,
+  paidAt,
+  transactionIds,  // ["TXN-...", "TXN-..."]
+  qrSize,          // default 100
+}
+```
+
+**Layout (274px, Courier New):**
+```
+[ToyIcon] Event Name
+          Venue
+          Date
+─────────────────────────────
+Invoice Group  : GRP-20260615-0001
+Date & Time    : 15 Jun 2026 10:30
+Cashier        : Budi
+Customer       : John
+Phone          : 0812...
+- - - - - - - - - - - - - - -
+ITEMS PER BOOTH
+  ToysWorld – Hall A, A1
+  - - - - - - - - - - -
+  Lego City Set    Rp 250.000
+  ×1
+- - - - - - - - - - - - - - -
+  EduPlayZone – Hall C, C5
+  - - - - - - - - - - -
+  Puzzle ABC       Rp 85.000
+  ×1
+─────────────────────────────
+              TOTAL  Rp 335.000
+       Cash received  Rp 400.000
+              Change  Rp 65.000
+[PAID - CASH]
+═════════════════════════════
+AMBIL BARANG DI
+· ToysWorld – Hall A, A1
+· EduPlayZone – Hall C, C5
+Tunjukkan Group Invoice ini di setiap booth.
+- - - - - - - - - - - - - - -
+[QR GRP] Scan untuk invoice digital
+         GRP-20260615-0001
+- - - - - - - - - - - - - - -
+Transaksi:
+· TXN-20260615-00093
+· TXN-20260615-00094
+- - - - - - - - - - - - - - -
+    * Harga sudah termasuk pajak.
+    Terima kasih sudah berkunjung!
+```
+
+### Implementasi PrintGroupReceiptButton
+
+Pattern: hidden component rendered in DOM, print grabs `innerHTML`.
+
+```jsx
+const receiptRef = useRef(null);
+
+function handlePrint() {
+  const el = receiptRef.current;
+  const html = `<!DOCTYPE html>...<body>${el.innerHTML}</body></html>`;
+  const win = window.open('', '_blank', 'width=340,height=700');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); win.close(); }, 300);
+}
+
+return (
+  <>
+    <button onClick={handlePrint}>Cetak</button>
+    {/* Off-screen: position:fixed top/left -9999px, width:274px */}
+    <div ref={receiptRef} style={{ position:'fixed', top:'-9999px', left:'-9999px', width:'274px' }}>
+      <ThermalGroupReceipt {...allProps} />
+    </div>
+  </>
+);
+```
+
+### Perubahan GroupPaymentPage
+
+**boothBreakdown key** diperbarui dari `booth_location` saja ke `TenantName – BoothLocation`:
+```js
+// Sebelum
+const booth = item.booth_location || t.booth_location || 'Booth';
+
+// Sesudah
+const tenantPart = item.tenant_name ? `${item.tenant_name} – ` : '';
+const boothPart  = item.booth_location || t.booth_location || 'Booth';
+const booth = tenantPart + boothPart;
+```
+
+**Props tambahan ke PrintGroupReceiptButton:**
+```jsx
+cashReceived={method === 'CASH' ? parseFloat(cashReceived) : null}
+cashChange={success.cashChange ?? null}
+paymentRef={paymentRef || undefined}
+transactionIds={selectedTrx.map(t => t.transaction_id)}
+```
+
+---
+
+## CR-063 — Tab "Group Invoice" di `/cashier`
+
+**Date:** 2026-06-15  
+**Layer:** Frontend + Backend  
+**Status:** ✅ Done
+
+### Deskripsi
+
+Menambahkan tab keempat "Group Invoice" di halaman `/cashier` yang menampilkan semua group invoice (`GRP-*`) yang dibuat hari ini. Setiap baris bisa di-expand untuk melihat TRX yang termasuk dalam group dan mencetak ulang struk thermal.
+
+### Files yang Diubah
+
+| File | Perubahan |
+|---|---|
+| `backend/src/modules/cashier/cashier.service.js` | Tambah `listGroups()` — query `transaction_groups` hari ini + transaction count |
+| `backend/src/modules/cashier/cashier.router.js` | Tambah `GET /api/v1/cashier/groups` sebelum route `groups/:groupId` |
+| `frontend/src/api/cashier.js` | Tambah `listGroups()` |
+| `frontend/src/pages/cashier/CashierDashboardPage.jsx` | Tambah tab "Group Invoice", state groups + expandedGroup, `loadGroups()`, `handleGroupExpand()`, helper `buildBoothBreakdown()`, panel content |
+
+### Backend: listGroups
+
+```sql
+SELECT g.group_id, g.group_code, g.customer_name, g.customer_phone,
+       g.total_amount, g.payment_method, g.payment_status, g.created_at,
+       u.display_name AS cashier_name,
+       COUNT(t.transaction_id)::int AS transaction_count
+FROM transaction_groups g
+LEFT JOIN users u ON u.user_id = g.cashier_id
+LEFT JOIN transactions t ON t.group_id = g.group_id
+WHERE g.created_at >= CURRENT_DATE
+GROUP BY g.group_id, u.display_name
+ORDER BY g.created_at DESC
+LIMIT 100
+```
+
+Route `GET /api/v1/cashier/groups` ditempatkan **sebelum** `GET /api/v1/cashier/groups/:groupId` agar tidak tertangkap sebagai groupId.
+
+### Frontend: Tab Behavior
+
+1. Klik tab → `loadGroups()` dipanggil, list diisi dari API
+2. Setiap row menampilkan: group code (violet mono), customer, # TRX, metode bayar, total, waktu
+3. Klik row → `handleGroupExpand(group)` dipanggil:
+   - Jika sudah open → collapse
+   - Jika belum → fetch `getGroupDetail(group_code)`, tampilkan panel expand
+4. Panel expand: daftar TRX (TXN ID + booth + amount) + tombol **Cetak Struk**
+5. `buildBoothBreakdown(detail)` membangun `{TenantName – Booth: items[]}` dari `detail.transactions[].items[]`
+6. `PrintGroupReceiptButton` dirender di panel expand dengan boothBreakdown + reprint data
+
+### Catatan
+
+Route ordering penting: Express mencocokkan `/groups` sebelum `/groups/:groupId` — jika urutannya terbalik, request ke `/groups` akan menjadi `groups/undefined` dan masuk ke handler detail (dengan 404).

@@ -1,5 +1,5 @@
-import React from 'react';
-import { formatRupiah } from '../../utils/format';
+import React, { useRef } from 'react';
+import ThermalGroupReceipt from './ThermalGroupReceipt';
 
 function PrinterIcon() {
   return (
@@ -12,68 +12,71 @@ function PrinterIcon() {
 }
 
 export default function PrintGroupReceiptButton({
-  groupCode, customer, selectedTrx, boothBreakdown,
-  totalAmount, paymentMethod, cashierName, paidAt,
+  groupCode,
+  customer,
+  boothBreakdown,
+  totalAmount,
+  cashReceived,
+  cashChange,
+  paymentMethod,
+  paymentRef,
+  cashierName,
+  paidAt,
+  transactionIds,
 }) {
-  function handlePrint() {
-    const paidDate = paidAt ? new Date(paidAt).toLocaleString('id-ID') : '-';
+  const receiptRef = useRef(null);
 
-    const boothRows = Object.entries(boothBreakdown ?? {}).map(([booth, items]) => `
-      <tr><td colspan="3" style="padding:6px 0 2px;font-weight:700;color:#1d4ed8;font-size:11px">${booth}</td></tr>
-      ${items.map(item => `
-        <tr>
-          <td style="padding:1px 0;font-size:11px">${item.product_name}</td>
-          <td style="text-align:center;font-size:11px">×${item.quantity}</td>
-          <td style="text-align:right;font-size:11px">${formatRupiah(item.subtotal)}</td>
-        </tr>
-      `).join('')}
-    `).join('');
+  function handlePrint() {
+    const el = receiptRef.current;
+    if (!el) return;
 
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-    <style>
-      body{font-family:monospace;font-size:12px;margin:0;padding:12px;width:280px}
-      h2{font-size:14px;text-align:center;margin:0 0 4px}
-      .center{text-align:center}.divider{border-top:1px dashed #999;margin:8px 0}
-      table{width:100%;border-collapse:collapse}
-      .group-code{font-size:16px;font-weight:900;text-align:center;font-family:monospace;margin:6px 0}
-      .total-row td{font-weight:900;font-size:13px;border-top:1px solid #333;padding-top:6px}
-    </style></head><body>
-    <h2>INVOICE GROUP</h2>
-    <div class="group-code">${groupCode}</div>
-    <div class="center" style="font-size:11px;color:#555;margin-bottom:6px">${customer?.name ?? ''} · ${customer?.phone ?? ''}</div>
-    <div class="divider"></div>
-    <table>
-      ${boothRows}
-      <tr class="total-row">
-        <td>TOTAL</td><td></td>
-        <td style="text-align:right">${formatRupiah(totalAmount)}</td>
-      </tr>
-    </table>
-    <div class="divider"></div>
-    <div style="font-size:10px">Metode: ${paymentMethod}</div>
-    <div style="font-size:10px">Kasir: ${cashierName}</div>
-    <div style="font-size:10px">Waktu: ${paidDate}</div>
-    <div class="divider"></div>
-    <div class="center" style="font-size:10px">Tunjukkan struk ini di setiap booth</div>
-    <div class="center" style="font-size:10px">untuk mengambil barang Anda.</div>
-    </body></html>`;
+<style>
+@page { size: 80mm auto; margin: 3mm; }
+body { width: 274px; margin: 0 auto; padding: 6px; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+* { box-sizing: border-box; }
+svg { display: block; }
+</style></head><body>${el.innerHTML}</body></html>`;
 
-    const win = window.open('', '_blank', 'width=320,height=600');
+    const win = window.open('', '_blank', 'width=340,height=700');
+    if (!win) return;
     win.document.write(html);
     win.document.close();
     win.focus();
-    win.print();
-    win.close();
+    setTimeout(() => { win.print(); win.close(); }, 300);
   }
 
   return (
-    <button
-      type="button"
-      onClick={handlePrint}
-      className="inline-flex items-center justify-center gap-2 bg-white text-emerald-700 border border-emerald-600 rounded-md px-3 py-1.5 text-xs font-medium hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-    >
-      <PrinterIcon />
-      Cetak
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={handlePrint}
+        className="inline-flex items-center justify-center gap-2 bg-white text-emerald-700 border border-emerald-600 rounded-md px-3 py-1.5 text-xs font-medium hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+      >
+        <PrinterIcon />
+        Cetak
+      </button>
+
+      {/* Off-screen receipt rendered into DOM so innerHTML can be captured */}
+      <div
+        ref={receiptRef}
+        style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '274px', background: '#fff' }}
+        aria-hidden="true"
+      >
+        <ThermalGroupReceipt
+          groupCode={groupCode}
+          customer={customer}
+          boothBreakdown={boothBreakdown}
+          totalAmount={totalAmount}
+          cashReceived={cashReceived}
+          cashChange={cashChange}
+          paymentMethod={paymentMethod}
+          paymentRef={paymentRef}
+          cashierName={cashierName}
+          paidAt={paidAt}
+          transactionIds={transactionIds}
+        />
+      </div>
+    </>
   );
 }

@@ -1168,3 +1168,111 @@ if (isGroupSearch) {
 - [ ] Untuk setiap komponen: verifikasi bahwa format baru bisa masuk dan di-handle
 - [ ] Test manual: ketik format baru di kolom search → pastikan ada response yang benar (bukan "tidak ditemukan" yang salah)
 - [ ] Test QR scan: scan QR yang berisi format baru → pastikan hasilnya sama dengan ketik manual
+
+---
+
+## STD-024 — Komponen Struk Thermal: Pola Konsistensi Visual dan Print via DOM Ref
+
+**Berlaku untuk:** Semua komponen struk thermal di `frontend/src/components/cashier/` — `ThermalReceipt.jsx` (single TXN), `ThermalGroupReceipt.jsx` (group invoice), dan komponen serupa di masa depan.
+
+**Latar Belakang:** CR-062 — `PrintGroupReceiptButton` awalnya menghasilkan HTML inline string yang berbeda layout/font/ukuran dari `ThermalReceipt.jsx`, tidak menyertakan QR code, dan tidak bisa di-update tanpa duplikasi. Diganti dengan pola component-based + DOM ref.
+
+### Aturan
+
+**A. Semua komponen struk thermal WAJIB menggunakan konstanta yang sama:**
+
+```js
+const MONO = "'Courier New', Courier, monospace";  // font utama cetak thermal
+const SANS = "Arial, Helvetica, sans-serif";        // font header/label
+
+// Style objects S.* — copy dari ThermalReceipt.jsx, jangan redefine
+const S = {
+  root:       { width: '100%', fontFamily: MONO, fontSize: '12px', ... },
+  logoZone:   { textAlign: 'center', ... },
+  eventName:  { fontFamily: SANS, fontSize: '14px', fontWeight: '700', ... },
+  // ... dst
+};
+```
+
+Jangan gunakan Tailwind atau CSS class di dalam komponen struk — hanya inline style. Thermal printer tidak memproses stylesheet eksternal.
+
+**B. Data event (nama, venue, tanggal) WAJIB dari `usePublicConfig()`, bukan props:**
+
+```js
+// SALAH ❌ — hardcode atau terima via props
+<ThermalReceipt eventName="Amazing Toys Fair 2026" ... />
+
+// BENAR ✅ — baca dari config publik
+const publicCfg = usePublicConfig();
+const eventName = publicCfg?.event_name || '';
+```
+
+`usePublicConfig()` sudah otomatis update saat admin save config. Tidak perlu restart.
+
+**C. Komponen print button WAJIB menggunakan pola DOM ref (bukan HTML string inline):**
+
+```jsx
+// SALAH ❌ — HTML string inline, tidak bisa pakai React components (QRCode, dll)
+const html = `<div>${boothRows}</div>`;
+win.document.write(html);
+
+// BENAR ✅ — render React component ke DOM, capture innerHTML
+const receiptRef = useRef(null);
+
+function handlePrint() {
+  const el = receiptRef.current;
+  if (!el) return;
+  const html = `<!DOCTYPE html><html><head>
+    <style>@page{size:80mm auto;margin:3mm}body{width:274px;...}</style>
+  </head><body>${el.innerHTML}</body></html>`;
+  const win = window.open('', '_blank', 'width=340,height=700');
+  if (!win) return;
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); win.close(); }, 300);
+}
+
+return (
+  <>
+    <button onClick={handlePrint}>Cetak</button>
+    {/* Off-screen: tidak hidden (display:none mencegah render), tapi off-viewport */}
+    <div ref={receiptRef}
+         style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '274px', background: '#fff' }}
+         aria-hidden="true">
+      <ThermalGroupReceipt {...props} />
+    </div>
+  </>
+);
+```
+
+**Kenapa `position:fixed` bukan `display:none`:** `display:none` bisa mencegah komponen child (misalnya `QRCodeSVG`) menghasilkan DOM yang bisa di-capture. `position:fixed` dengan koordinat offscreen memastikan komponen benar-benar dirender ke DOM.
+
+**D. QR Code di struk thermal HARUS encode entity identifier yang bermakna:**
+
+| Jenis struk | QR encode | Level error correction |
+|---|---|---|
+| Single TXN receipt | `transaction_id` (contoh: `TXN-20260615-00093`) | H (30%) |
+| Group invoice receipt | `group_code` (contoh: `GRP-20260615-0001`) | H (30%) |
+
+Level H digunakan karena thermal print bisa blur — error correction 30% masih bisa dibaca scanner.
+
+**E. Lebar struk: 274px (bukan 280px atau 300px):**
+
+274px = 80mm minus 3mm margin kiri kanan. Ini nilai yang sesuai untuk printer thermal 80mm standar. Jangan ubah tanpa test fisik.
+
+### Checklist — setiap kali membuat komponen struk baru
+
+- [ ] Import dan gunakan `MONO`, `SANS`, `S` dari `ThermalReceipt.jsx` (atau copy exact — jangan redefine dengan nilai berbeda)
+- [ ] Event info baca dari `usePublicConfig()`, bukan props
+- [ ] Lebar root: `width: '100%'` di komponen, `width: 274px` di print window CSS
+- [ ] QR code meng-encode identifier yang sesuai (TXN-* untuk single, GRP-* untuk group)
+- [ ] Print button gunakan pola `useRef` + `position:fixed` offscreen, bukan HTML string
+- [ ] Test print: buka print dialog, pastikan preview 80mm, font Courier New tampil
+- [ ] Test QR: scan QR di preview → pastikan hasilnya benar
+
+### Referensi
+
+- `ThermalReceipt.jsx` — referensi canonical untuk single TXN
+- `ThermalGroupReceipt.jsx` — referensi canonical untuk group invoice
+- `PrintGroupReceiptButton.jsx` — referensi canonical untuk print-via-DOM-ref pattern

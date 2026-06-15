@@ -227,6 +227,20 @@ router.post('/group-checkout',
 );
 
 /**
+ * GET /api/v1/cashier/groups
+ * List group invoice hari ini.
+ */
+router.get('/groups',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.listGroups();
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
  * GET /api/v1/cashier/groups/:groupId
  * Detail group beserta semua TRX dan item-nya.
  * groupId bisa berupa UUID atau group_code (GRP-xxx).

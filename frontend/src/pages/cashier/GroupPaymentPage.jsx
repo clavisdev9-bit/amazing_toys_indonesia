@@ -120,12 +120,14 @@ export default function GroupPaymentPage() {
     ? parseFloat(cashReceived) - grandTotal
     : null;
 
-  // Group by booth for breakdown display
+  // Group by "TenantName – BoothLocation" for breakdown display
   const boothBreakdown = useMemo(() => {
     const map = {};
     selectedTrx.forEach(t => {
       (t.items ?? []).forEach(item => {
-        const booth = item.booth_location || t.booth_location || 'Booth';
+        const tenantPart = item.tenant_name ? `${item.tenant_name} – ` : '';
+        const boothPart  = item.booth_location || t.booth_location || 'Booth';
+        const booth = tenantPart + boothPart;
         if (!map[booth]) map[booth] = [];
         map[booth].push(item);
       });
@@ -231,12 +233,15 @@ export default function GroupPaymentPage() {
             <PrintGroupReceiptButton
               groupCode={success.groupCode}
               customer={customer}
-              selectedTrx={selectedTrx}
               boothBreakdown={boothBreakdown}
               totalAmount={success.totalAmount}
+              cashReceived={method === 'CASH' ? parseFloat(cashReceived) : null}
+              cashChange={success.cashChange ?? null}
               paymentMethod={method}
+              paymentRef={paymentRef || undefined}
               cashierName={user?.name ?? user?.username ?? 'Kasir'}
               paidAt={success.paidAt}
+              transactionIds={selectedTrx.map(t => t.transaction_id)}
             />
             <Button variant="secondary" size="sm">📱 WhatsApp</Button>
             <Button variant="secondary" size="sm">📧 Email</Button>
