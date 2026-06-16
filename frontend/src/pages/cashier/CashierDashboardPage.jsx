@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../../api/client';
-import { getTransactions, getExpiredTransactions, getCustomerActiveTrx, listGroups, getGroupDetail } from '../../api/cashier';
+import { getTransactions, getExpiredTransactions, getPreorderPaymentQueue, getCustomerActiveTrx, listGroups, getGroupDetail } from '../../api/cashier';
 import { lookupPayment } from '../../api/payments';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
@@ -31,16 +31,23 @@ export default function CashierDashboardPage() {
   const [voucherCode, setVoucherCode] = useState('');
   const [looking, setLooking]         = useState(false);
   const [lookupError, setLookupError] = useState('');
-  const [recent, setRecent]           = useState([]);
-  const [queue, setQueue]             = useState([]);
-  const [expired, setExpired]         = useState([]);
-  const [groups, setGroups]           = useState([]);
+  const [recent, setRecent]             = useState([]);
+  const [queue, setQueue]               = useState([]);
+  const [expired, setExpired]           = useState([]);
+  const [groups, setGroups]             = useState([]);
+  const [preorderQueue, setPreorderQueue] = useState([]);
   const [expandedGroup, setExpandedGroup] = useState(null); // { code, loading, detail }
-  const [activeTab, setActiveTab]     = useState('queue');
+  const [activeTab, setActiveTab]       = useState('queue');
 
   const loadQueue = useCallback(() => {
     client.get('/cashier/queue')
       .then(r => setQueue(r.data.data || []))
+      .catch(() => {});
+  }, []);
+
+  const loadPreorderQueue = useCallback(() => {
+    getPreorderPaymentQueue()
+      .then(r => setPreorderQueue(r.data.data || []))
       .catch(() => {});
   }, []);
 
@@ -72,12 +79,13 @@ export default function CashierDashboardPage() {
 
   useEffect(() => {
     loadQueue();
+    loadPreorderQueue();
     loadExpired();
     getTransactions().then((r) => {
       const items = r.data.data?.items ?? r.data.data ?? [];
       setRecent(items);
     }).catch(() => {});
-  }, [loadQueue, loadExpired]);
+  }, [loadQueue, loadPreorderQueue, loadExpired]);
 
   async function handleLookup(e) {
     e.preventDefault();
@@ -176,18 +184,29 @@ export default function CashierDashboardPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b mb-4">
+      <div className="flex border-b mb-4 overflow-x-auto">
         <button
           onClick={() => setActiveTab('queue')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'queue' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'
           }`}
         >
           {t('cashier.queueTab')} ({queue.length})
         </button>
+        {/* CR-053: dedicated pre-order payment tab */}
+        <button
+          onClick={() => { setActiveTab('preorder'); loadPreorderQueue(); }}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
+            activeTab === 'preorder' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'
+          }`}
+        >
+          Pre-Order {preorderQueue.length > 0 && (
+            <span className="ml-1 bg-orange-100 text-orange-700 text-xs rounded-full px-1.5 py-0.5">{preorderQueue.length}</span>
+          )}
+        </button>
         <button
           onClick={() => setActiveTab('recent')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'recent' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500'
           }`}
         >
@@ -195,7 +214,7 @@ export default function CashierDashboardPage() {
         </button>
         <button
           onClick={() => { setActiveTab('expired'); loadExpired(); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'expired' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500'
           }`}
         >
@@ -203,7 +222,7 @@ export default function CashierDashboardPage() {
         </button>
         <button
           onClick={() => { setActiveTab('groups'); loadGroups(); }}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'groups' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500'
           }`}
         >
@@ -211,7 +230,7 @@ export default function CashierDashboardPage() {
         </button>
       </div>
 
-      {/* Queue tab — RESERVED + WAITING_PAYMENT + PENDING orders */}
+      {/* Queue tab — RESERVED + WAITING_PAYMENT + PENDING orders (incl. pre-orders cross-date) */}
       {activeTab === 'queue' && (
         <div>
           <div className="flex justify-end mb-2">
@@ -227,8 +246,13 @@ export default function CashierDashboardPage() {
                   onClick={() => navigate(`/cashier/bayar/${txn.transaction_id}`)}
                   className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-2"
                 >
-                  <div>
-                    <p className="font-mono text-sm font-semibold text-gray-900">{txn.transaction_id}</p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-mono text-sm font-semibold text-gray-900">{txn.transaction_id}</p>
+                      {txn.order_type === 'PREORDER' && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 shrink-0">PRE-ORDER</span>
+                      )}
+                    </div>
                     <p className="text-xs text-gray-500">
                       {txn.booth_location ? `${txn.booth_location} · ` : ''}
                       {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'} ·{' '}
@@ -238,6 +262,47 @@ export default function CashierDashboardPage() {
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-blue-700">{formatRupiah(txn.total_amount)}</p>
                     <Badge status={txn.status} label={t(`badge.${txn.status}`)} />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pre-Order tab — CR-053: PENDING pre-orders awaiting cashier payment (no date filter) */}
+      {activeTab === 'preorder' && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-gray-400">Pre-order yang sudah disetujui helper, menunggu pembayaran.</p>
+            <button onClick={loadPreorderQueue} className="text-xs text-orange-600 hover:underline">{t('helper.refresh')}</button>
+          </div>
+          {preorderQueue.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-8">Tidak ada pre-order menunggu pembayaran.</p>
+          ) : (
+            <div className="bg-white rounded-xl border overflow-hidden divide-y">
+              {preorderQueue.map(txn => (
+                <button
+                  key={txn.transaction_id}
+                  onClick={() => navigate(`/cashier/bayar/${txn.transaction_id}`)}
+                  className="w-full px-4 py-3 text-left hover:bg-orange-50 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <p className="font-mono text-sm font-semibold text-gray-900">{txn.transaction_id}</p>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 shrink-0">🔖 PRE-ORDER</span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'}
+                      {txn.booth_location ? ` · ${txn.booth_location}` : ''}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Disetujui: {txn.approved_at ? formatDate(txn.approved_at) : '-'} · Dibuat: {formatDate(txn.created_at)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-orange-700">{formatRupiah(txn.total_amount)}</p>
+                    <span className="text-xs font-semibold text-orange-500">Belum Dibayar</span>
                   </div>
                 </button>
               ))}

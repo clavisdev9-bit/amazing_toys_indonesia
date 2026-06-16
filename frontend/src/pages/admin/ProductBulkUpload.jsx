@@ -23,6 +23,7 @@ const HEADERS = [
   'product_id', 'product_name', 'category', 'price', 'tenant_id',
   'barcode', 'stock_quantity', 'description', 'image_url',
   'odoo_categ_id', 'odoo_categ_name', 'is_active',
+  'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note',
 ];
 
 const REQUIRED_FIELDS = ['product_name', 'category', 'price', 'tenant_id'];
@@ -37,9 +38,14 @@ const FIELD_DESCS = {
   stock_quantity:  'Jumlah stok awal, default 0',
   description:     'Deskripsi produk, opsional',
   image_url:       'URL foto produk, opsional (https://...)',
-  odoo_categ_id:   'ID kategori Odoo (angka), opsional',
-  odoo_categ_name: 'Nama kategori Odoo, opsional',
-  is_active:       'Status aktif: true atau false (default true)',
+  odoo_categ_id:    'ID kategori Odoo (angka), opsional',
+  odoo_categ_name:  'Nama kategori Odoo, opsional',
+  is_active:        'Status aktif: true atau false (default true)',
+  is_on_hold:       'Tahan dari tampilan: true atau false (default false)',
+  is_display_only:  'Hanya display, tidak dijual reguler: true atau false (default false)',
+  max_per_customer: 'Batas pembelian per customer (angka), kosongkan = tidak ada batas',
+  is_preorder:      'Produk pre-order: true atau false (default false)',
+  preorder_note:    'Catatan pre-order untuk customer, opsional',
 };
 
 const EXAMPLE_ROW = {
@@ -52,9 +58,14 @@ const EXAMPLE_ROW = {
   stock_quantity:  10,
   description:     'Model kit skala 1/100 Master Grade',
   image_url:       '',
-  odoo_categ_id:   '',
-  odoo_categ_name: '',
-  is_active:       true,
+  odoo_categ_id:    '',
+  odoo_categ_name:  '',
+  is_active:        true,
+  is_on_hold:       false,
+  is_display_only:  false,
+  max_per_customer: '',
+  is_preorder:      false,
+  preorder_note:    '',
 };
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -107,9 +118,13 @@ function parseSheet(workbook) {
     }
 
     // Type coercions
-    row.is_active      = parseBoolean(row.is_active === '' ? 'true' : row.is_active);
-    row.odoo_categ_id  = row.odoo_categ_id === '' ? null : (parseInt(row.odoo_categ_id) || null);
-    row.stock_quantity = String(parseInt(row.stock_quantity) || 0);
+    row.is_active        = parseBoolean(row.is_active        === '' ? 'true'  : row.is_active);
+    row.is_on_hold       = parseBoolean(row.is_on_hold        === '' ? 'false' : row.is_on_hold);
+    row.is_display_only  = parseBoolean(row.is_display_only  === '' ? 'false' : row.is_display_only);
+    row.is_preorder      = parseBoolean(row.is_preorder       === '' ? 'false' : row.is_preorder);
+    row.odoo_categ_id    = row.odoo_categ_id    === '' ? null : (parseInt(row.odoo_categ_id)    || null);
+    row.max_per_customer = row.max_per_customer === '' ? null : (parseInt(row.max_per_customer) || null);
+    row.stock_quantity   = String(parseInt(row.stock_quantity) || 0);
 
     rows.push(row);
   }
@@ -278,18 +293,23 @@ export default function ProductBulkUpload({ onBack }) {
     setUploading(true);
     try {
       const payload = validRows.map(r => ({
-        product_id:      r.product_id      || '',
-        product_name:    r.product_name,
-        category:        r.category,
-        price:           r.price,
-        tenant_id:       r.tenant_id,
-        barcode:         r.barcode         || '',
-        stock_quantity:  r.stock_quantity,
-        description:     r.description     || '',
-        image_url:       r.image_url       || '',
-        odoo_categ_id:   r.odoo_categ_id,
-        odoo_categ_name: r.odoo_categ_name || '',
-        is_active:       r.is_active,
+        product_id:       r.product_id       || '',
+        product_name:     r.product_name,
+        category:         r.category,
+        price:            r.price,
+        tenant_id:        r.tenant_id,
+        barcode:          r.barcode          || '',
+        stock_quantity:   r.stock_quantity,
+        description:      r.description      || '',
+        image_url:        r.image_url        || '',
+        odoo_categ_id:    r.odoo_categ_id,
+        odoo_categ_name:  r.odoo_categ_name  || '',
+        is_active:        r.is_active,
+        is_on_hold:       r.is_on_hold,
+        is_display_only:  r.is_display_only,
+        max_per_customer: r.max_per_customer,
+        is_preorder:      r.is_preorder,
+        preorder_note:    r.preorder_note    || '',
       }));
 
       const res = await bulkUploadProducts(payload);

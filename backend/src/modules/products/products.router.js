@@ -137,4 +137,27 @@ router.patch('/:productId/hold',
   }
 );
 
+// PATCH /api/v1/products/:productId/preorder — toggle is_preorder (Helper/Admin/Leader)
+router.patch('/:productId/preorder',
+  authenticate, authorize('HELPER', 'LEADER', 'ADMIN'),
+  [
+    body('is_preorder').isBoolean().withMessage('is_preorder harus boolean.'),
+    body('preorder_note').optional({ nullable: true }).isString().isLength({ max: 500 }),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const { is_preorder, preorder_note } = req.body;
+      const data = await productsSvc.togglePreorder(req.params.productId, is_preorder, preorder_note);
+      res.json({
+        success: true,
+        message: is_preorder
+          ? `Produk "${data.product_name}" dijadikan Pre-Order.`
+          : `Produk "${data.product_name}" diubah ke produk reguler.`,
+        data,
+      });
+    } catch (err) { next(err); }
+  }
+);
+
 module.exports = router;

@@ -28,6 +28,24 @@ router.get('/',
 );
 
 /**
+ * PATCH /api/v1/preorder/:txnId/ready-to-ship
+ * BUG-051-02: Admin konfirmasi pre-order siap kirim → PAID → AWAITING_SHIPMENT.
+ */
+router.patch('/:txnId/ready-to-ship',
+  authenticate, authorize('ADMIN', 'LEADER'),
+  [ param('txnId').isString().notEmpty() ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await preorderSvc.confirmReadyToShip(
+        req.params.txnId, req.user.userId, req.user.role,
+      );
+      res.json({ success: true, message: 'Status diperbarui ke AWAITING_SHIPMENT.', data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
  * PATCH /api/v1/preorder/:txnId/ship
  * Admin: input resi pengiriman → AWAITING_SHIPMENT → SHIPPED.
  * Body: { courier: string, tracking_number: string }

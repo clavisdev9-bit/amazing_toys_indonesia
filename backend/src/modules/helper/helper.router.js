@@ -181,6 +181,22 @@ router.get('/approval-queue',
 );
 
 /**
+ * GET /api/v1/helper/preorder-queue
+ * CR-050 Req-3 / CR1 update: Returns pre-order transactions with status
+ * PENDING_APPROVAL or PAID for this helper's booth.
+ * Used by the "Approval Pre-Order" tab.
+ */
+router.get('/preorder-queue',
+  authenticate, authorize('HELPER'),
+  async (req, res, next) => {
+    try {
+      const data = await helperSvc.getPreorderApprovalOrders(req.user.tenantId);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  },
+);
+
+/**
  * POST /api/v1/helper/orders/:transactionId/approve
  * Approve a PENDING_APPROVAL order → deduct stock, start timer, status = PENDING.
  * Body: { note? }
@@ -190,15 +206,29 @@ router.post('/orders/:transactionId/approve',
   [
     param('transactionId').notEmpty(),
     body('note').optional({ nullable: true }).isString().trim(),
+    // CR-050: shipping fields required for pre-order orders (validated in service)
+    body('shipping_name').optional({ nullable: true }).isString().trim(),
+    body('shipping_phone').optional({ nullable: true }).isString().trim(),
+    body('shipping_address').optional({ nullable: true }).isString().trim(),
+    body('shipping_city').optional({ nullable: true }).isString().trim(),
+    body('shipping_province').optional({ nullable: true }).isString().trim(),
   ],
   validate,
   async (req, res, next) => {
     try {
+      const shippingFields = {
+        shipping_name:     req.body.shipping_name     || null,
+        shipping_phone:    req.body.shipping_phone    || null,
+        shipping_address:  req.body.shipping_address  || null,
+        shipping_city:     req.body.shipping_city     || null,
+        shipping_province: req.body.shipping_province || null,
+      };
       const data = await helperSvc.approveOrder(
         req.params.transactionId,
         req.user.userId,
         req.user.tenantId,
         req.body.note || null,
+        shippingFields,
       );
       res.json({ success: true, message: 'Pesanan disetujui.', data });
     } catch (err) { next(err); }

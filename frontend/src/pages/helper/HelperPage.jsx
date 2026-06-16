@@ -15,6 +15,7 @@ import {
   getBoothOrder,
   createHelperOrder,
   handoverOrder,
+  getPreorderApprovalOrders,
 } from '../../api/helper';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ const MENUS = [
     subs: [
       { id: 'belum_approve', label: 'Belum Approve' },
       { id: 'sudah_approve', label: 'Sudah Approve' },
+      { id: 'preorder_approval', label: 'Approval Pre-Order' },
     ],
   },
   { id: 'history', label: 'History', dot: C.muted, subs: null },
@@ -59,6 +61,7 @@ const PANEL_META = {
   'order/paid':                { title: 'Order Paid',          subtitle: 'Pesanan yang sudah dibayar',                  showScan: true,  scanPlaceholder: 'Cari nomor order...' },
   'approval/belum_approve':    { title: 'Antrian Approval',    subtitle: 'Pesanan customer menunggu persetujuan',       showScan: true,  scanPlaceholder: 'Cari / scan QR order...' },
   'approval/sudah_approve':    { title: 'Sudah Disetujui',     subtitle: 'Pesanan yang telah disetujui',                showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'approval/preorder_approval':{ title: 'Approval Pre-Order',  subtitle: 'Pre-order yang sudah dibayar — siap diproses', showScan: false },
   'history':                   { title: 'History',             subtitle: 'Semua transaksi booth hari ini',              showScan: false },
   'handover/handover_outstanding': { title: 'Serah Terima',   subtitle: 'Pesanan PAID siap diserahkan ke customer',    showScan: true,  scanPlaceholder: 'Scan QR atau ketik nomor order...' },
   'handover/sudah_handover':   { title: 'Sudah Serah Terima', subtitle: 'Serah terima telah selesai dilakukan',        showScan: true,  scanPlaceholder: 'Cari nomor order...' },
@@ -242,7 +245,7 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
         })}
       </nav>
 
-      {/* CR-05X: Pre-Order Serah Terima link */}
+      {/* CR-050: Pre-Order links */}
       <div style={{ borderTop: `1px solid ${C.border}`, padding: '4px 0' }}>
         <Link
           to="/helper/preorder-handover"
@@ -250,6 +253,13 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
         >
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#EA580C', flexShrink: 0 }} />
           <span style={{ flex: 1, lineHeight: 1.35 }}>📦 Pre-Order</span>
+        </Link>
+        <Link
+          to="/helper/products/preorder"
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 11px', color: '#EA580C', fontWeight: 700, fontSize: 13, textDecoration: 'none' }}
+        >
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#EA580C', flexShrink: 0 }} />
+          <span style={{ flex: 1, lineHeight: 1.35 }}>🔖 Pre-Order Produk</span>
         </Link>
       </div>
 
@@ -1060,6 +1070,117 @@ function SudahHandoverPanel({ searchQuery }) {
   );
 }
 
+// ─── Panel: Approval Pre-Order (CR-050 Req-3, CR1 update) ────────────────────
+function PreorderOrderCard({ txn }) {
+  const isPendingApproval = txn.status === 'PENDING_APPROVAL';
+  return (
+    <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
+      {/* Card header */}
+      <div style={{ background: isPendingApproval ? '#FFF7ED' : '#F0FDF4', borderBottom: `1px solid ${isPendingApproval ? '#FED7AA' : '#86EFAC'}`, padding: '10px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'monospace', fontWeight: 800, fontSize: 13, color: '#2a1e10' }}>{txn.transaction_id}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, background: '#FED7AA', color: '#C2410C', padding: '1px 7px', borderRadius: 99, border: '1px solid #FDBA74' }}>🔖 PRE-ORDER</span>
+            {isPendingApproval
+              ? <span style={{ fontSize: 11, fontWeight: 700, background: '#FEF3C7', color: '#92400E', padding: '1px 7px', borderRadius: 99, border: '1px solid #FDE68A' }}>⏳ Menunggu Approval</span>
+              : <span style={{ fontSize: 11, fontWeight: 700, background: '#D1FAE5', color: '#065F46', padding: '1px 7px', borderRadius: 99, border: '1px solid #6EE7B7' }}>✓ PAID</span>
+            }
+          </div>
+          <p style={{ margin: '2px 0 0', fontSize: 11, color: C.muted }}>{txn.customer_name || 'Walk-in'}{txn.customer_phone ? ` · ${txn.customer_phone}` : ''} · {formatDate(txn.created_at)}</p>
+        </div>
+        <span style={{ fontWeight: 800, fontSize: 15, color: C.goldDark }}>{formatRupiah(txn.total_amount)}</span>
+      </div>
+
+      {/* Shipping details */}
+      {txn.shipping_name ? (
+        <div style={{ padding: '8px 16px', background: '#FFF7ED', borderBottom: `1px solid ${C.border}`, fontSize: 12 }}>
+          <p style={{ margin: 0, fontWeight: 700, color: '#7C2D12', marginBottom: 3 }}>📦 Data Pengiriman</p>
+          <p style={{ margin: 0, color: '#3a2e25' }}><strong>{txn.shipping_name}</strong> · {txn.shipping_phone}</p>
+          <p style={{ margin: '2px 0 0', color: C.muted }}>{txn.shipping_address}{txn.shipping_city ? `, ${txn.shipping_city}` : ''}{txn.shipping_province ? `, ${txn.shipping_province}` : ''}</p>
+          {txn.courier && <p style={{ margin: '2px 0 0', color: C.muted }}>Kurir: {txn.courier}{txn.tracking_number ? ` · Resi: ${txn.tracking_number}` : ''}</p>}
+        </div>
+      ) : (
+        <div style={{ padding: '8px 16px', background: '#FFFBEB', borderBottom: `1px solid ${C.border}`, fontSize: 12, color: '#92400E', fontWeight: 600 }}>
+          ⚠ Data pengiriman belum diisi — akan dilengkapi saat approve di tab "Belum Approve".
+        </div>
+      )}
+
+      {/* Items */}
+      <div style={{ padding: '8px 16px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {txn.items?.map(item => (
+          <div key={item.item_id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, background: '#F9FAFB', borderRadius: 8, padding: '6px 10px' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F59E0B', flexShrink: 0 }} />
+            <span style={{ flex: 1, fontWeight: 600, color: '#2a1e10' }}>{item.product_name}</span>
+            {item.is_preorder && (
+              <span style={{ fontSize: 10, fontWeight: 700, background: '#FED7AA', color: '#C2410C', padding: '1px 5px', borderRadius: 4 }}>PRE-ORDER</span>
+            )}
+            <span style={{ color: C.muted, fontSize: 12 }}>×{item.quantity}</span>
+            <span style={{ color: C.goldDark, fontWeight: 700, fontSize: 12 }}>{formatRupiah(item.unit_price * item.quantity)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PreorderApprovalPanel() {
+  const [orders, setOrders]   = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    getPreorderApprovalOrders()
+      .then(r => { setOrders(r.data.data ?? []); setError(null); })
+      .catch(e => setError(e.response?.data?.message || 'Gagal memuat data pre-order.'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <div style={{ padding: 32, textAlign: 'center' }}><Spinner /></div>;
+  if (error)   return <div style={{ padding: 32, color: C.crimson, fontWeight: 700 }}>⚠ {error}</div>;
+
+  const pendingApproval = orders.filter(o => o.status === 'PENDING_APPROVAL');
+  const paid            = orders.filter(o => o.status === 'PAID');
+
+  if (orders.length === 0) return (
+    <div style={{ padding: 32, textAlign: 'center', color: C.muted }}>
+      <div style={{ fontSize: 40, marginBottom: 8 }}>🔖</div>
+      <p style={{ fontWeight: 700, color: '#2a1e10' }}>Tidak ada pre-order aktif</p>
+      <p style={{ fontSize: 12 }}>Pre-order menunggu approval atau yang sudah dibayar akan muncul di sini.</p>
+    </div>
+  );
+
+  return (
+    <div style={{ height: '100%', overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Section: Menunggu Approval */}
+      {pendingApproval.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontWeight: 800, fontSize: 13, color: '#92400E' }}>⏳ Menunggu Approval</span>
+            <span style={{ background: '#FEF3C7', color: '#92400E', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 99, border: '1px solid #FDE68A' }}>{pendingApproval.length}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {pendingApproval.map(txn => <PreorderOrderCard key={txn.transaction_id} txn={txn} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Section: Sudah Dibayar */}
+      {paid.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontWeight: 800, fontSize: 13, color: '#065F46' }}>✓ Sudah Dibayar — Siap Diproses</span>
+            <span style={{ background: '#D1FAE5', color: '#065F46', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 99, border: '1px solid #6EE7B7' }}>{paid.length}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {paid.map(txn => <PreorderOrderCard key={txn.transaction_id} txn={txn} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function HelperPage() {
   const { user, role, logout } = useAuth();
@@ -1127,6 +1248,7 @@ export default function HelperPage() {
             </div>
           )}
           {panelKey === 'approval/sudah_approve'     && <SudahApprovePanel searchQuery={searchQuery} />}
+          {panelKey === 'approval/preorder_approval' && <PreorderApprovalPanel />}
           {panelKey === 'history'                    && <HistoryPanel />}
           {panelKey === 'handover/handover_outstanding' && (
             <HandoverOutstandingPanel searchQuery={searchQuery} onCountUpdate={setHandoverCount} />

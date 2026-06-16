@@ -24,11 +24,14 @@ export const getPublicOrder = (txnId, token) =>
 // CR-040: HELPER_APPROVE endpoints
 export const getApprovalQueue = () => client.get('/helper/approval-queue');
 
-export const approveOrder = (txnId, note = null) =>
-  client.post(`/helper/orders/${txnId}/approve`, note ? { note } : {});
+export const approveOrder = (txnId, note = null, shippingFields = null) =>
+  client.post(`/helper/orders/${txnId}/approve`, { ...(note ? { note } : {}), ...(shippingFields || {}) });
 
 export const rejectOrder = (txnId, reason = null) =>
   client.post(`/helper/orders/${txnId}/reject`, reason ? { reason } : {});
+
+// CR-050 Req-3: Pre-order transactions (PENDING_APPROVAL + PAID) for this helper's booth
+export const getPreorderApprovalOrders = () => client.get('/helper/preorder-queue');
 
 // Per-item approval
 export const approveItem = (txnId, itemId, approvedQty = null, note = null) =>

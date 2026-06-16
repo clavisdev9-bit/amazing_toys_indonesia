@@ -63,13 +63,17 @@ async function getCashierTransactions(cashierId, date) {
 }
 
 /**
- * List orders waiting for payment (RESERVED + PENDING), sorted by created_at ASC.
+ * List orders waiting for payment (RESERVED + PENDING + WAITING_PAYMENT), sorted by created_at ASC.
  * Used by cashier queue view in Model C flow.
+ *
+ * CR-053: Pre-order PENDING transactions are included regardless of creation date
+ * because pre-orders may be created days before the event. The date filter only applies
+ * to regular orders (REGULAR / RESERVED / WAITING_PAYMENT).
  */
 async function getPaymentQueue(date) {
   const shiftDate = date || new Date().toLocaleString('sv', { timeZone: 'Asia/Jakarta' }).slice(0, 10);
   const result = await query(
-    `SELECT t.transaction_id, t.status, t.total_amount, t.created_at, t.reserved_at,
+    `SELECT t.transaction_id, t.status, t.order_type, t.total_amount, t.created_at, t.reserved_at,
             t.customer_phone AS walk_in_phone, t.created_by_role,
             c.full_name AS customer_name, c.phone_number AS customer_phone,
             ten.tenant_name, ten.booth_location,
@@ -82,10 +86,40 @@ async function getPaymentQueue(date) {
        WHERE ti2.transaction_id = t.transaction_id LIMIT 1
      )
      WHERE t.status IN ('RESERVED', 'PENDING', 'WAITING_PAYMENT')
-       AND DATE(t.created_at AT TIME ZONE 'Asia/Jakarta') = $1
-     GROUP BY t.transaction_id, c.full_name, c.phone_number, ten.tenant_name, ten.booth_location
-     ORDER BY t.created_at ASC`,
+       AND (
+         DATE(t.created_at AT TIME ZONE 'Asia/Jakarta') = $1
+         OR (t.status = 'PENDING' AND t.order_type = 'PREORDER')
+       )
+     GROUP BY t.transaction_id, t.order_type, c.full_name, c.phone_number, ten.tenant_name, ten.booth_location
+     ORDER BY t.order_type DESC, t.created_at ASC`,
     [shiftDate],
+  );
+  return result.rows;
+}
+
+/**
+ * CR-053: List PENDING pre-order transactions awaiting cashier payment.
+ * No date filter — pre-orders can be approved days before payment day.
+ * Used by the dedicated "Pre-Order" tab on the cashier dashboard.
+ */
+async function getPreorderPaymentQueue() {
+  const result = await query(
+    `SELECT t.transaction_id, t.status, t.order_type, t.total_amount, t.created_at, t.approved_at,
+            t.expires_at, t.customer_phone AS walk_in_phone, t.created_by_role,
+            c.full_name AS customer_name, c.phone_number AS customer_phone,
+            ten.tenant_name, ten.booth_location,
+            COUNT(ti.item_id) AS item_count
+     FROM transactions t
+     LEFT JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+     LEFT JOIN tenants ten ON ten.tenant_id = (
+       SELECT ti2.tenant_id FROM transaction_items ti2
+       WHERE ti2.transaction_id = t.transaction_id LIMIT 1
+     )
+     WHERE t.status = 'PENDING'
+       AND t.order_type = 'PREORDER'
+     GROUP BY t.transaction_id, t.order_type, c.full_name, c.phone_number, ten.tenant_name, ten.booth_location
+     ORDER BY t.approved_at ASC NULLS LAST, t.created_at ASC`,
   );
   return result.rows;
 }
@@ -474,6 +508,7 @@ module.exports = {
   getCashierTransactions,
   getPaymentQueue,
   getExpiredQueue,
+  getPreorderPaymentQueue,   // CR-053
   createDeleteRequest,
   getPendingDeleteRequests,
   // Group checkout

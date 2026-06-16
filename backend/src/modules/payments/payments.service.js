@@ -8,6 +8,7 @@ const { broadcastToCustomer, broadcastToTenant } = require('../../ws/websocket')
 const { fireWebhook }            = require('../../utils/webhook');
 const { isCashierProcessable }   = require('../orders/status.machine');
 const waSvc                      = require('../wa/wa.service');
+const emailSvc                   = require('../../services/email.service');
 const logger                     = require('../../config/logger');
 
 /**
@@ -244,14 +245,19 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       ).then(async (noteRes) => {
         const estimasiNote = noteRes.rows.map(r => r.preorder_note).filter(Boolean).join('; ');
         const custRow = await query(
-          `SELECT c.full_name FROM customers c
+          `SELECT c.full_name, c.email FROM customers c
            JOIN transactions t ON t.customer_id = c.customer_id
            WHERE t.transaction_id = $1`,
           [transactionId],
         ).catch(() => ({ rows: [] }));
-        const customerName = custRow.rows[0]?.full_name || 'Customer';
+        const customerName  = custRow.rows[0]?.full_name || 'Customer';
+        const customerEmail = custRow.rows[0]?.email || null;
         waSvc.sendPreorderConfirmed(effectivePhone, customerName, totalFormatted, estimasiNote)
           .catch(err => logger.warn('[WA-PREORDER] sendPreorderConfirmed error', { error: err.message }));
+        if (customerEmail) {
+          emailSvc.sendPreorderConfirmedEmail(customerEmail, customerName, totalFormatted, estimasiNote)
+            .catch(err => logger.warn('[EMAIL-PREORDER] sendPreorderConfirmed error', { error: err.message }));
+        }
       }).catch(() => {});
     }
 

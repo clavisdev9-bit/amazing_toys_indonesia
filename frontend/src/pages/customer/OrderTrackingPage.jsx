@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
+import Barcode from 'react-barcode';
 import { getOrder, cancelOrder, updateOrderItem, deleteOrderItem, partialProcessOrder } from '../../api/orders';
 import { getPublicOrder } from '../../api/helper';
 import { useWebSocket } from '../../hooks/useWebSocket';
@@ -487,16 +488,22 @@ function AuthenticatedOrderView({ transactionId }) {
 
       {/* CR-05X: Pre-Order stepper */}
       {order.order_type === 'PREORDER' && (() => {
+        // CR-050 status flow: PENDING_APPROVAL → PENDING → PAID → AWAITING_SHIPMENT → ARRIVED → PREORDER_HANDOVER → COMPLETED
+        // BUG-051-01: step keys reflect the status when each step BECOMES active (not when it completes).
+        // PAID maps to "Menunggu Kirim" because the step is current when payment is done and waiting for shipment.
+        // PENDING/PENDING_APPROVAL maps to "Pembayaran" — customer still needs to pay.
         const PREORDER_STEPS = [
-          { key: 'PAID',             label: 'Pembayaran',      icon: '💳' },
-          { key: 'AWAITING_SHIPMENT',label: 'Menunggu Kirim',  icon: '📦' },
-          { key: 'SHIPPED',          label: 'Dalam Pengiriman',icon: '🚚' },
-          { key: 'ARRIVED',          label: 'Tiba di Indonesia',icon: '🏠' },
-          { key: 'PREORDER_HANDOVER',label: 'Serah Terima',    icon: '🤝' },
-          { key: 'COMPLETED',        label: 'Selesai',         icon: '✅' },
+          { key: 'PENDING',          label: 'Pembayaran',        icon: '💳' },
+          { key: 'PAID',             label: 'Menunggu Kirim',    icon: '📦' },
+          { key: 'AWAITING_SHIPMENT',label: 'Dalam Pengiriman',  icon: '🚚' },
+          { key: 'ARRIVED',          label: 'Tiba di Indonesia', icon: '📍' },
+          { key: 'PREORDER_HANDOVER',label: 'Serah Terima',      icon: '🤝' },
+          { key: 'COMPLETED',        label: 'Selesai',           icon: '✅' },
         ];
         const ORDER = PREORDER_STEPS.map(s => s.key);
-        const curIdx = ORDER.indexOf(order.status);
+        // PENDING_APPROVAL is the pre-payment stage — map to PENDING (same step: Pembayaran).
+        const mappedStatus = order.status === 'PENDING_APPROVAL' ? 'PENDING' : order.status;
+        const curIdx = ORDER.indexOf(mappedStatus);
         return (
           <div className="bg-orange-50 border-b border-orange-100 px-4 py-4">
             <p className="text-xs font-bold text-orange-600 uppercase tracking-wide mb-3">📦 Status Pre-Order</p>
@@ -537,6 +544,24 @@ function AuthenticatedOrderView({ transactionId }) {
                   </div>
                 );
               })}
+            </div>
+
+            {/* CR-052: Barcode transaksi untuk memudahkan helper mencari barang */}
+            <div className="mt-4 pt-4 border-t border-orange-200 flex flex-col items-center">
+              <p className="text-xs font-bold text-orange-600 uppercase tracking-wide mb-2">🔖 Barcode Transaksi</p>
+              <div className="bg-white rounded-xl px-4 py-3 border border-orange-200 w-full flex justify-center">
+                <Barcode
+                  value={order.transaction_id}
+                  format="CODE128"
+                  width={1.6}
+                  height={56}
+                  fontSize={11}
+                  margin={4}
+                  background="#ffffff"
+                  lineColor="#1a1a1a"
+                />
+              </div>
+              <p className="text-[10px] text-orange-500 mt-1.5">Tunjukkan ke petugas booth untuk verifikasi</p>
             </div>
           </div>
         );

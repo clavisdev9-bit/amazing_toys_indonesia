@@ -146,4 +146,14 @@ async function createCategory(name) {
   return result.rows[0] ?? null;
 }
 
-module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories, createCategory, toggleProductHold };
+async function togglePreorder(productId, isPreorder, preorderNote) {
+  const result = await query(
+    `UPDATE products SET is_preorder = $1, preorder_note = $2, updated_at = NOW()
+     WHERE product_id = $3 RETURNING *`,
+    [isPreorder, preorderNote || null, productId],
+  );
+  if (!result.rows[0]) throw new AppError('Produk tidak ditemukan.', 404);
+  return result.rows[0];
+}
+
+module.exports = { listProducts, getProductById, getProductByBarcode, createProduct, updateProduct, listCategories, createCategory, toggleProductHold, togglePreorder };

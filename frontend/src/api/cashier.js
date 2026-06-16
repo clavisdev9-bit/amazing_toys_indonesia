@@ -13,7 +13,9 @@ export const addItemToTransaction = (transactionId, productId, quantity) =>
 export const applyVoucherToOrder = (transactionId, voucherCode) =>
   client.post(`/cashier/orders/${transactionId}/voucher`, { voucherCode });
 
-export const getExpiredTransactions = (params) => client.get('/cashier/expired', { params });
+export const getExpiredTransactions     = (params) => client.get('/cashier/expired', { params });
+// CR-053: dedicated pre-order payment queue (PENDING pre-orders, no date filter)
+export const getPreorderPaymentQueue = () => client.get('/cashier/preorder-queue');
 
 export const createDeleteRequest = (data) => client.post('/cashier/delete-requests', data);
 export const getPendingDeleteRequests = () => client.get('/cashier/delete-requests/pending');

@@ -5,7 +5,8 @@ const crypto   = require('crypto');
 const jwt      = require('jsonwebtoken');
 const { query } = require('../../config/database');
 const { AppError } = require('../../middlewares/error.middleware');
-const { sendLoginAlert, sendOTPEmail, sendNewDeviceAlert } = require('../../services/email.service');
+const { sendLoginAlert, sendOTPEmail, sendNewDeviceAlert,
+        sendCustomerOTPEmail, sendCustomerGreetingEmail, sendCustomerLockoutEmail } = require('../../services/email.service');
 const { fireWebhook } = require('../../utils/webhook');
 const logger   = require('../../config/logger');
 const otpSvc   = require('./otp.service');
@@ -261,6 +262,11 @@ async function registerCustomer({ full_name, phone_number, email, gender, birth_
     throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
   }
 
+  // Kirim OTP via email juga jika email tersedia (supplemental, fire-and-forget)
+  if (email) {
+    sendCustomerOTPEmail(email, otpPlain, full_name).catch(() => {});
+  }
+
   const tempToken = signTempToken({ _regPhone: phone_number });
 
   return {
@@ -324,6 +330,9 @@ async function verifyRegisterOtp({ tempToken, otpCode }) {
   });
 
   sendGreeting(phone_number, customer.full_name).catch(() => {});
+  if (customer.email) {
+    sendCustomerGreetingEmail(customer.email, customer.full_name).catch(() => {});
+  }
 
   return { token, customer };
 }
@@ -374,6 +383,11 @@ async function loginCustomer({ phone_number, deviceId = null, deviceInfo = {} })
     throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
   }
 
+  // Kirim OTP via email juga jika tersedia (supplemental, fire-and-forget)
+  if (customer.email) {
+    sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name).catch(() => {});
+  }
+
   const tempToken = signTempToken({
     customerId: customer.customer_id,
     deviceId:   deviceId || null,
@@ -408,6 +422,9 @@ async function verifyCustomerOtp({ tempToken, otpCode, deviceId, deviceInfo = {}
       if (attempt.shouldSendNotif) {
         const lockoutMinutes = parseInt(process.env.LOGIN_LOCKOUT_MINUTES || '5', 10);
         sendLockoutNotif(customer.phone_number, lockoutMinutes).catch(() => {});
+        if (customer.email) {
+          sendCustomerLockoutEmail(customer.email, customer.full_name, lockoutMinutes).catch(() => {});
+        }
         await loginAttemptSvc.markNotifSent(customer.phone_number);
       }
       throw new AppError('Kode OTP salah.', 401);

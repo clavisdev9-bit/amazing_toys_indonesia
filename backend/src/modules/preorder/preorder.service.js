@@ -5,6 +5,7 @@ const { AppError }               = require('../../middlewares/error.middleware')
 const { writeAuditLog }          = require('../../utils/auditLog');
 const { broadcastToCustomer }    = require('../../ws/websocket');
 const waSvc                      = require('../wa/wa.service');
+const emailSvc                   = require('../../services/email.service');
 const logger                     = require('../../config/logger');
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -13,7 +14,8 @@ async function _fetchPreorderTxn(client, txnId, requiredStatus) {
   const res = await client.query(
     `SELECT t.transaction_id, t.order_type, t.status, t.customer_id, t.customer_phone, t.total_amount,
             COALESCE(c.phone_number, t.customer_phone) AS resolved_phone,
-            COALESCE(c.full_name, 'Customer')          AS resolved_name
+            COALESCE(c.full_name, 'Customer')          AS resolved_name,
+            c.email                                    AS customer_email
        FROM transactions t
        LEFT JOIN customers c ON c.customer_id = t.customer_id
       WHERE t.transaction_id = $1 FOR UPDATE OF t`,
@@ -45,6 +47,12 @@ function _sendWaNotification(phone, fn, label) {
   fn().catch(err => logger.warn(`[PREORDER] ${label} error`, { error: err.message }));
 }
 
+// Fire-and-forget email notification; swallows errors so caller never throws.
+function _sendEmailNotification(email, fn, label) {
+  if (!email) return;
+  fn().catch(err => logger.warn(`[PREORDER] ${label} email error`, { error: err.message }));
+}
+
 // ── Public functions ──────────────────────────────────────────────────────────
 
 /**
@@ -55,13 +63,15 @@ function _sendWaNotification(phone, fn, label) {
  */
 async function getPreorderList({ status } = {}) {
   const statusMap = {
+    pending:   ['PENDING_APPROVAL', 'PENDING'],   // BUG-051-02b: pre-order disetujui/menunggu pembayaran
+    paid:      ['PAID'],                          // BUG-051-02: transaksi sudah dibayar, belum diproses
     awaiting:  ['AWAITING_SHIPMENT'],
     shipped:   ['SHIPPED'],
     arrived:   ['ARRIVED'],
     handover:  ['PREORDER_HANDOVER'],
     completed: ['COMPLETED'],
-    active:    ['AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED', 'PREORDER_HANDOVER'],
-    all:       ['AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED', 'PREORDER_HANDOVER', 'COMPLETED'],
+    active:    ['PENDING_APPROVAL', 'PENDING', 'PAID', 'AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED', 'PREORDER_HANDOVER'],
+    all:       ['PENDING_APPROVAL', 'PENDING', 'PAID', 'AWAITING_SHIPMENT', 'SHIPPED', 'ARRIVED', 'PREORDER_HANDOVER', 'COMPLETED'],
   };
 
   const allowedStatuses = statusMap[status] || statusMap.active;
@@ -141,11 +151,15 @@ async function updateShipment(txnId, { courier, tracking_number: trackingNumber 
       customerId:     txn.customer_id,
       customerPhone:  txn.resolved_phone,
       customerName:   txn.resolved_name,
+      customerEmail:  txn.customer_email || null,
     };
   });
 
   _sendWaNotification(updated.customerPhone,
     () => waSvc.sendPreorderShipped(updated.customerPhone, updated.customerName, updated.courier, updated.trackingNumber),
+    'sendPreorderShipped');
+  _sendEmailNotification(updated.customerEmail,
+    () => emailSvc.sendPreorderShippedEmail(updated.customerEmail, updated.customerName, updated.courier, updated.trackingNumber),
     'sendPreorderShipped');
   _broadcastSafe(updated.customerId, {
     event:          'PREORDER_SHIPPED',
@@ -166,7 +180,17 @@ async function updateShipment(txnId, { courier, tracking_number: trackingNumber 
  */
 async function confirmArrived(txnId, actorId, actorRole) {
   const updated = await withTransaction(async (client) => {
-    const txn = await _fetchPreorderTxn(client, txnId, 'SHIPPED');
+    // CR-050: flow AWAITING_SHIPMENT → ARRIVED (SHIPPED removed). Accept both for backward compat.
+    let txn;
+    try {
+      txn = await _fetchPreorderTxn(client, txnId, 'AWAITING_SHIPMENT');
+    } catch (e) {
+      if (e.message && e.message.includes('Status transaksi tidak sesuai')) {
+        txn = await _fetchPreorderTxn(client, txnId, 'SHIPPED');
+      } else {
+        throw e;
+      }
+    }
 
     await client.query(
       `UPDATE transactions SET status = 'ARRIVED', arrived_at = NOW() WHERE transaction_id = $1`,
@@ -185,11 +209,15 @@ async function confirmArrived(txnId, actorId, actorRole) {
       customerId:    txn.customer_id,
       customerPhone: txn.resolved_phone,
       customerName:  txn.resolved_name,
+      customerEmail: txn.customer_email || null,
     };
   });
 
   _sendWaNotification(updated.customerPhone,
     () => waSvc.sendPreorderArrived(updated.customerPhone, updated.customerName),
+    'sendPreorderArrived');
+  _sendEmailNotification(updated.customerEmail,
+    () => emailSvc.sendPreorderArrivedEmail(updated.customerEmail, updated.customerName),
     'sendPreorderArrived');
   _broadcastSafe(updated.customerId, { event: 'PREORDER_ARRIVED', transactionId: txnId });
 
@@ -226,6 +254,7 @@ async function handover(txnId, actorId, actorRole) {
       customerId:    txn.customer_id,
       customerPhone: txn.resolved_phone,
       customerName:  txn.resolved_name,
+      customerEmail: txn.customer_email || null,
       totalAmount:   txn.total_amount,
     };
   });
@@ -233,9 +262,47 @@ async function handover(txnId, actorId, actorRole) {
   _sendWaNotification(updated.customerPhone,
     () => waSvc.sendPreorderCompleted(updated.customerPhone, updated.customerName),
     'sendPreorderCompleted');
+  _sendEmailNotification(updated.customerEmail,
+    () => emailSvc.sendPreorderCompletedEmail(updated.customerEmail, updated.customerName),
+    'sendPreorderCompleted');
   _broadcastSafe(updated.customerId, { event: 'PREORDER_COMPLETED', transactionId: txnId });
 
   return updated;
 }
 
-module.exports = { getPreorderList, updateShipment, confirmArrived, handover };
+/**
+ * BUG-051-02: Admin konfirmasi pre-order siap kirim → PAID → AWAITING_SHIPMENT.
+ * Step ini wajib ada sebelum admin bisa konfirmasi kedatangan (confirmArrived).
+ */
+async function confirmReadyToShip(txnId, actorId, actorRole) {
+  const updated = await withTransaction(async (client) => {
+    const txn = await _fetchPreorderTxn(client, txnId, 'PAID');
+
+    await client.query(
+      `UPDATE transactions SET status = 'AWAITING_SHIPMENT' WHERE transaction_id = $1`,
+      [txnId],
+    );
+
+    await writeAuditLog({
+      action: 'PREORDER_READY_TO_SHIP', actorId, actorRole,
+      entityType: 'TRANSACTION', entityId: txnId,
+      newValue: { status: 'AWAITING_SHIPMENT' },
+    });
+
+    return {
+      transactionId: txnId,
+      status:        'AWAITING_SHIPMENT',
+      customerId:    txn.customer_id,
+      customerPhone: txn.resolved_phone,
+      customerName:  txn.resolved_name,
+    };
+  });
+
+  _broadcastSafe(updated.customerId, {
+    event: 'PREORDER_READY_TO_SHIP', transactionId: txnId,
+  });
+
+  return updated;
+}
+
+module.exports = { getPreorderList, updateShipment, confirmArrived, handover, confirmReadyToShip };

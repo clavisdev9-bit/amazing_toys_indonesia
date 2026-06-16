@@ -13,3 +13,7 @@ export const confirmArrived = (txnId) =>
 
 export const handoverPreorder = (txnId) =>
   client.patch(`/preorder/${txnId}/handover`);
+
+// BUG-051-02: PAID → AWAITING_SHIPMENT (missing transition)
+export const confirmReadyToShip = (txnId) =>
+  client.patch(`/preorder/${txnId}/ready-to-ship`);

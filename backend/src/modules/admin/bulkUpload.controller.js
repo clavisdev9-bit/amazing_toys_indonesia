@@ -100,8 +100,9 @@ async function bulkUploadProducts(req, res, next) {
         await client.query(
           `INSERT INTO products
              (product_id, product_name, category, price, tenant_id,
-              barcode, stock_quantity, image_url, description, odoo_categ_id, is_active)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+              barcode, stock_quantity, image_url, description, odoo_categ_id, is_active,
+              is_on_hold, is_display_only, max_per_customer, is_preorder, preorder_note)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
           [
             productId,
             String(p.product_name).trim(),
@@ -113,9 +114,14 @@ async function bulkUploadProducts(req, res, next) {
             p.image_url?.trim() || null,
             p.description?.trim() || null,
             (p.odoo_categ_id !== undefined && p.odoo_categ_id !== null && p.odoo_categ_id !== '')
-              ? parseInt(p.odoo_categ_id)
-              : null,
+              ? parseInt(p.odoo_categ_id) : null,
             resolveBoolean(p.is_active),
+            resolveBoolean(p.is_on_hold      ?? false),
+            resolveBoolean(p.is_display_only ?? false),
+            (p.max_per_customer !== undefined && p.max_per_customer !== null && p.max_per_customer !== '')
+              ? parseInt(p.max_per_customer) : null,
+            resolveBoolean(p.is_preorder ?? false),
+            p.preorder_note?.trim() || null,
           ]
         );
       }

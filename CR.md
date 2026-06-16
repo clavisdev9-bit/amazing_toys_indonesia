@@ -1,5 +1,162 @@
 # Change Request Log
 
+## CR-054 — Konfirmasi Sebelum Proses Pembayaran di Halaman Kasir (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Cashier → Payment Page (`/cashier/bayar/:txnId`)
+- **Status**: RESOLVED
+
+### Deskripsi
+Tambah konfirmasi modal sebelum tombol "Proses Pembayaran" benar-benar memproses transaksi. Menghindari pemrosesan tidak sengaja (mis-click).
+
+### Perilaku
+1. Kasir klik **"Proses Pembayaran"** → muncul modal "Konfirmasi Pembayaran"
+2. Modal menampilkan: ID Transaksi, Total, Metode Bayar, dan badge PRE-ORDER jika berlaku
+3. Kasir klik **"Ya, Proses"** → pembayaran dieksekusi (flow seperti sebelumnya)
+4. Kasir klik **"Batal"** → modal tutup, tidak ada perubahan
+
+### Perubahan
+**`frontend/src/pages/cashier/PaymentPage.jsx`:**
+- Import `Modal` dari `../../components/ui/Modal`
+- State baru `confirmModal` (boolean)
+- `handleProcess(e)` — hanya membuka modal, tidak memanggil API
+- `handleConfirmProcess()` — memanggil `processPayment` (dipanggil dari modal confirm)
+- Modal konfirmasi menampilkan ringkasan transaksi sebelum proses
+
+---
+
+## CR-053 — Tab Pre-Order & Queue Fix di Halaman Kasir (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Cashier Dashboard (`/cashier`)
+- **Status**: RESOLVED
+
+### CR1 — Tab "Pre-Order" Khusus Pembayaran Pre-Order
+Tambah tab baru **"Pre-Order"** di antara tab Queue dan Processed.  
+Menampilkan semua pre-order `status = 'PENDING'` (`order_type = 'PREORDER'`) yang menunggu pembayaran kasir — **tanpa filter tanggal**, karena pre-order bisa disetujui hari sebelum event.  
+Setiap row menampilkan tanggal disetujui, tanggal dibuat, dan label "🔖 PRE-ORDER".  
+Click row → navigasi ke `/cashier/bayar/:txnId` (flow pembayaran yang sudah ada).
+
+### CR2 — Queue Tab Include Pre-Order Lintas Tanggal
+Tab Queue sekarang juga menampilkan PENDING pre-orders dari hari manapun (bukan hanya hari ini).  
+Setiap pre-order di Queue tab ditandai badge **"PRE-ORDER"** berwarna orange.
+
+**Root cause fix:** `getPaymentQueue` sebelumnya punya `AND DATE(t.created_at) = $1` yang memblokir pre-order yang dibuat di hari sebelumnya.
+
+### Perubahan
+**`backend/src/modules/cashier/cashier.service.js`:**
+- `getPaymentQueue`: tambah `OR (t.status = 'PENDING' AND t.order_type = 'PREORDER')` — bypass date filter untuk pre-orders
+- Fungsi baru `getPreorderPaymentQueue()` — hanya PENDING pre-orders, tanpa date filter, diurutkan `approved_at ASC`
+
+**`backend/src/modules/cashier/cashier.router.js`:**
+- Route baru `GET /cashier/preorder-queue`
+
+**`frontend/src/api/cashier.js`:**
+- Export `getPreorderPaymentQueue`
+
+**`frontend/src/pages/cashier/CashierDashboardPage.jsx`:**
+- Tab baru "Pre-Order" (orange, badge count)
+- Queue tab: badge "PRE-ORDER" per row + `order_type` dari backend
+- Pre-Order tab: list lengkap dengan tanggal disetujui + belum dibayar label
+
+---
+
+## CR-052 — Barcode Transaksi di Halaman Tracking Pre-Order (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Customer → Order Tracking Page (`/pesanan/:id`)
+- **Status**: RESOLVED
+
+### Deskripsi
+Pada halaman tracking pesanan `/pesanan/ID`, jika pesanan adalah **Pre-Order**, tampilkan barcode transaksi (Code128) di bawah stepper. Tujuan: memudahkan helper memverifikasi dan mencari barang pre-order milik customer tanpa harus membaca/mengetik ID manual.
+
+### Perubahan
+**`frontend/src/pages/customer/OrderTrackingPage.jsx`:**
+- Import `Barcode` dari `react-barcode`
+- Tambah section "🔖 Barcode Transaksi" di dalam blok pre-order stepper
+- Barcode format Code128, value = `transaction_id`
+- Label: "Tunjukkan ke petugas booth untuk verifikasi"
+
+**`frontend/package.json`:**
+- Tambah dependency `react-barcode@1.6.1`
+
+---
+
+## CR-051 — Penyempurnaan Approval Pre-Order di Helper Page (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Helper Page → Approval Pre-Order tab
+- **Status**: RESOLVED
+
+### CR1 — PENDING_APPROVAL Pre-Order Masuk ke Tab "Approval Pre-Order"
+Pre-order dengan status `PENDING_APPROVAL` harus tampil di tab "Approval Pre-Order" (tidak hanya PAID).  
+Tab kini menampilkan dua seksi:
+- **Menunggu Approval** — `PENDING_APPROVAL` pre-orders (belum disetujui Helper)
+- **Sudah Dibayar** — `PAID` pre-orders (siap diproses pengiriman)
+
+Backend: `GET /helper/preorder-queue` (renamed dari `/preorder-paid`) mengembalikan `IN ('PENDING_APPROVAL', 'PAID')`, diurutkan PENDING_APPROVAL lebih dulu.
+
+### CR2 — Form "Setujui Pre-Order" Auto-Fill Data Customer
+Form shipping saat Helper approve pre-order kini terisi otomatis:
+- **Nama Penerima** → `customer_name` dari data registrasi customer
+- **No. HP Penerima** → `customer_phone` dari data registrasi customer
+- **Alamat Lengkap** → Default: `"Event Amazing Toy Show Gandaria City"`
+
+Helper tetap bisa mengubah nilai default sebelum submit.
+
+---
+
+## CR-050 — Fitur Pre-Order (Sub-feature A + B)
+- **Date**: 2026-06-16
+- **Reporter**: Admin
+- **Severity**: High
+- **Module**: Orders → Pre-Order System (Backend + Frontend)
+- **Status**: RESOLVED — see resolution.md RC-050
+
+### Deskripsi
+Implementasi sistem Pre-Order lengkap dengan dua sub-fitur:
+- **Sub-feature A**: Helper/Admin input order pre-order manual untuk customer (produk display-only atau HK belum dibuka). Helper isi alamat pengiriman saat order.
+- **Sub-feature B**: Customer self-order produk pre-order via katalog di mode HELPER_APPROVE. Cart campuran (pre-order + reguler) ditolak. Helper isi alamat pengiriman saat approval.
+
+### Status Flow
+`PENDING_APPROVAL → PENDING → PAID → AWAITING_SHIPMENT → ARRIVED → PREORDER_HANDOVER → COMPLETED`
+SHIPPED dihapus dari flow baru (CR-050). EXPIRED jika timer habis setelah approve (tidak ada restore stok — stok tidak pernah dikurangi).
+
+### Implementation Summary
+- Pre-order items TIDAK PERNAH mengurangi stok (createOrder, createHelperOrder, approveOrder, approveItem)
+- Mixed cart (pre-order + reguler) ditolak di mode HELPER_APPROVE
+- `order_type = PREORDER` disimpan di transactions
+- Kolom shipping_* disimpan di transactions
+- Notifikasi WA: Confirmed, Shipped, Arrived, Completed, Cancelled, Expired
+- AWAITING_SHIPMENT → ARRIVED langsung (tanpa SHIPPED)
+- ProductPreorderTogglePage baru untuk Helper mengelola toggle pre-order produk
+
+---
+
+## CR-FEAT-002 — Tampilkan Status Pre-Order di Halaman /product/:id
+- **Date**: 2026-06-16
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Customer → /product/:id → MockProductDetailPage
+- **Status**: RESOLVED — see resolution.md RC-23
+
+### Deskripsi
+Halaman detail produk `/product/:id` belum menampilkan indikator Pre-Order. Customer yang membuka detail produk pre-order tidak mendapat informasi bahwa produk tersebut adalah pre-order, estimasi kedatangan, maupun penjelasan alur pembelian.
+
+### Expected
+- Badge "PRE-ORDER" overlay di bagian bawah gambar hero
+- Badge "Pre-Order" (orange) menggantikan badge stok di baris tenant name
+- Info box Pre-Order (amber) di bawah harga berisi: judul "Produk Pre-Order", `preorder_note`, dan catatan alur pembayaran
+
+### Root Cause
+Lihat RC-23 di resolution.md.
+
+---
+
 ## CR-FEAT-001 — Tampilkan Status Pre-Order di Halaman /katalog
 - **Date**: 2026-06-16
 - **Reporter**: Admin

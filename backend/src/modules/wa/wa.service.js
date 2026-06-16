@@ -443,6 +443,50 @@ async function sendPreorderCompleted(phone, customerName) {
   }
 }
 
+async function sendPreorderCancelled(phone, customerName) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const { eventName } = await _getEventConfig();
+  const message =
+    `❌ *Pre-Order Dibatalkan*\n\n` +
+    `Halo *${customerName}*, pesanan Pre-Order Anda telah dibatalkan oleh helper.\n\n` +
+    `Jika ada pertanyaan, silakan hubungi petugas booth *${eventName}*.\n\n` +
+    `Terima kasih 🙏`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_cancelled terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_cancelled', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
+async function sendPreorderExpired(phone, customerName) {
+  const settings = await _getWaSettings();
+  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
+  if (!phone) return { status: 'SKIPPED' };
+
+  const { eventName } = await _getEventConfig();
+  const message =
+    `⏰ *Pre-Order Kedaluwarsa*\n\n` +
+    `Halo *${customerName}*, pesanan Pre-Order Anda telah kedaluwarsa karena melewati batas waktu pembayaran.\n\n` +
+    `Silakan buat pesanan baru atau hubungi petugas booth *${eventName}*.\n\n` +
+    `Terima kasih 🙏`;
+
+  try {
+    const result = await _callGateway(settings, phone, message);
+    logger.info('[WA-PREORDER] preorder_expired terkirim', { phone: phone.slice(0, 5) + '***' });
+    return result;
+  } catch (err) {
+    logger.error('[WA-PREORDER] Gagal kirim preorder_expired', { error: err.message });
+    return { status: 'FAILED', error: err.message };
+  }
+}
+
 module.exports = {
   sendOrderQR,
   getWaConfig,
@@ -455,4 +499,6 @@ module.exports = {
   sendPreorderShipped,
   sendPreorderArrived,
   sendPreorderCompleted,
+  sendPreorderCancelled,
+  sendPreorderExpired,
 };

@@ -92,7 +92,7 @@ async function createOrder(customerId, items, voucherCode = null) {
     const productIds = items.map(i => i.product_id);
     const lockClause = isHelperApproveMode ? '' : ' FOR UPDATE';
     const productRows = await client.query(
-      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status
+      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status, is_preorder
        FROM products WHERE product_id = ANY($1) AND is_active = TRUE${lockClause}`,
       [productIds]
     );
@@ -103,9 +103,32 @@ async function createOrder(customerId, items, voucherCode = null) {
 
     const productMap = Object.fromEntries(productRows.rows.map(p => [p.product_id, p]));
 
-    // CR-038: In SELF_ORDER mode, reject on-hold items.
+    // CR-050: In HELPER_APPROVE mode, mixed pre-order + regular carts are not allowed.
+    if (isHelperApproveMode) {
+      const preorderItems = items.filter(i => productMap[i.product_id]?.is_preorder);
+      if (preorderItems.length > 0 && preorderItems.length !== items.length) {
+        throw new AppError(
+          'Pre-Order tidak bisa digabung dengan produk reguler. Buat order terpisah.',
+          422,
+        );
+      }
+    }
+
+    // CR-038 + CR-050: In SELF_ORDER mode, reject on-hold AND pre-order items.
+    // Pre-order requires Helper to collect shipping info — cannot be self-ordered.
     // Frontend filters these, but this is the safety net for race conditions.
     if (!isHelperApproveMode) {
+      const preorderItems = items.filter(i => productMap[i.product_id]?.is_preorder);
+      if (preorderItems.length > 0) {
+        const names = preorderItems.map(i => productMap[i.product_id].product_name).join(', ');
+        throw new AppError(
+          `Produk pre-order tidak bisa dipesan mandiri: ${names}. ` +
+          `Silakan minta bantuan Helper untuk memproses order pre-order.`,
+          422,
+          { preorderProductIds: preorderItems.map(i => i.product_id) },
+        );
+      }
+
       const onHoldCheck = await client.query(
         `SELECT product_id, product_name FROM products
          WHERE product_id = ANY($1) AND is_on_hold = TRUE`,
@@ -122,9 +145,10 @@ async function createOrder(customerId, items, voucherCode = null) {
       }
     }
 
-    // 2. Validate stock (even in HELPER_APPROVE — show error if completely out)
+    // 2. Validate stock (skip for pre-order items — they never deduct stock)
     for (const item of items) {
       const p = productMap[item.product_id];
+      if (p.is_preorder) continue;
       if (p.stock_status === 'OUT_OF_STOCK' || p.stock_quantity < item.quantity) {
         throw new AppError(`Produk "${p.product_name}" tidak tersedia dalam jumlah yang diminta.`);
       }
@@ -175,16 +199,18 @@ async function createOrder(customerId, items, voucherCode = null) {
       console.log('QR Generated - Length:', qrPayload?.length);
     }
 
-    // 6. Determine initial status
+    // 6. Determine initial status and order type
     const initialStatus = isHelperApproveMode ? 'PENDING_APPROVAL' : 'PENDING';
+    const isPreorderCart = items.some(i => productMap[i.product_id]?.is_preorder);
+    const orderType = isPreorderCart ? 'PREORDER' : 'REGULAR';
 
     // 7. Insert transaction
     await client.query(
       `INSERT INTO transactions
-         (transaction_id, customer_id, status, subtotal_amount, tax_rate, tax_amount, total_amount,
+         (transaction_id, customer_id, status, order_type, subtotal_amount, tax_rate, tax_amount, total_amount,
           voucher_code, discount_amount, qr_payload, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [transactionId, customerId, initialStatus, subtotalAmount, TAX_RATE, taxAmount, totalAmount,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [transactionId, customerId, initialStatus, orderType, subtotalAmount, TAX_RATE, taxAmount, totalAmount,
        voucherCode || null, discountAmount, qrPayload, expiresAt]
     );
 
@@ -199,8 +225,8 @@ async function createOrder(customerId, items, voucherCode = null) {
          p.price * item.quantity, isHelperApproveMode ? 'PENDING' : 'APPROVED']
       );
 
-      // Deduct stock immediately only in SELF_ORDER mode
-      if (!isHelperApproveMode) {
+      // Deduct stock immediately only in SELF_ORDER mode (never for pre-order — invariant CR-050)
+      if (!isHelperApproveMode && !p.is_preorder) {
         await client.query(
           `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
           [item.quantity, item.product_id]
@@ -230,7 +256,7 @@ async function createOrder(customerId, items, voucherCode = null) {
     await writeAuditLog({
       action: 'TXN_CREATED', actorId: customerId, actorRole: 'CUSTOMER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { customerId, totalAmount, items: items.length, discountAmount, voucherCode, status: initialStatus },
+      newValue: { customerId, totalAmount, items: items.length, discountAmount, voucherCode, status: initialStatus, orderType },
     });
 
     console.log('Order created - TXN:', transactionId, 'Status:', initialStatus);

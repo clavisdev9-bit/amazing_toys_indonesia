@@ -13,6 +13,7 @@ import { canAddToCart, getStockStatus, getStockBadgeStyle } from '../../utils/st
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
+import Modal from '../../components/ui/Modal';
 import Spinner from '../../components/ui/Spinner';
 import ToastContainer from '../../components/ui/Toast';
 import PrintReceiptButton from '../../components/cashier/PrintReceiptButton';
@@ -103,6 +104,7 @@ export default function PaymentPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [confirmModal, setConfirmModal] = useState(false);
 
   // Voucher state
   const [voucherApplying, setVoucherApplying] = useState(false);
@@ -265,9 +267,14 @@ export default function PaymentPage() {
     }
   }
 
-  async function handleProcess(e) {
+  function handleProcess(e) {
     e.preventDefault();
     setError('');
+    setConfirmModal(true);
+  }
+
+  async function handleConfirmProcess() {
+    setConfirmModal(false);
     setProcessing(true);
     try {
       const body = {
@@ -650,6 +657,47 @@ export default function PaymentPage() {
           </div>
         )}
       </div>
+
+      {/* CR-054: Konfirmasi sebelum proses pembayaran */}
+      <Modal
+        open={confirmModal}
+        onClose={() => setConfirmModal(false)}
+        title="Konfirmasi Pembayaran"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">Apakah Anda yakin ingin memproses pembayaran ini?</p>
+          <div className="bg-gray-50 rounded-lg px-4 py-3 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">ID Transaksi</span>
+              <span className="font-mono font-bold text-gray-900">{txn?.transaction_id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Total</span>
+              <span className="font-bold text-blue-700 text-base">{formatRupiah(txn?.total_amount)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Metode</span>
+              <span className="font-semibold text-gray-800">
+                {method === 'QRIS' ? '📱 QR / QRIS' : '💳 Kartu (EDC)'}
+              </span>
+            </div>
+            {txn?.order_type === 'PREORDER' && (
+              <div className="flex justify-between items-center pt-1 border-t border-orange-200">
+                <span className="text-orange-600 font-semibold text-xs">🔖 PRE-ORDER</span>
+                <span className="text-orange-600 text-xs">Barang dikirim, bukan pickup</span>
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 pt-1">
+            <Button variant="secondary" className="flex-1" onClick={() => setConfirmModal(false)}>
+              Batal
+            </Button>
+            <Button variant="primary" className="flex-1" loading={processing} onClick={handleConfirmProcess}>
+              Ya, Proses
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <PrintConfirmationModal
         isOpen={isModalOpen}

@@ -22,7 +22,9 @@ const TRANSITIONS = {
   PAID:               new Set(['HANDED_OVER', 'AWAITING_SHIPMENT']),               // AWAITING_SHIPMENT: CR-05X PREORDER
   HANDED_OVER:        new Set(['COMPLETED']),
   // ── CR-05X Pre-Order statuses ────────────────────────────────────────────────
-  AWAITING_SHIPMENT:  new Set(['SHIPPED']),
+  // CR-050: SHIPPED removed from flow — AWAITING_SHIPMENT → ARRIVED directly.
+  // SHIPPED kept for backward-compat with older records that may already have that status.
+  AWAITING_SHIPMENT:  new Set(['ARRIVED']),
   SHIPPED:            new Set(['ARRIVED']),
   ARRIVED:            new Set(['PREORDER_HANDOVER']),
   PREORDER_HANDOVER:  new Set(['COMPLETED']),
@@ -47,8 +49,8 @@ const ALLOWED_ACTORS = {
   COMPLETED:          ['HELPER', 'TENANT', 'LEADER', 'ADMIN', 'SYSTEM'],
   // ── CR-05X Pre-Order actors ──────────────────────────────────────────────────
   AWAITING_SHIPMENT:  ['SYSTEM'],                    // auto-triggered after PAID (preorder)
-  SHIPPED:            ['ADMIN'],                      // admin input resi
-  ARRIVED:            ['ADMIN'],                      // admin konfirmasi sampai Indonesia
+  SHIPPED:            ['ADMIN'],                      // legacy — kept for backward compat
+  ARRIVED:            ['ADMIN', 'LEADER'],            // admin konfirmasi sampai (from AWAITING_SHIPMENT or SHIPPED)
   PREORDER_HANDOVER:  ['HELPER', 'ADMIN'],            // helper serahkan ke customer
 };
 

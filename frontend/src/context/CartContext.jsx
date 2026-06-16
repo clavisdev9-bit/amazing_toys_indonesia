@@ -57,7 +57,8 @@ export function CartProvider({ children }) {
           tenant_id:    product.tenant_id,
           tenant_name:  product.tenant_name,
           image_url:    product.image_url,
-          is_on_hold:   product.is_on_hold || false,
+          is_on_hold:   product.is_on_hold  || false,
+          is_preorder:  product.is_preorder || false,
           quantity:     qty,
         }];
       }

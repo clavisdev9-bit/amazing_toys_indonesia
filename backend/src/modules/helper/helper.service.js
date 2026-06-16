@@ -13,6 +13,7 @@ const { validateTransition }     = require('../orders/status.machine');
 const { broadcastToTenant, broadcastToAll, broadcastToCustomer } = require('../../ws/websocket');
 const logger                     = require('../../config/logger');
 const waSvc                      = require('../wa/wa.service');
+const emailSvc                   = require('../../services/email.service');
 
 const _SYSTEM_CONFIG_PATH = path.join(__dirname, '../../../data/system-config.json');
 
@@ -85,7 +86,8 @@ async function createHelperOrder({
       if (p.tenant_id !== helperTenantId) {
         throw new AppError(`Produk "${p.product_name}" bukan milik booth ini.`, 403);
       }
-      if (p.is_display_only) {
+      // CR-050: display-only is allowed if the product is also pre-order (Sub-feature A)
+      if (p.is_display_only && !p.is_preorder) {
         throw new AppError(`Produk "${p.product_name}" hanya untuk display — tidak bisa dijual.`, 400);
       }
       if (p.is_on_hold) {
@@ -125,9 +127,10 @@ async function createHelperOrder({
       }
     }
 
-    // 4. Stock check
+    // 4. Stock check (skip pre-order items — they never deduct stock, CR-050)
     for (const item of items) {
       const p = productMap[item.product_id];
+      if (p.is_preorder) continue;
       if (p.stock_quantity < item.qty) {
         throw new AppError(
           `Stok "${p.product_name}" tidak mencukupi (tersedia: ${p.stock_quantity}, diminta: ${item.qty}).`,
@@ -171,15 +174,17 @@ async function createHelperOrder({
       } catch { /* walk-in — no registered account found */ }
     }
 
+    let effectiveEmail = null;
     if (customerId) {
       try {
         const custRow = await client.query(
-          'SELECT phone_number FROM customers WHERE customer_id = $1',
+          'SELECT phone_number, email FROM customers WHERE customer_id = $1',
           [customerId],
         );
         if (custRow.rows[0]?.phone_number) {
           effectivePhone = custRow.rows[0].phone_number;
         }
+        effectiveEmail = custRow.rows[0]?.email || null;
       } catch { /* keep walk-in phone */ }
     }
 
@@ -227,7 +232,7 @@ async function createHelperOrder({
       ],
     );
 
-    // 10. Insert items & decrement stock atomically
+    // 10. Insert items & decrement stock atomically (skip stock deduction for pre-order, CR-050)
     for (const item of items) {
       const p = productMap[item.product_id];
       await client.query(
@@ -236,10 +241,12 @@ async function createHelperOrder({
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [transactionId, item.product_id, p.tenant_id, item.qty, p.price, p.price * item.qty],
       );
-      await client.query(
-        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
-        [item.qty, item.product_id],
-      );
+      if (!p.is_preorder) {
+        await client.query(
+          `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+          [item.qty, item.product_id],
+        );
+      }
     }
 
     await writeAuditLog({
@@ -269,7 +276,7 @@ async function createHelperOrder({
       subtotal, taxRate: TAX_RATE, taxAmount, totalAmount,
       expiresAt, qrPayload,
       publicToken, publicTokenExp,
-      effectivePhone, customerId,
+      effectivePhone, effectiveEmail, customerId,
       itemSummary,
       boothId: helperTenantId,
       orderType,
@@ -326,6 +333,17 @@ async function createHelperOrder({
       `UPDATE transactions SET wa_delivery_status = 'SKIPPED' WHERE transaction_id = $1`,
       [txResult.transactionId],
     ).catch(() => {});
+  }
+
+  // Email order QR — supplemental, fire-and-forget
+  if (txResult.effectiveEmail) {
+    emailSvc.sendCustomerOrderQREmail(txResult.effectiveEmail, {
+      boothName,
+      itemSummary:   txResult.itemSummary,
+      totalAmount:   txResult.totalAmount,
+      orderLink:     publicLink,
+      expiryMinutes: tokenTtlMinutes,
+    }).catch(err => logger.warn('[CR-036] Email sendOrderQR error', { error: err.message }));
   }
 
   // Layer 2 — WS push ke customer terdaftar (jika online)
@@ -795,7 +813,7 @@ function _getCheckoutTimeoutMinutesCR040() {
  */
 async function getApprovalQueue(helperTenantId) {
   const result = await query(
-    `SELECT t.transaction_id, t.status, t.voucher_code,
+    `SELECT t.transaction_id, t.status, t.order_type, t.voucher_code,
             t.created_at, t.expires_at,
             SUM(ti.subtotal) AS total_amount,
             c.full_name AS customer_name, c.phone_number AS customer_phone
@@ -805,7 +823,7 @@ async function getApprovalQueue(helperTenantId) {
      WHERE ti.tenant_id = $1
        AND t.status = 'PENDING_APPROVAL'
        AND ti.approval_status = 'PENDING'
-     GROUP BY t.transaction_id, t.status, t.voucher_code,
+     GROUP BY t.transaction_id, t.status, t.order_type, t.voucher_code,
               t.created_at, t.expires_at,
               c.full_name, c.phone_number
      ORDER BY t.created_at ASC`,
@@ -816,7 +834,7 @@ async function getApprovalQueue(helperTenantId) {
   const txns = result.rows;
   for (const txn of txns) {
     const itemsRes = await query(
-      `SELECT ti.item_id, ti.product_id, p.product_name, ti.quantity, ti.unit_price,
+      `SELECT ti.item_id, ti.product_id, p.product_name, p.is_preorder, ti.quantity, ti.unit_price,
               ti.subtotal, ti.approval_status, ti.approved_quantity, ti.rejection_reason
        FROM transaction_items ti
        JOIN products p ON p.product_id = ti.product_id
@@ -824,6 +842,11 @@ async function getApprovalQueue(helperTenantId) {
       [txn.transaction_id, helperTenantId],
     );
     txn.items = itemsRes.rows;
+    // BUG-050-02: auto-correct order_type for legacy transactions that were created before
+    // the CR-050 deployment correctly set order_type = 'PREORDER' on the INSERT.
+    if (txn.order_type !== 'PREORDER' && txn.items.some(i => i.is_preorder)) {
+      txn.order_type = 'PREORDER';
+    }
   }
 
   return txns;
@@ -838,7 +861,7 @@ async function getApprovalQueue(helperTenantId) {
  * @param {string} helperTenantId
  * @param {string} [note]           optional approval note
  */
-async function approveOrder(transactionId, helperId, helperTenantId, note = null) {
+async function approveOrder(transactionId, helperId, helperTenantId, note = null, shippingFields = null) {
   // ── Phase 1: atomic stock deduction + status transition (no QR inside) ────────
   // QR is excluded from the transaction so a QR failure never rolls back the approval.
   const committed = await withTransaction(async (client) => {
@@ -857,6 +880,37 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
       throw new AppError(`Hanya transaksi PENDING_APPROVAL yang bisa disetujui. Status saat ini: ${txn.status}.`, 409);
     }
 
+    let isPreorderTxn = txn.order_type === 'PREORDER';
+
+    // BUG-050-02: legacy transactions may have order_type='REGULAR' despite containing
+    // pre-order items (created during non-atomic CR-050 deployment window — see STD-031 Rule D).
+    // Detect from items and auto-correct to prevent silently skipping shipping validation.
+    if (!isPreorderTxn) {
+      const preorderCheck = await client.query(
+        `SELECT EXISTS(
+           SELECT 1 FROM transaction_items ti
+           JOIN products p ON p.product_id = ti.product_id
+           WHERE ti.transaction_id = $1 AND p.is_preorder = TRUE
+         ) AS has_preorder`,
+        [transactionId],
+      );
+      if (preorderCheck.rows[0].has_preorder) {
+        isPreorderTxn = true;
+        await client.query(
+          `UPDATE transactions SET order_type = 'PREORDER' WHERE transaction_id = $1`,
+          [transactionId],
+        );
+      }
+    }
+
+    // CR-050: For pre-order, validate shipping fields (helper fills at approval time for Sub-feature B)
+    if (isPreorderTxn) {
+      const sf = shippingFields || {};
+      if (!sf.shipping_name?.trim()) throw new AppError('Nama penerima wajib diisi untuk Pre-Order.', 422);
+      if (!sf.shipping_phone?.trim()) throw new AppError('No. HP penerima wajib diisi untuk Pre-Order.', 422);
+      if (!sf.shipping_address?.trim()) throw new AppError('Alamat pengiriman wajib diisi untuk Pre-Order.', 422);
+    }
+
     // Fetch items for this booth
     const itemsRes = await client.query(
       `SELECT ti.product_id, ti.quantity
@@ -869,28 +923,30 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
       throw new AppError('Tidak ada item dari booth ini dalam transaksi ini.', 404);
     }
 
-    // Lock & validate stock before deducting
-    for (const item of itemsRes.rows) {
-      const prodRes = await client.query(
-        `SELECT stock_quantity, stock_status, product_name
-         FROM products WHERE product_id = $1 FOR UPDATE`,
-        [item.product_id],
-      );
-      const prod = prodRes.rows[0];
-      if (!prod || prod.stock_status === 'OUT_OF_STOCK' || prod.stock_quantity < item.quantity) {
-        throw new AppError(
-          `Stok produk "${prod?.product_name || item.product_id}" tidak mencukupi untuk disetujui.`,
-          409,
+    if (!isPreorderTxn) {
+      // Lock & validate stock before deducting (regular orders only)
+      for (const item of itemsRes.rows) {
+        const prodRes = await client.query(
+          `SELECT stock_quantity, stock_status, product_name
+           FROM products WHERE product_id = $1 FOR UPDATE`,
+          [item.product_id],
+        );
+        const prod = prodRes.rows[0];
+        if (!prod || prod.stock_status === 'OUT_OF_STOCK' || prod.stock_quantity < item.quantity) {
+          throw new AppError(
+            `Stok produk "${prod?.product_name || item.product_id}" tidak mencukupi untuk disetujui.`,
+            409,
+          );
+        }
+      }
+
+      // Deduct stock
+      for (const item of itemsRes.rows) {
+        await client.query(
+          `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+          [item.quantity, item.product_id],
         );
       }
-    }
-
-    // Deduct stock
-    for (const item of itemsRes.rows) {
-      await client.query(
-        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
-        [item.quantity, item.product_id],
-      );
     }
 
     // Mark items as approved
@@ -921,6 +977,8 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
     const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutesCR040() * 60 * 1000);
 
     // Transition PENDING_APPROVAL → PENDING (qr_payload left NULL here, set below)
+    // CR-050: for pre-order orders save shipping fields at approval time (Sub-feature B)
+    const sf = shippingFields || {};
     await client.query(
       `UPDATE transactions
          SET status             = 'PENDING',
@@ -928,9 +986,20 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
              approved_by        = $1,
              approval_note      = $2,
              timer_locked_until = $3,
-             expires_at         = $3
+             expires_at         = $3,
+             shipping_name      = COALESCE($5, shipping_name),
+             shipping_phone     = COALESCE($6, shipping_phone),
+             shipping_address   = COALESCE($7, shipping_address),
+             shipping_city      = COALESCE($8, shipping_city),
+             shipping_province  = COALESCE($9, shipping_province)
        WHERE transaction_id     = $4`,
-      [helperId, note, expiresAt, transactionId],
+      [helperId, note, expiresAt, transactionId,
+       sf.shipping_name   || null,
+       sf.shipping_phone  || null,
+       sf.shipping_address || null,
+       sf.shipping_city   || null,
+       sf.shipping_province || null,
+      ],
     );
 
     await writeAuditLog({
@@ -1225,22 +1294,25 @@ async function approveItem(transactionId, itemId, helperId, helperTenantId, appr
     // Lock the product row separately — mirrors approveOrder; ensures consistent lock ordering:
     // transactions → transaction_items → products (never products before transactions).
     const prodRes = await client.query(
-      `SELECT product_name, stock_quantity FROM products WHERE product_id = $1 FOR UPDATE`,
+      `SELECT product_name, stock_quantity, is_preorder FROM products WHERE product_id = $1 FOR UPDATE`,
       [item.product_id],
     );
     const prod = prodRes.rows[0];
-    if (!prod || prod.stock_quantity < effectiveQty) {
-      throw new AppError(
-        `Stok "${prod?.product_name || item.product_id}" tidak mencukupi (tersedia: ${prod?.stock_quantity ?? 0}, diminta: ${effectiveQty}).`,
-        409,
+
+    if (prod?.is_preorder) {
+      // CR-050: pre-order items never deduct stock — skip check and deduction entirely
+    } else {
+      if (!prod || prod.stock_quantity < effectiveQty) {
+        throw new AppError(
+          `Stok "${prod?.product_name || item.product_id}" tidak mencukupi (tersedia: ${prod?.stock_quantity ?? 0}, diminta: ${effectiveQty}).`,
+          409,
+        );
+      }
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+        [effectiveQty, item.product_id],
       );
     }
-
-    // Deduct stock
-    await client.query(
-      `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
-      [effectiveQty, item.product_id],
-    );
 
     // Mark item approved
     await client.query(
@@ -1377,6 +1449,53 @@ async function _broadcastResolution(resolution, transactionId, helperTenantId) {
   } catch (e) { logger.warn('WS APPROVAL_QUEUE_UPDATE(APPROVED) failed', { error: e.message }); }
 }
 
+/**
+ * CR-050 Req-3 / CR1 update: Return pre-order transactions for this helper's booth
+ * with status PENDING_APPROVAL or PAID — used by "Approval Pre-Order" tab.
+ * PENDING_APPROVAL = still waiting helper approval + shipping form fill.
+ * PAID = customer already paid, awaiting shipment processing.
+ */
+async function getPreorderApprovalOrders(helperTenantId) {
+  const result = await query(
+    `SELECT t.transaction_id, t.status, t.order_type, t.created_at,
+            t.shipping_name, t.shipping_phone, t.shipping_address,
+            t.shipping_city, t.shipping_province,
+            t.tracking_number, t.courier,
+            SUM(ti.subtotal) AS total_amount,
+            c.full_name AS customer_name, c.phone_number AS customer_phone
+     FROM transactions t
+     JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+     LEFT JOIN customers c ON c.customer_id = t.customer_id
+     WHERE ti.tenant_id = $1
+       AND t.order_type = 'PREORDER'
+       AND t.status IN ('PENDING_APPROVAL', 'PAID')
+     GROUP BY t.transaction_id, t.status, t.order_type, t.created_at,
+              t.shipping_name, t.shipping_phone, t.shipping_address,
+              t.shipping_city, t.shipping_province,
+              t.tracking_number, t.courier,
+              c.full_name, c.phone_number
+     ORDER BY
+       CASE t.status WHEN 'PENDING_APPROVAL' THEN 0 WHEN 'PAID' THEN 1 ELSE 2 END,
+       t.created_at ASC`,
+    [helperTenantId],
+  );
+
+  const txns = result.rows;
+  for (const txn of txns) {
+    const itemsRes = await query(
+      `SELECT ti.item_id, ti.product_id, p.product_name, p.is_preorder,
+              ti.quantity, ti.unit_price, ti.subtotal, ti.approval_status
+       FROM transaction_items ti
+       JOIN products p ON p.product_id = ti.product_id
+       WHERE ti.transaction_id = $1 AND ti.tenant_id = $2`,
+      [txn.transaction_id, helperTenantId],
+    );
+    txn.items = itemsRes.rows;
+  }
+
+  return txns;
+}
+
 module.exports = {
   createHelperOrder,
   resendWa,
@@ -1392,4 +1511,6 @@ module.exports = {
   // Per-item approval
   approveItem,
   rejectItem,
+  // CR-050 Req-3 (updated CR1: includes PENDING_APPROVAL + PAID)
+  getPreorderApprovalOrders,
 };

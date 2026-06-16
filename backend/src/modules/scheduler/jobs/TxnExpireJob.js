@@ -3,6 +3,8 @@
 const { query, withTransaction } = require('../../../config/database');
 const { writeAuditLog } = require('../../../utils/auditLog');
 const logger = require('../../../config/logger');
+const waSvc      = require('../../wa/wa.service');
+const emailSvc   = require('../../../services/email.service');
 
 const JOB_NAME = 'txn.expire.sweep';
 
@@ -78,15 +80,20 @@ async function execute() {
   }
 
   // ── Step 2: Expire PENDING — no stock restore (Odoo cancel sync handles it) ─
+  // CR-050: fetch order_type + customer contact so we can send WA for pre-order PENDING expiry
   let pendingExpired = [];
   try {
     const result = await query(`
-      UPDATE transactions
+      UPDATE transactions t
          SET status = 'EXPIRED'
-       WHERE status = 'PENDING'
-         AND expires_at IS NOT NULL
-         AND expires_at < NOW()
-      RETURNING transaction_id
+       WHERE t.status = 'PENDING'
+         AND t.expires_at IS NOT NULL
+         AND t.expires_at < NOW()
+      RETURNING t.transaction_id, t.order_type,
+                t.customer_phone,
+                (SELECT c.phone_number FROM customers c WHERE c.customer_id = t.customer_id) AS reg_phone,
+                (SELECT c.full_name FROM customers c WHERE c.customer_id = t.customer_id) AS customer_name,
+                (SELECT c.email FROM customers c WHERE c.customer_id = t.customer_id) AS customer_email
     `);
     pendingExpired = result.rows;
   } catch (err) {
@@ -106,6 +113,20 @@ async function execute() {
           newValue: { status: 'EXPIRED' },
         });
       } catch { /* non-critical */ }
+
+      // CR-050: fire-and-forget WA for pre-order PENDING expiry (no stock restore — never deducted)
+      if (row.order_type === 'PREORDER') {
+        const phone = row.reg_phone || row.customer_phone;
+        const name  = row.customer_name || 'Customer';
+        if (phone) {
+          waSvc.sendPreorderExpired(phone, name)
+            .catch(err => logger.warn(`[${JOB_NAME}] sendPreorderExpired WA failed for ${row.transaction_id}`, { error: err.message }));
+        }
+        if (row.customer_email) {
+          emailSvc.sendPreorderExpiredEmail(row.customer_email, name)
+            .catch(err => logger.warn(`[${JOB_NAME}] sendPreorderExpired email failed for ${row.transaction_id}`, { error: err.message }));
+        }
+      }
     }
   }
 

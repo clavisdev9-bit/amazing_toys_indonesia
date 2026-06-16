@@ -1,7 +1,7 @@
 # System Architecture — Amazing Toys SOS
 **Project:** Amazing Toys Self-Order System (SOS)  
 **Event:** Amazing Toys Fair 2026  
-**Version:** 2.2 — 2026-06-11 (updated: CR-041 s/d CR-048, BUG-040 s/d BUG-047)  
+**Version:** 2.3 — 2026-06-17 (updated: CR-049 s/d CR-054, BUG-050 s/d BUG-051-03)  
 **Author:** clavis Development
 
 ---
@@ -77,6 +77,7 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 | HTTP Client | Axios (Bearer JWT interceptor, auto-logout on 401) |
 | Real-time | WebSocket native (custom `useWebSocket` hook) |
 | QR Code | `qrcode.react` |
+| Barcode | `react-barcode@1.6.1` — Code128 barcode untuk pre-order (CR-052) |
 | Build output | Single JS bundle (`/assets/index-*.js`) baked into Docker image |
 | Served by | Nginx 1.27-alpine |
 
@@ -85,8 +86,8 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 | Role | Halaman Utama |
 |---|---|
 | **CUSTOMER** | Browse produk (sort by stok), Cart + voucher, Checkout, Order tracking, Receipt pickup, Pickup status |
-| **CASHIER** | Lookup TXN + voucher input, POS Langsung + voucher, Payment processing (CASH/QRIS/EDC/TRANSFER), Recap harian |
-| **HELPER** | Buat order (browse + qty + voucher opsional), Antrian Approval (HELPER_APPROVE mode), Riwayat hari ini, Serah terima |
+| **CASHIER** | Lookup TXN + voucher input, POS Langsung + voucher, Payment processing (CASH/QRIS/EDC/TRANSFER), Pre-Order payment queue (CR-053), Recap harian |
+| **HELPER** | Buat order (browse + qty + voucher opsional), Antrian Approval (HELPER_APPROVE mode), Approval Pre-Order (CR-051), Riwayat hari ini, Serah terima |
 | **TENANT** | Incoming orders, Fulfillment, Laporan harian |
 | **LEADER** | Dashboard KPI, Sales report, Return approval |
 | **ADMIN** | User management, Konfigurasi sistem, WA Gateway config, Integrasi Odoo |
@@ -116,8 +117,9 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 | `products` | `/api/v1/products` | CRUD katalog, barcode lookup, filter stok |
 | `orders` | `/api/v1/orders` | Buat transaksi, deduct stok, generate QR |
 | `payments` | `/api/v1/payments` | Konfirmasi bayar, lookup TXN, cashier recap |
-| `cashier` | `/api/v1/cashier` | Shift management, POS langsung, voucher cashier |
+| `cashier` | `/api/v1/cashier` | Shift management, POS langsung, voucher cashier, pre-order payment queue (CR-053) |
 | `helper` | `/api/v1/helper` | HELPER_INPUT + HELPER_APPROVE flow: create/cancel/handover/approval-queue/approve/reject (CR-035, CR-040) |
+| `preorder` | `/api/v1/preorder` | Pre-order lifecycle post-PAID: ready-to-ship, ship, arrived, handover (CR-050/051) |
 | `wa` | `/api/v1/admin/wa-gateway` | WAHA config & session proxy (CR-036) |
 | `tenants` | `/api/v1/tenants` | CRUD booth & vendor, revenue share |
 | `tenant-orders` | `/api/v1/tenant-orders` | Fulfillment pesanan per booth |
@@ -154,7 +156,13 @@ Semua container terhubung ke jaringan bridge `hybrid-net`. Frontend (port 8080) 
 | `POST` | `/api/v1/helper/orders/:txnId/items/:itemId/approve` | HELPER | Setujui satu item; body `{ approved_quantity }` (null = full qty) — deduct stok item tersebut | CR-040 |
 | `POST` | `/api/v1/helper/orders/:txnId/items/:itemId/reject` | HELPER | Tolak satu item; body `{ reason }` (opsional) — item → REJECTED, stok tidak dipotong | CR-040 |
 | `POST` | `/api/v1/payments/scan` | CASHIER/LEADER/ADMIN | Scan QR order RESERVED → WAITING_PAYMENT | CR-038 |
-| `GET` | `/api/v1/cashier/queue` | CASHIER/LEADER/ADMIN | List semua order menunggu pembayaran (PENDING/RESERVED/WAITING_PAYMENT) | CR-038 |
+| `GET` | `/api/v1/cashier/queue` | CASHIER/LEADER/ADMIN | List semua order menunggu pembayaran (PENDING/RESERVED/WAITING_PAYMENT); PENDING pre-orders lintas tanggal disertakan (CR-053) | CR-038/CR-053 |
+| `GET` | `/api/v1/cashier/preorder-queue` | CASHIER/LEADER/ADMIN | List PENDING pre-orders saja (tanpa filter tanggal) untuk tab Pre-Order kasir | CR-053 |
+| `GET` | `/api/v1/preorder` | ADMIN/HELPER/LEADER | List transaksi pre-order; query `?status=pending\|paid\|awaiting\|arrived\|handover\|completed\|active\|all` | CR-050 |
+| `PATCH` | `/api/v1/preorder/:txnId/ready-to-ship` | ADMIN/LEADER | Konfirmasi siap kirim → PAID → AWAITING_SHIPMENT | CR-051 |
+| `PATCH` | `/api/v1/preorder/:txnId/ship` | ADMIN/LEADER | Input nomor resi pengiriman → AWAITING_SHIPMENT → SHIPPED (body: `{courier, tracking_number}`) | CR-050 |
+| `PATCH` | `/api/v1/preorder/:txnId/arrived` | ADMIN/LEADER | Konfirmasi barang sampai di Indonesia → SHIPPED/AWAITING_SHIPMENT → ARRIVED | CR-050 |
+| `PATCH` | `/api/v1/preorder/:txnId/handover` | HELPER/ADMIN/LEADER | Serahkan ke customer → ARRIVED → PREORDER_HANDOVER → COMPLETED | CR-050 |
 | `GET` | `/api/v1/admin/wa-gateway/waha/status` | ADMIN | Cek status sesi WAHA | CR-036 |
 | `POST` | `/api/v1/admin/wa-gateway/waha/start` | ADMIN | Mulai/restart sesi WAHA | CR-036 |
 | `GET` | `/api/v1/admin/wa-gateway/waha/qr` | ADMIN | Ambil QR pairing WAHA | CR-036 |
@@ -196,7 +204,7 @@ voucher_usages     → histori pemakaian voucher per transaksi (CR-029)
 
 | Enum | Nilai |
 |---|---|
-| `txn_status_enum` | **PENDING_APPROVAL**, PENDING, RESERVED, WAITING_PAYMENT, PAID, CANCELLED, EXPIRED, HANDED_OVER, COMPLETED |
+| `txn_status_enum` | **PENDING_APPROVAL**, PENDING, RESERVED, WAITING_PAYMENT, PAID, CANCELLED, EXPIRED, HANDED_OVER, COMPLETED, **AWAITING_SHIPMENT**, **SHIPPED**, **ARRIVED**, **PREORDER_HANDOVER** (migration 029, CR-050) |
 | `payment_method_enum` | CASH, QRIS, EDC, TRANSFER |
 | `user_role_enum` | CASHIER, TENANT, LEADER, ADMIN, HELPER |
 | `stock_status_enum` | AVAILABLE, LOW_STOCK, OUT_OF_STOCK |
@@ -240,8 +248,22 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 | `approved_by` | UUID | FK → users, helper yang approve (CR-040) |
 | `timer_locked_until` | TIMESTAMPTZ | Waktu expires_at ditetapkan saat approval (CR-040) |
 | `approval_note` | TEXT | Catatan helper saat approve (opsional) (CR-040) |
+| `order_type` | VARCHAR(20) | `REGULAR` (default) / `PREORDER` — tipe pesanan (migration 029, CR-050) |
+| `shipping_name` | VARCHAR(100) | Nama penerima pengiriman pre-order (CR-050) |
+| `shipping_phone` | VARCHAR(20) | Nomor HP penerima (CR-050) |
+| `shipping_address` | TEXT | Alamat pengiriman (CR-050) |
+| `shipping_city` | VARCHAR(100) | Kota pengiriman (CR-050) |
+| `shipping_province` | VARCHAR(100) | Provinsi pengiriman (CR-050) |
+| `courier` | VARCHAR(50) | Nama ekspedisi (diisi saat SHIPPED) (CR-050) |
+| `tracking_number` | VARCHAR(100) | Nomor resi pengiriman (CR-050) |
+| `shipped_at` | TIMESTAMPTZ | Waktu status → SHIPPED (CR-050) |
+| `arrived_at` | TIMESTAMPTZ | Waktu status → ARRIVED (CR-050) |
+| `handed_over_at` | TIMESTAMPTZ | Waktu status → PREORDER_HANDOVER (CR-050) |
 
-**Kolom Tambahan di `products` (CR-035):**
+**Index:**
+- `idx_transactions_order_type ON transactions (order_type, status) WHERE order_type = 'PREORDER'` — partial index untuk query list pre-order (migration 029)
+
+**Kolom Tambahan di `products` (CR-035 / CR-050):**
 
 | Kolom | Tipe | Keterangan |
 |---|---|---|
@@ -249,6 +271,8 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 | `is_on_hold` | BOOLEAN | Produk ditahan sementara oleh admin booth |
 | `max_per_customer` | INTEGER | Batas qty per order per customer (NULL = unlimited) |
 | `bundle_group` | VARCHAR(50) | Grup bundle — semua item bundle wajib diorder bersama |
+| `is_preorder` | BOOLEAN | Produk pre-order — tidak tersedia stok langsung (migration 029, CR-050) |
+| `preorder_note` | TEXT | Catatan produk pre-order (CR-050) |
 
 **Kolom Tambahan di `transaction_items` (CR-040):**
 
@@ -296,6 +320,18 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 | `015_cr040_helper_approve.sql` | Tambah `PENDING_APPROVAL` ke enum, 4 kolom approval di transactions, `approval_status` di transaction_items, partial index (CR-040) |
 | `016_drop_expires_at_not_null.sql` | Drop NOT NULL constraint pada `transactions.expires_at` — PENDING_APPROVAL tidak punya timer sampai helper setujui (CR-041) |
 | `017_per_item_approval.sql` | Tambah `approved_quantity` INTEGER dan `rejection_reason` TEXT ke `transaction_items` — mendukung per-item partial approval (CR-040) |
+| `018_cr041_alter_users_otp.sql` | Alter tabel users untuk mendukung OTP staff (CR-041) |
+| `019_cr041_login_otps.sql` | Tabel `login_otps` untuk OTP staff authentication (CR-041) |
+| `020_cr041_trusted_devices.sql` | Tabel `trusted_devices` — device fingerprint skip OTP (CR-041) |
+| `021_cr041_refresh_tokens.sql` | Tabel `refresh_tokens` untuk JWT refresh flow (CR-041) |
+| `022_group_checkout.sql` | Tabel `checkout_groups` dan kolom `group_id` di transactions — group invoice kasir (CR-04X) |
+| `023_cr061_fraud_protection.sql` | Tabel fraud protection — rate limit & blacklist (CR-04X) |
+| `024_customer_otp_devices.sql` | Tabel `customer_otp_devices` — trusted devices customer (CR-041) |
+| `025_txn_expiry_notif.sql` | Kolom `expiry_notif_sent_at` di transactions — tracking notifikasi hampir kadaluarsa (scheduler) |
+| `026_fix_delete_requests_product_id.sql` | Fix tipe kolom `product_id` di `delete_requests` (BUG fix) |
+| `027_cr042_customer_login_attempts.sql` | Tabel `customer_login_attempts` — lockout proteksi brute force login customer (CR-042/security) |
+| `028_cr041_pending_registrations.sql` | Tabel `pending_registrations` — OTP register customer (CR-041) |
+| `029_cr05x_preorder.sql` | Enum values AWAITING_SHIPMENT/SHIPPED/ARRIVED/PREORDER_HANDOVER; kolom `order_type` + shipping + tracking di transactions; kolom `is_preorder`/`preorder_note` di products; partial index (CR-050) |
 
 ---
 
@@ -304,12 +340,30 @@ Sequence direset setiap hari; daily counter diinisialisasi dari jumlah transaksi
 Centralisasi aturan transisi status dan validasi actor role (`backend/src/modules/orders/status.machine.js`):
 
 ```
-PENDING_APPROVAL → PENDING | CANCELLED              (CR-040: helper approve → PENDING, atau helper/customer reject → CANCELLED)
-PENDING          → WAITING_PAYMENT | CANCELLED | EXPIRED | PAID   (legacy + cashier scan)
-RESERVED         → WAITING_PAYMENT | CANCELLED | EXPIRED
-WAITING_PAYMENT  → PAID | CANCELLED | EXPIRED
-PAID             → HANDED_OVER
-HANDED_OVER      → COMPLETED
+PENDING_APPROVAL  → PENDING | CANCELLED                         (CR-040: helper approve/reject)
+PENDING           → WAITING_PAYMENT | CANCELLED | EXPIRED | PAID (legacy + cashier scan)
+RESERVED          → WAITING_PAYMENT | CANCELLED | EXPIRED
+WAITING_PAYMENT   → PAID | CANCELLED | EXPIRED
+PAID              → HANDED_OVER                                  (REGULAR order)
+PAID              → AWAITING_SHIPMENT                            (PREORDER — auto-triggered, CR-050)
+HANDED_OVER       → COMPLETED
+AWAITING_SHIPMENT → ARRIVED                                      (CR-050: admin konfirmasi sampai)
+SHIPPED           → ARRIVED                                      (CR-050: legacy path, backward-compat)
+ARRIVED           → PREORDER_HANDOVER                            (CR-050: helper serahkan ke customer)
+PREORDER_HANDOVER → COMPLETED                                    (CR-050)
+```
+
+**Pre-Order status flow lengkap:**
+```
+[Customer checkout PREORDER] → PENDING_APPROVAL → PENDING → PAID
+                                                              │
+                                                    AWAITING_SHIPMENT (auto)
+                                                              │
+                                                           ARRIVED
+                                                              │
+                                                    PREORDER_HANDOVER
+                                                              │
+                                                          COMPLETED
 ```
 
 **Pembatasan per role:**
@@ -322,6 +376,9 @@ HANDED_OVER      → COMPLETED
 | → WAITING_PAYMENT | CASHIER / LEADER / ADMIN |
 | → PAID | CASHIER / LEADER / ADMIN |
 | → HANDED_OVER / COMPLETED | HELPER / TENANT / LEADER / ADMIN |
+| → AWAITING_SHIPMENT | SYSTEM (auto setelah PAID pre-order) |
+| → ARRIVED | ADMIN / LEADER |
+| → PREORDER_HANDOVER | HELPER / ADMIN / LEADER |
 
 **Catatan penting — lock PostgreSQL:**
 Fungsi `approveOrder` menggunakan `FOR UPDATE OF t` (bukan `FOR UPDATE`) untuk menghindari error `cannot be applied to nullable side of outer join` ketika query join dengan `LEFT JOIN customers`. Selalu gunakan `FOR UPDATE OF <alias>` saat query mengandung outer join. (BUG-016)
@@ -782,7 +839,8 @@ Diakses via `/admin` — tab-tab tersedia:
       │  WebSocket: ORDER_PAID
       ▼
   /pesanan/:id — Status tracking (harga tax-inclusive)
-      │
+      │   [Jika PREORDER: stepper status pre-order + barcode Code128 (CR-052)]
+      │   [Barcode menampilkan transaction_id untuk verifikasi helper]
       ▼
   /pesanan/:id/receipt — Digital receipt
 ```
@@ -802,6 +860,15 @@ Diakses via `/admin` — tab-tab tersedia:
 ```
 [ /cashier — Dashboard ]
       │
+      │  Tabs: Queue | Pre-Order | Processed | Kadaluarsa | Group Invoice
+      │
+      ├─ Tab "Queue": PENDING/RESERVED/WAITING_PAYMENT hari ini + PENDING pre-orders lintas tanggal
+      ├─ Tab "Pre-Order" (CR-053): list PENDING pre-orders (status belum bayar), lintas tanggal
+      │   └── Klik row → /cashier/bayar/:txnId
+      ├─ Tab "Processed": TXN PAID hari ini
+      ├─ Tab "Kadaluarsa": TXN EXPIRED hari ini
+      └─ Tab "Group Invoice": group checkout hari ini
+      │
       │  Input TXN ID + voucher (opsional — CR-037) → Cari
       ▼
   GET /payments/lookup/:txnId
@@ -812,10 +879,11 @@ Diakses via `/admin` — tab-tab tersedia:
       │
       ▼
   /cashier/bayar/:txnId (PaymentPage)
-  ├── Kolom kiri: detail txn + ringkasan harga (incl. diskon voucher)
+  ├── Kolom kiri: detail txn + ringkasan harga (incl. diskon voucher) + badge PRE-ORDER jika applicable
   │   + VoucherInput card (jika PENDING + belum ada voucher)
   ├── Kolom kanan: product browser (tambah item ke PENDING) (CR-023)
-  └── Pilih metode bayar → POST /payments/process → PAID
+  ├── Klik "Process Payment" → Modal konfirmasi "Apakah Anda yakin?" (CR-054)
+  └── Konfirmasi → POST /payments/process → PAID
         │
         ▼
   Sukses: Print thermal / kirim email
@@ -826,7 +894,7 @@ Diakses via `/admin` — tab-tab tersedia:
   ├── VoucherInput di cart footer (jika cart tidak kosong)
   ├── Preview diskon real-time
   └── Klik Bayar → POST /cashier/orders(items, phone, voucherCode)
-        → Redirect ke PaymentPage
+        → Redirect ke PaymentPage (dengan konfirmasi modal CR-054)
 ```
 
 ---
@@ -881,6 +949,12 @@ Tab "Antrian Approval" — MODE: HELPER_APPROVE:
             → POST /helper/orders/:txnId/reject → CANCELLED
             → WS ORDER_REJECTED ke customer, APPROVAL_QUEUE_UPDATE ke tenant
 
+Tab "Approval Pre-Order" — (CR-051):
+  ├── Daftar pre-order PENDING_APPROVAL yang menunggu persetujuan helper
+  ├── Informasi shipping customer (nama, alamat, kota, provinsi, HP)
+  └── Helper approve → stok dikonfirmasi, transisi ke PENDING
+        → Customer bisa bayar di kasir
+
 Tab "Riwayat Hari Ini":
   └── GET /helper/orders — semua order booth hari ini (semua status)
 
@@ -931,6 +1005,18 @@ Tab "Serah Terima":
   ├── WA Gateway: provider, API key, WAHA QR pairing (CR-036)
   ├── Integrasi: Odoo config, sync manual, payment journals, sync log, resync
   └── Audit Log: semua aksi sistem (date/actor/type filter)
+
+[ /admin/preorder — Pre-Order Management (CR-050/051) ]
+  Tabs:
+  ├── "Menunggu Pembayaran" (BUG-051-03): PENDING_APPROVAL + PENDING pre-orders
+  │   └── Tampil info: "Menunggu persetujuan helper" / "Menunggu pembayaran customer"
+  ├── "Sudah Dibayar": PAID pre-orders → tombol "Konfirmasi Siap Kirim"
+  │   └── PATCH /preorder/:txnId/ready-to-ship → AWAITING_SHIPMENT
+  ├── "Menunggu Kirim": AWAITING_SHIPMENT pre-orders → tombol "Input Resi"
+  │   └── PATCH /preorder/:txnId/ship { courier, tracking_number } → ARRIVED
+  ├── "Barang Sudah Sampai": ARRIVED pre-orders → tombol "Konfirmasi Serah Terima"
+  │   └── PATCH /preorder/:txnId/handover → PREORDER_HANDOVER → COMPLETED
+  └── "Selesai": PREORDER_HANDOVER + COMPLETED pre-orders
 ```
 
 ---
@@ -1032,6 +1118,7 @@ Odoo Setup (wajib sebelum production):
 
 | Versi | Tanggal | Perubahan |
 |---|---|---|
+| **2.3** | 2026-06-17 | CR-049–CR-054, BUG-050–BUG-051-03. Pre-order system lengkap (migration 029), cashier pre-order tab, barcode pre-order, konfirmasi modal pembayaran |
 | **2.2** | 2026-06-11 | CR-041–CR-048, BUG-040–BUG-047. Per-item approval (migration 017), auto-refresh queue, sort stok di katalog, hide stock pcs di halaman produk, STANDARD.md |
 | **2.1** | 2026-06-08 | CR-015–CR-040, BUG-016–BUG-017. HELPER_APPROVE (Model D), per-order approval queue, partial order flow, WA delivery system |
 | **2.0** | 2026-05-30 | HELPER_INPUT (Model C), WAHA integration, BCA QRIS, ESC/POS printer, voucher system |
@@ -1050,6 +1137,19 @@ Odoo Setup (wajib sebelum production):
 | CR-047 | 2026-06-11 | `/katalog` diurutkan by stok: Tersedia → Stok Terbatas → Habis |
 | CR-048 | 2026-06-11 | Hide chip "X pcs / Stock" di `/product/:id` dan `/product_cart/:id` — hanya badge status yang tampil |
 
+### Ringkasan CR-050 s/d CR-054
+
+| CR/BUG | Tanggal | Deskripsi |
+|---|---|---|
+| CR-050 | 2026-06-15 | Pre-order system: `order_type` column, status AWAITING_SHIPMENT/ARRIVED/PREORDER_HANDOVER, modul `preorder`, halaman admin `/admin/preorder`, pre-order stepper di `/pesanan/:id` |
+| BUG-051-01 | 2026-06-15 | Fix pre-order list page: status filter mapping `pending` → `['PENDING_APPROVAL', 'PENDING']` |
+| BUG-051-02 | 2026-06-15 | Fix `confirmReadyToShip`: `PAID → AWAITING_SHIPMENT` (bukan `PAID → SHIPPED`) |
+| CR-051 | 2026-06-15 | Helper approval pre-order: tab "Approval Pre-Order" di `/helper`, auto-fill shipping info |
+| BUG-051-03 | 2026-06-16 | Admin `/admin/preorder`: tambah tab "Menunggu Pembayaran" untuk PENDING_APPROVAL + PENDING pre-orders yang belum terlihat |
+| CR-052 | 2026-06-16 | Barcode Code128 (`react-barcode@1.6.1`) di `/pesanan/:id` untuk pre-order — memudahkan helper identifikasi barang |
+| CR-053 | 2026-06-16 | Cashier: tambah tab "Pre-Order" khusus PENDING pre-orders; fix `getPaymentQueue` — pre-orders lintas tanggal dimasukkan ke tab Queue |
+| CR-054 | 2026-06-16 | Cashier payment: modal konfirmasi "Apakah Anda yakin?" sebelum proses pembayaran di `/cashier/bayar/:txnId` |
+
 ---
 
 ## 16. Standarisasi Kode
@@ -1065,3 +1165,8 @@ File `STANDARD.md` di root project mendokumentasikan standar coding yang wajib d
 | STD-005 | Silent background refresh di React: `fetchData(silent)`, smart merge, `React.memo` |
 | STD-006 | Voucher usage limit: `usage_limit` adalah satu-satunya pembatas global |
 | STD-007 | Informasi stok ke customer: hanya badge status, bukan angka eksak |
+| STD-030 | SELECT eksplisit di list query — wajib disinkronkan saat migrasi kolom baru |
+| STD-031 | Pre-Order: routing mode dan stock deduction invariants — `order_type=PREORDER` tidak deduct stok saat checkout, deduct saat approved |
+| STD-032 | Pre-Order Approval: `order_type` detection dan helper UI invariants |
+| STD-033 | Pre-Order Stepper: step key = status saat step AKTIF (bukan status tujuan) |
+| STD-034 | Pre-Order Admin Page: setiap status harus memiliki tab dan transisi yang terdefinisi — tidak boleh ada status orphan |

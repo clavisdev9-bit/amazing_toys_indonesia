@@ -120,6 +120,7 @@ router.post('/orders/:transactionId/items',
 );
 
 // GET /api/v1/cashier/queue — list RESERVED + PENDING orders waiting for cashier (Model C)
+// CR-053: includes PENDING pre-orders from any date (no date filter for pre-orders)
 router.get('/queue',
   authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
   [qv('date').optional().isDate()],
@@ -127,6 +128,17 @@ router.get('/queue',
   async (req, res, next) => {
     try {
       const data = await cashierSvc.getPaymentQueue(req.query.date);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// GET /api/v1/cashier/preorder-queue — CR-053: dedicated list of PENDING pre-orders (no date filter)
+router.get('/preorder-queue',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  async (req, res, next) => {
+    try {
+      const data = await cashierSvc.getPreorderPaymentQueue();
       res.json({ success: true, data });
     } catch (err) { next(err); }
   }

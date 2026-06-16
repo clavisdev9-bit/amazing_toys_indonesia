@@ -90,6 +90,8 @@ export default function MockProductDetailPage() {
   const { key: stockKey, level: stockLevel } = getStockStatus(stock);
   const stockBadge = STOCK_BADGE[stockLevel] ?? STOCK_BADGE.available;
   const inStock = stock > 0;
+  const isPreorder = !!product.is_preorder;
+  const preorderNote = product.preorder_note || null;
   const categName = product.odoo_categ_name || product.category || '-';
 
   return (
@@ -156,6 +158,21 @@ export default function MockProductDetailPage() {
         >
           {product && isWished(product.product_id ?? product.id) ? '❤️' : '🤍'}
         </button>
+
+        {/* Pre-Order overlay badge */}
+        {isPreorder && (
+          <span style={{
+            position: 'absolute', bottom: 14, left: 14,
+            fontSize: 11, fontWeight: 800, letterSpacing: '0.8px',
+            padding: '4px 12px', borderRadius: 20,
+            background: 'rgba(234,88,12,0.92)',
+            color: '#fff',
+            backdropFilter: 'blur(6px)',
+            boxShadow: '0 2px 8px rgba(234,88,12,0.35)',
+          }}>
+            PRE-ORDER
+          </span>
+        )}
       </div>
 
       {/* ── Content ───────────────────────────────────────────────────── */}
@@ -171,7 +188,7 @@ export default function MockProductDetailPage() {
           gap: 14,
         }}
       >
-        {/* Booth name (brand) + stock badge */}
+        {/* Booth name (brand) + status badge */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{
             fontSize: 11, fontWeight: 700, color: '#6366F1',
@@ -179,13 +196,24 @@ export default function MockProductDetailPage() {
           }}>
             {product.tenant_name}
           </span>
-          <span style={{
-            fontSize: 10.5, fontWeight: 700,
-            padding: '3px 12px', borderRadius: 20,
-            ...stockBadge,
-          }}>
-            {t(stockKey)}
-          </span>
+          {isPreorder ? (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 12px', borderRadius: 20,
+              background: 'rgba(255,237,213,0.90)', color: '#C2410C',
+              border: '1px solid rgba(234,88,12,0.18)',
+            }}>
+              Pre-Order
+            </span>
+          ) : (
+            <span style={{
+              fontSize: 10.5, fontWeight: 700,
+              padding: '3px 12px', borderRadius: 20,
+              ...stockBadge,
+            }}>
+              {t(stockKey)}
+            </span>
+          )}
         </div>
 
         {/* Product name */}
@@ -199,6 +227,34 @@ export default function MockProductDetailPage() {
             {formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}
           </span>
         </div>
+
+        {/* Pre-Order info box */}
+        {isPreorder && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(255,237,213,0.80) 0%, rgba(254,215,170,0.60) 100%)',
+            border: '1px solid rgba(234,88,12,0.20)',
+            borderRadius: 14,
+            padding: '12px 14px',
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+          }}>
+            <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>🔖</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: '#9A3412' }}>
+                Produk Pre-Order
+              </span>
+              {preorderNote && (
+                <span style={{ fontSize: 12, color: '#C2410C', lineHeight: 1.5 }}>
+                  {preorderNote}
+                </span>
+              )}
+              <span style={{ fontSize: 11, color: '#B45309', marginTop: 2 }}>
+                Pembayaran dilakukan sekarang. Barang dikirim/diambil sesuai estimasi.
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Spec strip */}
         <div style={{ display: 'flex', gap: 8 }}>

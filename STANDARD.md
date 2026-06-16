@@ -1627,3 +1627,307 @@ Frontend biasanya mengisi form edit dari data yang sudah ada di list state (buka
 
 BUG-011 / RC-21 — `adminListProducts()` tidak include `is_preorder` → toggle Pre-Order selalu OFF di form edit.  
 STD-010 — Schema guard wajib di `app.js` untuk kolom baru.
+
+---
+
+## STD-031 — Pre-Order: Routing Mode dan Stock Deduction Invariants
+
+**Berlaku untuk:** Semua fungsi yang membuat transaksi (`createOrder`, `createHelperOrder`) dan semua fungsi yang mengurangi stok produk.
+
+**Latar Belakang:** BUG-050-01 — TXN-20260616-00163 (Astro Boy) dibuat dengan `order_type='REGULAR'` meskipun produk `is_preorder=true`. Root cause: (A) tidak ada guard yang mencegah pre-order masuk via SELF_ORDER mode — sehingga transaksi PREORDER tercipta tanpa `shipping_*` fields dan stuck; (B) `createOrder()` SELF_ORDER tidak punya guard `!p.is_preorder` pada stock deduction — stok pre-order ikut berkurang.
+
+---
+
+### Aturan A — Pre-Order Wajib Melalui HELPER Mode
+
+Pre-order items **dilarang** diproses via SELF_ORDER mode. Pelanggan tidak bisa mengisi alamat pengiriman sendiri — harus diisi oleh Helper.
+
+| Mode | Pre-order diizinkan? | Siapa isi shipping? |
+|---|---|---|
+| `SELF_ORDER` | ❌ Ditolak | — |
+| `HELPER_APPROVE` | ✅ Ya (all-preorder cart) | Helper saat approval |
+| `HELPER_INPUT` (`createHelperOrder`) | ✅ Ya | Helper saat buat order |
+
+**Guard wajib di `createOrder()` (SELF_ORDER path):**
+
+```javascript
+// Wajib ada sebelum doCheckout di CartPage.jsx (frontend)
+if (!isApproveMode) {
+  const preorderItems = items.filter(i => i.is_preorder);
+  if (preorderItems.length > 0) {
+    setError(`Produk pre-order tidak bisa dipesan mandiri: ${names}. Hubungi Helper.`);
+    return;
+  }
+}
+
+// Wajib ada di createOrder() (backend) — safety net
+if (!isHelperApproveMode) {
+  const preorderItems = items.filter(i => productMap[i.product_id]?.is_preorder);
+  if (preorderItems.length > 0) {
+    throw new AppError(
+      `Produk pre-order tidak bisa dipesan mandiri: ${names}. Silakan minta bantuan Helper.`,
+      422, { preorderProductIds: preorderItems.map(i => i.product_id) }
+    );
+  }
+}
+```
+
+---
+
+### Aturan B — Stock Deduction Invariant: Pre-Order Tidak Pernah Kurangi Stok
+
+**Di seluruh codebase, setiap UPDATE stock_quantity harus diproteksi dengan `!p.is_preorder`.**
+
+```javascript
+// SALAH ❌ — deduct tanpa guard
+if (!isHelperApproveMode) {
+  await client.query(`UPDATE products SET stock_quantity = stock_quantity - $1 ...`)
+}
+
+// BENAR ✅ — guard is_preorder wajib
+if (!isHelperApproveMode && !p.is_preorder) {
+  await client.query(`UPDATE products SET stock_quantity = stock_quantity - $1 ...`)
+}
+```
+
+**Titik stock deduction yang harus punya guard ini:**
+
+| Fungsi | File | Guard ada? |
+|---|---|---|
+| `createOrder()` — SELF_ORDER path | `orders.service.js` | ✅ (BUG-050-01) |
+| `createHelperOrder()` | `helper.service.js` | ✅ |
+| `approveOrder()` | `helper.service.js` | ✅ |
+| `approveItem()` | `helper.service.js` | ✅ |
+
+---
+
+### Aturan C — Shipping Fields Wajib Ada untuk Transaksi PREORDER
+
+Setiap transaksi dengan `order_type = 'PREORDER'` **harus** memiliki `shipping_name`, `shipping_phone`, dan `shipping_address` terisi sebelum masuk status `AWAITING_SHIPMENT`.
+
+- Di `createHelperOrder()`: divalidasi saat order dibuat (shippingName/shippingAddress required)
+- Di `approveOrder()` HELPER_APPROVE: divalidasi saat Helper approve
+
+Jika shipping fields kosong pada PREORDER transaction, fix via DB update manual atau endpoint admin.
+
+---
+
+### Aturan D — Atomic Deployment: Migration + App Code Harus Naik Bersamaan
+
+BUG-050-01 terjadi karena migration 029 jalan lebih dulu (kolom `is_preorder` sudah ada, produk sudah di-toggle) sebelum app code (`createOrder` dengan `isPreorderCart` check) ter-deploy.
+
+```
+❌ Urutan salah:
+  1. docker exec psql migration029.sql    ← is_preorder ada di DB
+  2. Toggle produk Astro Boy = preorder   ← produk is_preorder = true
+  3. Customer place order                 ← app code lama → isPreorderCart = false → REGULAR
+  4. docker compose up (app code baru)    ← terlambat
+
+✅ Urutan benar (sesuai STD-020):
+  1. Deploy app code baru                 ← createOrder punya isPreorderCart check
+  2. docker exec psql migration029.sql    ← is_preorder kolom tersedia
+  3. Toggle produk Astro Boy = preorder   ← produk is_preorder = true
+  4. Customer place order                 ← order_type = 'PREORDER' ✅
+```
+
+### Checklist Setiap Kali Menambah Flag Produk Baru yang Mempengaruhi Order Flow
+
+- [ ] Backend: Flag baru di-SELECT di `createOrder()` dan `createHelperOrder()` product query
+- [ ] Backend: Guard di SELF_ORDER path jika flag mencegah self-order
+- [ ] Backend: Stock deduction diproteksi jika flag memengaruhi stok behavior
+- [ ] Frontend: Flag disimpan di CartContext (`addItem`) dan divalidasi di `handlePlaceOrder`
+- [ ] Deployment: app code dideploy **sebelum** atau **bersamaan** dengan migration
+
+### Referensi
+
+BUG-050-01 — TXN-20260616-00163 Astro Boy tidak di-treat sebagai PREORDER.  
+CR-050 — Implementasi fitur pre-order (Sub-feature A + B).  
+STD-020 — Deployment order wajib: migration setelah app code.
+
+---
+
+## STD-032 — Pre-Order Approval: order_type Detection dan Helper UI Invariants
+
+**Berlaku untuk:** `getApprovalQueue`, `approveOrder` di `helper.service.js`, `ApprovalQueueTab.jsx`, dan semua komponen yang membaca/memproses pre-order transactions dari sisi Helper.
+
+**Latar Belakang:** BUG-050-02 — TXN-20260616-00167 menimbulkan error "Nama penerima wajib diisi untuk Pre-Order." karena `order_type='REGULAR'` di DB (legacy transaction) sehingga frontend tidak menampilkan shipping form, namun backend mendeteksi pre-order dari DB-level dan melempar 422.
+
+---
+
+### Aturan E — Approval Queue Harus Mengembalikan is_preorder per Item
+
+`getApprovalQueue` wajib menyertakan `p.is_preorder` di items SELECT agar frontend dapat:
+1. Menampilkan badge PRE-ORDER per item di `ItemRow`
+2. Melakukan runtime correction `order_type` jika bernilai salah
+
+```javascript
+// WAJIB — items SELECT di getApprovalQueue:
+SELECT ti.item_id, ..., p.is_preorder, ...
+FROM transaction_items ti JOIN products p ON ...
+```
+
+---
+
+### Aturan F — Runtime order_type Correction dari Items
+
+Baik di `getApprovalQueue` (service layer) maupun di `approveOrder`, jika `order_type !== 'PREORDER'` namun ada item dengan `is_preorder = TRUE`, wajib dianggap dan di-set sebagai PREORDER:
+
+```javascript
+// Di getApprovalQueue (runtime, tidak write ke DB):
+if (txn.order_type !== 'PREORDER' && txn.items.some(i => i.is_preorder)) {
+  txn.order_type = 'PREORDER';
+}
+
+// Di approveOrder (write ke DB + atomik):
+const preorderCheck = await client.query(`SELECT EXISTS(... p.is_preorder = TRUE ...) AS has_preorder`, ...);
+if (preorderCheck.rows[0].has_preorder) {
+  isPreorderTxn = true;
+  await client.query(`UPDATE transactions SET order_type = 'PREORDER' WHERE transaction_id = $1`, ...);
+}
+```
+
+Tujuan: legacy transactions yang dibuat selama window deployment non-atomik tetap ditangani dengan benar.
+
+---
+
+### Aturan G — Shipping Form Wajib Tampil Sebelum Approval Pre-Order
+
+Di `ApprovalQueueTab.jsx` (dan komponen approval lain), sebelum helper mengonfirmasi "Setujui Semua":
+- Jika `isPreorder = true` → shipping form **wajib** tampil dalam modal
+- Button konfirmasi **wajib** disabled sampai `shipping_name`, `shipping_phone`, `shipping_address` terisi
+- Shipping data yang diisi wajib dikirim ke endpoint `POST .../approve` sebagai flat fields (`shipping_name`, `shipping_phone`, dll.)
+
+---
+
+### Aturan H — "Approval Pre-Order" Tab untuk PAID Pre-Orders
+
+Helper page wajib memiliki sub-menu "Approval Pre-Order" di seksi Approval yang menampilkan transaksi dengan `order_type = 'PREORDER'` AND `status = 'PAID'` untuk booth helper bersangkutan.
+
+- Backend: `GET /api/v1/helper/preorder-paid` → `getPreorderPaidOrders(helperTenantId)`
+- Frontend: `PreorderApprovalPanel` component di `HelperPage.jsx`
+- Fungsi: monitoring/tracking pre-order yang sudah dibayar dan menunggu proses pengiriman
+
+### Referensi
+
+BUG-050-02 — TXN-20260616-00167 error "Nama penerima wajib diisi untuk Pre-Order."  
+STD-031 — Pre-Order routing mode dan stock deduction invariants.  
+CR-050 — Implementasi fitur pre-order.
+
+---
+
+## STD-033 — Pre-Order Stepper: Step Key = Status Saat Step AKTIF
+
+**Berlaku untuk:** Semua komponen progress stepper untuk pre-order (`OrderTrackingPage.jsx` dan komponen sejenis di masa depan).
+
+**Latar Belakang:** BUG-051-01 — TXN-20260616-00167, stepper semua grey karena step-key menggunakan `'PAID'` untuk step "Pembayaran". Saat `order.status = 'PENDING'`, `ORDER.indexOf('PENDING') = -1` → tidak ada step yang ter-highlight.
+
+---
+
+### Aturan I — Step Key = Status yang Membuat Step Menjadi CURRENT
+
+Setiap entry dalam array step harus menggunakan `key` = status transaksi yang membuat step tersebut **berstatus current (active)**:
+
+```javascript
+// BENAR ✅
+{ key: 'PENDING',          label: 'Pembayaran',        icon: '💳' },  // current saat belum bayar
+{ key: 'PAID',             label: 'Menunggu Kirim',    icon: '📦' },  // current setelah bayar
+{ key: 'AWAITING_SHIPMENT',label: 'Dalam Pengiriman',  icon: '🚚' },
+{ key: 'ARRIVED',          label: 'Tiba di Indonesia', icon: '📍' },
+{ key: 'PREORDER_HANDOVER',label: 'Serah Terima',      icon: '🤝' },
+{ key: 'COMPLETED',        label: 'Selesai',           icon: '✅' },
+
+// SALAH ❌ — 'PAID' sebagai key step "Pembayaran"
+{ key: 'PAID', label: 'Pembayaran', ... }
+// Efek: saat status='PENDING', curIdx=-1, semua step grey
+```
+
+---
+
+### Aturan J — Petakan Status "Sibling" ke Key Terdekat
+
+Status yang tidak ada di array step harus dipetakan ke step terdekat secara semantik sebelum `indexOf`:
+
+```javascript
+// PENDING_APPROVAL = stage sebelum bayar → sama dengan PENDING
+const mappedStatus = order.status === 'PENDING_APPROVAL' ? 'PENDING' : order.status;
+const curIdx = ORDER.indexOf(mappedStatus);
+```
+
+Aturan umum: Jika ada status X yang tidak punya step sendiri namun semantically sama dengan step Y, petakan X → Y sebelum `indexOf`.
+
+---
+
+### Aturan K — Label Stepper Harus Konsisten Lintas Komponen
+
+Labels stepper pre-order yang disepakati (per CR-050 + BUG-051-01):
+
+| Status (step key) | Label |
+|---|---|
+| `PENDING` / `PENDING_APPROVAL` | Pembayaran |
+| `PAID` | Menunggu Kirim |
+| `AWAITING_SHIPMENT` | Dalam Pengiriman |
+| `ARRIVED` | Tiba di Indonesia |
+| `PREORDER_HANDOVER` | Serah Terima |
+| `COMPLETED` | Selesai |
+
+### Referensi
+
+BUG-051-01 — Pre-order stepper semua grey untuk TXN-20260616-00167 (status PENDING).  
+STD-032 — Pre-Order Approval invariants.  
+CR-050 — Status flow pre-order.
+
+---
+
+## STD-034 — Pre-Order Admin Page: Setiap Status Harus Memiliki Tab dan Transisi
+
+**Berlaku untuk:** `PreorderShipmentPage.jsx`, `preorder.service.js`, `preorder.router.js`, dan semua komponen admin yang menampilkan/memproses pre-order.
+
+**Latar Belakang:** BUG-051-02 — TXN-20260616-00167 status PAID tidak muncul di `/admin/preorder` karena tidak ada tab dan tidak ada endpoint transisi `PAID → AWAITING_SHIPMENT`.
+
+---
+
+### Aturan L — Setiap Status dalam Flow Harus Punya Tab di Admin Page
+
+Flow pre-order: `PAID → AWAITING_SHIPMENT → ARRIVED → PREORDER_HANDOVER → COMPLETED`
+
+Setiap status yang bisa di-ACTION oleh admin WAJIB punya tab di `PreorderShipmentPage.jsx`. Tidak boleh ada status yang "invisible" (tidak tampil di tab manapun).
+
+| Status | Tab | Action |
+|---|---|---|
+| `PAID` | Sudah Dibayar | Proses Pengiriman (→ AWAITING_SHIPMENT) |
+| `AWAITING_SHIPMENT` | Menunggu Kirim | Konfirmasi Sudah Sampai (→ ARRIVED) |
+| `ARRIVED` | Barang Sudah Sampai | (menunggu Helper serah terima) |
+| `COMPLETED` | Selesai | — |
+
+---
+
+### Aturan M — Setiap Transisi Status Wajib Punya Endpoint Sendiri
+
+Setiap perpindahan status `A → B` dalam flow pre-order WAJIB memiliki:
+1. Fungsi di `preorder.service.js`
+2. Route `PATCH /preorder/:txnId/<action>` di `preorder.router.js`
+3. Export di `frontend/src/api/preorder.js`
+4. Button + confirmation modal di `PreorderShipmentPage.jsx`
+
+Jika transisi baru ditambahkan di flow (misal status baru antara PAID dan AWAITING_SHIPMENT), checklist ini WAJIB dilengkapi.
+
+---
+
+### Aturan N — statusMap di getPreorderList Harus Sinkron dengan Status Flow
+
+Setiap kali status baru ditambahkan ke enum `txn_status_enum` yang relevan dengan pre-order, `statusMap` di `getPreorderList` WAJIB diperbarui:
+```javascript
+const statusMap = {
+  paid:      ['PAID'],           // ← WAJIB ada
+  awaiting:  ['AWAITING_SHIPMENT'],
+  arrived:   ['ARRIVED'],
+  completed: ['COMPLETED'],
+  active:    ['PAID', 'AWAITING_SHIPMENT', ...],  // ← sertakan semua status aktif
+};
+```
+
+### Referensi
+
+BUG-051-02 — PAID pre-orders tidak muncul di /admin/preorder.  
+STD-033 — Pre-Order stepper step key invariants.  
+CR-050 — Status flow pre-order lengkap.

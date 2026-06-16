@@ -86,7 +86,15 @@
       "mcp__Claude_in_Chrome__navigate",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"package.json\" | head -5)",
-      "Bash(grep -E \"\\\\.\\(jsx?|tsx?\\)$\")"
+      "Bash(grep -E \"\\\\.\\(jsx?|tsx?\\)$\")",
+      "Bash(node --check src/services/email.service.js)",
+      "Bash(node --check src/modules/auth/auth.service.js)",
+      "Bash(node --check src/modules/preorder/preorder.service.js)",
+      "Bash(node --check src/modules/payments/payments.service.js)",
+      "Bash(node --check src/modules/scheduler/jobs/TxnExpireJob.js)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "PowerShell(head -100)"
     ]
   }
 }

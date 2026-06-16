@@ -59,9 +59,10 @@ import LaporanHarianPage from './pages/tenant/LaporanHarianPage';
 import StockReportPage from './pages/tenant/StockReportPage';
 
 // Helper pages
-import HelperPage             from './pages/helper/HelperPage';
-import HelperOrderSuccessPage from './pages/helper/HelperOrderSuccessPage';
-import HandoverPage           from './pages/helper/HandoverPage';
+import HelperPage                   from './pages/helper/HelperPage';
+import HelperOrderSuccessPage       from './pages/helper/HelperOrderSuccessPage';
+import HandoverPage                 from './pages/helper/HandoverPage';
+import ProductPreorderTogglePage    from './pages/helper/ProductPreorderTogglePage';
 
 // Admin page
 import AdminPage              from './pages/admin/AdminPage';
@@ -225,6 +226,7 @@ function AppRoutes() {
           <Route element={<RequireRole allowedRoles={['HELPER']} />}>
             <Route path="/helper" element={<HelperPage />} />
             <Route path="/helper/preorder-handover" element={<HandoverPage />} />
+            <Route path="/helper/products/preorder" element={<ProductPreorderTogglePage />} />
             <Route element={<StaffShell navItems={[]} title="Helper" />}>
               <Route path="/helper/order-success" element={<HelperOrderSuccessPage />} />
             </Route>

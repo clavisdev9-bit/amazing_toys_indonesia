@@ -266,6 +266,23 @@ export default function CartPage() {
       setShowApprovalModal(true);
       return;
     }
+    // CR-050: pre-order items cannot be self-ordered — Helper must collect shipping info
+    if (!isApproveMode) {
+      const preorderItems = items.filter(i => i.is_preorder);
+      if (preorderItems.length > 0) {
+        const names = preorderItems.map(i => i.product_name).join(', ');
+        setError(`Produk pre-order tidak bisa dipesan mandiri: ${names}. Hubungi Helper untuk memproses order pre-order.`);
+        return;
+      }
+    }
+    // CR-050: in HELPER_APPROVE mode, reject mixed pre-order + regular carts
+    if (isApproveMode) {
+      const preorderItems = items.filter(i => i.is_preorder);
+      if (preorderItems.length > 0 && preorderItems.length !== items.length) {
+        setError('Pre-Order tidak bisa digabung dengan produk reguler. Buat order terpisah.');
+        return;
+      }
+    }
     doCheckout(items);
   }
 
@@ -397,20 +414,36 @@ export default function CartPage() {
                   <p className="text-sm font-medium text-gray-800 line-clamp-2 flex-1">
                     {item.product_name}
                   </p>
-                  {/* Waiting badge */}
-                  {item.is_on_hold && (
-                    <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ml-1"
-                      style={{
-                        background: 'rgba(255,183,0,0.15)',
-                        color: '#B45309',
-                        border: '1px solid rgba(230,119,0,0.25)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {t('cart.waitingForStock')}
-                    </span>
-                  )}
+                  <div className="flex flex-col items-end gap-0.5 shrink-0 ml-1">
+                    {/* Pre-order badge */}
+                    {item.is_preorder && (
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: 'rgba(234,88,12,0.12)',
+                          color: '#C2410C',
+                          border: '1px solid rgba(234,88,12,0.25)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        🔖 PRE-ORDER
+                      </span>
+                    )}
+                    {/* Waiting badge */}
+                    {item.is_on_hold && (
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{
+                          background: 'rgba(255,183,0,0.15)',
+                          color: '#B45309',
+                          border: '1px solid rgba(230,119,0,0.25)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {t('cart.waitingForStock')}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <p className="text-xs text-gray-400 mb-1">{item.tenant_name}</p>

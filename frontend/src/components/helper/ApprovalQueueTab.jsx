@@ -103,7 +103,14 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
 
       {/* Product name + qty */}
       <div className="flex-1 min-w-0">
-        <span className="text-gray-800 font-medium truncate block">{item.product_name}</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-gray-800 font-medium truncate">{item.product_name}</span>
+          {item.is_preorder && (
+            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 flex-shrink-0">
+              🔖 PRE-ORDER
+            </span>
+          )}
+        </div>
         <span className="text-gray-400 text-xs">
           {isApproved && item.approved_quantity != null && item.approved_quantity < item.quantity
             ? <><span className="line-through mr-1">×{item.quantity}</span><span className="text-emerald-600 font-semibold">×{item.approved_quantity}</span></>
@@ -210,6 +217,13 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
   const [rejectAllReason,    setRejectAllReason]      = useState('');
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [toast, setToast]                             = useState(null);
+  const isPreorder = txn.order_type === 'PREORDER';
+  // CR2: Shipping form pre-filled from customer registration data + event default address
+  const [shippingName,     setShippingName]     = useState(txn.customer_name  || '');
+  const [shippingPhone,    setShippingPhone]    = useState(txn.customer_phone || '');
+  const [shippingAddress,  setShippingAddress]  = useState('Event Amazing Toy Show Gandaria City');
+  const [shippingCity,     setShippingCity]     = useState('');
+  const [shippingProvince, setShippingProvince] = useState('');
 
   function showLocalToast(msg, type = 'error') {
     setToast({ msg, type });
@@ -222,9 +236,16 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
   return (
     <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-emerald-50">
+      <div className={`flex items-center justify-between px-4 py-3 border-b ${isPreorder ? 'bg-orange-50' : 'bg-emerald-50'}`}>
         <div>
-          <p className="font-mono text-sm font-bold text-gray-900">{txn.transaction_id}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-sm font-bold text-gray-900">{txn.transaction_id}</p>
+            {isPreorder && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                🔖 PRE-ORDER
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-400">{formatDate(txn.created_at)}</p>
         </div>
         <span className={`text-xs font-semibold border rounded-full px-2.5 py-1
@@ -298,11 +319,28 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
       )}
 
       {/* Approve all confirmation modal */}
-      <Modal open={showApproveAllModal} onClose={() => setShowApproveAllModal(false)} title="Konfirmasi Setujui Semua">
+      <Modal open={showApproveAllModal} onClose={() => setShowApproveAllModal(false)} title={isPreorder ? 'Setujui Pre-Order' : 'Konfirmasi Setujui Semua'}>
         <p className="text-sm text-gray-600 mb-4">
           Apakah anda yakin menyetujui transaksi{' '}
           <span className="font-mono font-semibold">{txn.transaction_id}</span>?
         </p>
+        {isPreorder && (
+          <div className="mb-4 space-y-2">
+            <p className="text-xs font-bold text-orange-700 mb-2">🔖 Data Pengiriman Pre-Order (wajib diisi)</p>
+            <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+              placeholder="Nama penerima *" value={shippingName} onChange={e => setShippingName(e.target.value)} />
+            <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+              placeholder="No. HP penerima *" value={shippingPhone} onChange={e => setShippingPhone(e.target.value)} />
+            <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
+              rows={2} placeholder="Alamat lengkap *" value={shippingAddress} onChange={e => setShippingAddress(e.target.value)} />
+            <div className="flex gap-2">
+              <input className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                placeholder="Kota" value={shippingCity} onChange={e => setShippingCity(e.target.value)} />
+              <input className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                placeholder="Provinsi" value={shippingProvince} onChange={e => setShippingProvince(e.target.value)} />
+            </div>
+          </div>
+        )}
         <div className="flex gap-2">
           <Button variant="secondary" className="flex-1" onClick={() => setShowApproveAllModal(false)}>
             Batal
@@ -311,8 +349,14 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
             variant="primary"
             className="flex-1 bg-emerald-600 hover:bg-emerald-700"
             loading={approvingAll}
+            disabled={isPreorder && (!shippingName.trim() || !shippingPhone.trim() || !shippingAddress.trim())}
             onClick={() => {
-              onApproveAll(txn.transaction_id);
+              const sf = isPreorder ? {
+                shipping_name: shippingName, shipping_phone: shippingPhone,
+                shipping_address: shippingAddress, shipping_city: shippingCity,
+                shipping_province: shippingProvince,
+              } : null;
+              onApproveAll(txn.transaction_id, sf);
               setShowApproveAllModal(false);
             }}
           >
@@ -429,10 +473,10 @@ export default function ApprovalQueueTab({ onCountChange }) {
     });
   }
 
-  async function handleApproveAll(txnId) {
+  async function handleApproveAll(txnId, shippingFields = null) {
     setApprovingId(txnId);
     try {
-      await approveOrder(txnId);
+      await approveOrder(txnId, null, shippingFields);
       removeFromQueue(txnId);
       showToast('Semua item disetujui. Stok dikurangi dan timer dimulai.');
       fetchQueue(true);
