@@ -157,6 +157,13 @@ async function _doPushOrder(transactionId) {
         logger.info('Order push: another process is creating SO — skipping', { transactionId });
         return { success: false, odoo_order_id: null, error: 'in-flight by another process' };
       }
+      // Stale inFlight (age > 60s) with no odoo_id means previous push crashed mid-flight.
+      // Clear the stale entry so this call proceeds as a fresh attempt.
+      if (!existing.odoo_id) {
+        logger.warn('Order push: stale inFlight detected (no odoo_id, age > 60s) — clearing and re-attempting', { transactionId, ageMs: age });
+        await xref.deleteXref('order', transactionId);
+        return _doPushOrder(transactionId);
+      }
     }
     if (existing.sync_metadata?.confirmFailed && existing.odoo_id) {
       logger.warn('Order push: previous attempt left order unconfirmed — re-attempting confirmation', {
@@ -212,6 +219,13 @@ async function _doPushOrder(transactionId) {
     cb.recordSuccess('sos');
   } catch (err) {
     cb.recordFailure('sos');
+    // HTTP 404 means the transaction no longer exists in SOS (cancelled/deleted/old data).
+    // Dead-letter it immediately so the polling loop stops retrying forever.
+    if (err.response?.status === 404) {
+      logger.warn('Order push: SOS transaction not found (404) — marking dead-letter to stop retries', { transactionId });
+      await xref.upsertXref('order', transactionId, null, { deadLetter: true, reason: 'SOS 404' });
+      return { success: false, odoo_order_id: null, error: 'SOS 404 — transaction not found' };
+    }
     logger.error('Order push: SOS transaction fetch failed', { transactionId, error: err.message });
     retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
     return { success: false, odoo_order_id: null, error: `SOS fetch failed: ${err.message}` };
@@ -266,13 +280,31 @@ async function _doPushOrder(transactionId) {
     // Compute per-line discount for Odoo (field `discount` = percent, 0–100)
     const lineDiscount = _calcLineDiscount(txn, item, items);
 
-    lines.push([0, 0, {
-      product_id: odooProductId,
+    // SOS unit_price is always DPP (before tax / exclusive).
+    // If the Odoo tax is configured as price_include=True, Odoo will back-calculate
+    // the base by dividing price_unit by (1 + rate), which would deflate the DPP.
+    // To counter this, gross-up the price so Odoo's back-calculation lands on the
+    // correct DPP: gross_price = dpp × (1 + rate) → Odoo extracts dpp back out.
+    let priceUnit = parseFloat(item.unit_price);
+    if (cache.defaultTaxId && cache.defaultTaxPriceInclude && cache.defaultTaxRate) {
+      priceUnit = parseFloat((priceUnit * (1 + cache.defaultTaxRate)).toFixed(2));
+    }
+
+    const lineVals = {
+      product_id:      odooProductId,
       product_uom_qty: parseFloat(item.quantity),
-      price_unit: parseFloat(item.unit_price),
-      name: item.product_name,
-      discount: lineDiscount,
-    }]);
+      price_unit:      priceUnit,
+      name:            item.product_name,
+      discount:        lineDiscount,
+    };
+    // Apply configured tax on the order line. The exact field name is detected at
+    // startup via fields_get (taxLineFieldName) — standard is 'tax_id' but varies
+    // across Odoo versions. If Odoo rejects it on create, RC-17 removes it and retries;
+    // Step 1.5 then re-applies via a separate write() call on the created draft lines.
+    if (cache.defaultTaxId && cache.taxLineFieldName) {
+      lineVals[cache.taxLineFieldName] = [[6, 0, [cache.defaultTaxId]]];
+    }
+    lines.push([0, 0, lineVals]);
   }
 
   // ── Build order values ───────────────────────────────────────────────────────
@@ -281,6 +313,7 @@ async function _doPushOrder(transactionId) {
 
   // Payment details captured in note (FR-005).
   const paymentNote = [
+    `TXN: ${transactionId}`,
     `Payment Method: ${txn.payment_method || 'UNKNOWN'}`,
     `Ref: ${txn.payment_reference || '-'}`,
     `Cash Received: Rp ${txn.cash_received || 0}`,
@@ -300,7 +333,8 @@ async function _doPushOrder(transactionId) {
   };
 
   // warehouse_id is required for action_confirm to resolve delivery routes.
-  if (cache.warehouseId) orderVals.warehouse_id = cache.warehouseId;
+  if (cache.warehouseId)            orderVals.warehouse_id = cache.warehouseId;
+  if (cache.defaultSalespersonId)   orderVals.user_id      = cache.defaultSalespersonId;
   if (cache.hasSosTransactionId)  orderVals.x_studio_sos_transaction_id = transactionId;
   if (cache.hasVoucherCodeField && txn.voucher_code) {
     orderVals.x_voucher_code = txn.voucher_code;
@@ -332,17 +366,92 @@ async function _doPushOrder(transactionId) {
     logger.info('Order push: sale.order created (draft/quotation)', { transactionId, odooOrderId });
   } catch (err) {
     cb.recordFailure('odoo');
-    logger.error('Order push: sale.order create failed', { transactionId, error: err.message });
-    audit.log({
-      operation_type: 'ORDER_PUSH',
-      sos_entity_id: transactionId,
-      action: 'FAIL',
-      status: 'FAILED',
-      error_message: err.message,
-      duration_ms: Date.now() - startAt,
-    });
-    retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
-    return { success: false, odoo_order_id: null, error: `Create failed: ${err.message}` };
+
+    // Some Odoo Online instances do not expose the tax field as writable on
+    // sale.order.line during nested create. When Odoo rejects it, null out
+    // taxLineFieldName for this session, strip it from line vals, and retry.
+    // Step 1.5 will attempt a separate write() on the draft lines afterwards.
+    const _taxField = cache.taxLineFieldName;
+    const _taxRejected = _taxField && cache.defaultTaxId &&
+      (err.message?.includes(`Invalid field '${_taxField}'`) || err.message?.includes(`Invalid field "${_taxField}"`));
+    if (_taxRejected) {
+      logger.warn('Order push: Odoo rejected tax field on nested create — stripping from line vals and retrying (Step 1.5 will re-attempt via write)', {
+        transactionId, field: _taxField,
+      });
+      // Keep taxLineFieldName intact so Step 1.5 can still try write() on draft lines.
+      // Only Step 1.5 will null it if write() is also rejected.
+      for (const line of orderVals.order_line) {
+        delete line[2][_taxField];
+      }
+      try {
+        odooOrderId = await odoo.create('sale.order', orderVals);
+        cb.recordSuccess('odoo');
+        logger.info('Order push: sale.order created (tax field stripped from nested create; Step 1.5 will apply via write)', { transactionId, odooOrderId });
+      } catch (retryErr) {
+        cb.recordFailure('odoo');
+        logger.error('Order push: sale.order create failed even after removing tax_id', { transactionId, error: retryErr.message });
+        audit.log({
+          operation_type: 'ORDER_PUSH',
+          sos_entity_id: transactionId,
+          action: 'FAIL',
+          status: 'FAILED',
+          error_message: retryErr.message,
+          duration_ms: Date.now() - startAt,
+        });
+        retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
+        return { success: false, odoo_order_id: null, error: `Create failed: ${retryErr.message}` };
+      }
+    } else {
+      logger.error('Order push: sale.order create failed', { transactionId, error: err.message });
+      audit.log({
+        operation_type: 'ORDER_PUSH',
+        sos_entity_id: transactionId,
+        action: 'FAIL',
+        status: 'FAILED',
+        error_message: err.message,
+        duration_ms: Date.now() - startAt,
+      });
+      retryQueue.enqueue({ type: 'ORDER_PUSH', id: transactionId, payload: { transactionId } });
+      return { success: false, odoo_order_id: null, error: `Create failed: ${err.message}` };
+    }
+  }
+
+  // ── Step 1.5: Apply tax override on order lines via write ───────────────────
+  // sale.order.create may reject the tax field in nested line vals (see RC-17).
+  // A standalone write() on the created draft lines goes through a different code
+  // path and often succeeds. This MUST run before action_confirm so the invoice
+  // created by sale.advance.payment.inv copies the correct taxes from SO lines.
+  const _taxField15 = cache.taxLineFieldName;
+  if (cache.defaultTaxId && _taxField15) {
+    try {
+      const orderLines = await odoo.searchRead(
+        'sale.order.line', [['order_id', '=', odooOrderId]], ['id']
+      );
+      const lineIds = orderLines.map(l => l.id);
+      if (lineIds.length > 0) {
+        await odoo.write('sale.order.line', lineIds, { [_taxField15]: [[6, 0, [cache.defaultTaxId]]] });
+        cache.taxLineFieldName = _taxField15;
+        cache.hasTaxIdField    = true;
+        logger.info('Order push: tax override applied on draft SO lines via write', {
+          transactionId, odooOrderId, taxId: cache.defaultTaxId, fieldName: _taxField15, lineCount: lineIds.length,
+        });
+      }
+    } catch (taxErr) {
+      // If write also rejects the field, disable it permanently for this session.
+      const _fieldRejected = taxErr.message?.includes(`Invalid field '${_taxField15}'`)
+        || taxErr.message?.includes(`Invalid field "${_taxField15}"`);
+      if (_fieldRejected) {
+        logger.warn('Order push: tax field rejected on write too — field not writable on this Odoo instance; disabling for session', {
+          transactionId, odooOrderId, fieldName: _taxField15,
+        });
+        cache.taxLineFieldName = null;
+        cache.hasTaxIdField    = false;
+      } else {
+        logger.warn('Order push: tax write on SO lines failed — product default tax will apply', {
+          transactionId, odooOrderId, taxId: cache.defaultTaxId, error: taxErr.message,
+        });
+      }
+    }
   }
 
   // ── Step 2: Confirm → state = 'sale' ────────────────────────────────────────

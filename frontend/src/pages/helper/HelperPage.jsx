@@ -4,7 +4,7 @@ import { formatRupiah, formatDate } from '../../utils/format';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useLang, SUPPORTED_LANGS } from '../../context/LangContext';
 import { useAuth } from '../../hooks/useAuth';
-import { useAppLogo } from '../../hooks/useAppLogo';
+import { useAppLogo, usePublicConfig } from '../../hooks/useAppLogo';
 import ApprovalQueueTab from '../../components/helper/ApprovalQueueTab';
 import QrScannerModal from '../../components/ui/QrScannerModal';
 import MapModal from '../../components/ui/MapModal';
@@ -312,6 +312,8 @@ function TopBar({ meta, searchQuery, setSearchQuery }) {
 // ─── Panel: Membuat Order ─────────────────────────────────────────────────────
 function MembuatOrderPanel({ searchQuery }) {
   const navigate = useNavigate();
+  const publicConfig = usePublicConfig();
+  const ppnRate = parseFloat(publicConfig?.ppn_rate) || 0;
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [categories, setCategories] = useState([]);
@@ -369,7 +371,7 @@ function MembuatOrderPanel({ searchQuery }) {
   const hasPreorder = cartItems.some(i => i.is_preorder);
 
   const subtotal = cartItems.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
-  const taxAmt = Math.round(subtotal * 0.12);
+  const taxAmt = Math.round(subtotal * ppnRate / 100);
   const total = subtotal + taxAmt;
 
   async function handleCreateOrder() {
@@ -458,7 +460,7 @@ function MembuatOrderPanel({ searchQuery }) {
             )}
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: '#2a1e10', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</p>
-              <p style={{ margin: '1px 0', fontSize: 12, fontWeight: 800, color: C.goldDark }}>{formatRupiah(p.price)}</p>
+              <p style={{ margin: '1px 0', fontSize: 12, fontWeight: 800, color: C.goldDark }}>{formatRupiah(Math.round(p.price * (1 + ppnRate / 100)))}</p>
               <p style={{ margin: 0, fontSize: 11, color: C.muted }}>Stok {p.stock_quantity}{p.sku || p.barcode ? ` · ${p.sku || p.barcode}` : ''}</p>
               <div style={{ display: 'flex', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
                 {oos && <span style={{ fontSize: 10, background: C.crimsonLight, color: C.crimsonDark, padding: '1px 6px', borderRadius: 5, fontWeight: 700 }}>Habis</span>}
@@ -494,12 +496,12 @@ function MembuatOrderPanel({ searchQuery }) {
           {cartItems.map(i => (
             <div key={i.product_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, marginBottom: 4, color: '#5a4e3e' }}>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, paddingRight: 8 }}>{i.product_name} ×{i.qty}</span>
-              <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatRupiah((i.price || 0) * i.qty)}</span>
+              <span style={{ fontWeight: 700, flexShrink: 0 }}>{formatRupiah(Math.round((i.price || 0) * i.qty * (1 + ppnRate / 100)))}</span>
             </div>
           ))}
           <div style={{ borderTop: `1px dashed ${C.border}`, margin: '8px 0 6px', paddingTop: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: C.muted, marginBottom: 4 }}>
-              <span>PPN ~12%</span>
+              <span>PPN ~{ppnRate}%</span>
               <span>≈ {formatRupiah(taxAmt)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, color: '#2a1e10' }}>

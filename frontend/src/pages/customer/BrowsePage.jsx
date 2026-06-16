@@ -31,6 +31,7 @@ export default function BrowsePage() {
   const categoriesRef  = useTourTarget('step-katalog-categories');
   const [showScanner, setShowScanner] = useState(false);
   const [scanToast, setScanToast]     = useState(null);
+  const [preorderOnly, setPreorderOnly] = useState(false);
 
   const {
     mode, curCat, curFloor,
@@ -41,6 +42,11 @@ export default function BrowsePage() {
     productModeProducts, storeModeProducts, storesByFloor,
     categories, floors, loading,
   } = state;
+
+  const hasPreorderProducts = products.some(p => p.is_preorder);
+  const displayProducts = preorderOnly
+    ? productModeProducts.filter(p => p.is_preorder)
+    : productModeProducts;
 
   async function handleQrResult(text) {
     setShowScanner(false);
@@ -327,19 +333,54 @@ export default function BrowsePage() {
             />
           </div>
 
+          {/* Pre-Order filter chip — only shown when catalog has pre-order products */}
+          {hasPreorderProducts && (
+            <div className="flex px-4 pb-1">
+              <button
+                onClick={() => setPreorderOnly(v => !v)}
+                style={{
+                  padding: '5px 14px',
+                  borderRadius: 20,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  fontFamily: 'inherit',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'all 0.2s',
+                  ...(preorderOnly
+                    ? {
+                        background: 'rgba(234,88,12,0.90)',
+                        border: '1.5px solid rgba(234,88,12,0.40)',
+                        color: '#fff',
+                        boxShadow: '0 3px 10px rgba(234,88,12,0.28)',
+                      }
+                    : {
+                        background: 'rgba(255,237,213,0.70)',
+                        border: '1.5px solid rgba(234,88,12,0.20)',
+                        color: '#C2410C',
+                        boxShadow: '0 1px 6px rgba(234,88,12,0.08)',
+                        backdropFilter: 'blur(8px)',
+                      }),
+                }}
+              >
+                🔖 Pre-Order
+              </button>
+            </div>
+          )}
+
           {/* Section header */}
           <div className="flex items-center justify-between px-4 pb-2 pt-1">
             <h2 className="text-[15px] font-extrabold" style={{ color: 'rgba(30,40,100,0.90)', textShadow: '0 1px 2px rgba(255,255,255,0.5)' }}>
-              {curCat === 'All' ? t('browse.allProducts') : curCat}
+              {preorderOnly ? 'Pre-Order' : (curCat === 'All' ? t('browse.allProducts') : curCat)}
             </h2>
             <span className="text-[13px] font-semibold" style={{ color: 'rgba(80,90,150,0.70)' }}>
-              {t('browse.items', { count: productModeProducts.length })}
+              {t('browse.items', { count: displayProducts.length })}
             </span>
           </div>
 
           {/* Product grid */}
           <ProductGrid
-            products={productModeProducts}
+            products={displayProducts}
             firstCardTourAttr={{ 'data-tour': 'product-card' }}
           />
         </>

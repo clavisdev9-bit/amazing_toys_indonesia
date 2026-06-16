@@ -142,19 +142,6 @@ const S = {
   footerLine: { fontFamily: SANS, fontSize: '10px', color: '#555', fontWeight: '400', lineHeight: '1.6' },
 };
 
-function ToyIcon() {
-  return (
-    <svg width="34" height="34" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="6"  y="14" width="24" height="16" rx="3" fill="#000"/>
-      <rect x="9"  y="17" width="7"  height="7"  rx="1" fill="white"/>
-      <rect x="20" y="17" width="7"  height="7"  rx="1" fill="white"/>
-      <rect x="14" y="6"  width="8"  height="8"  rx="4" fill="#000"/>
-      <rect x="16" y="4"  width="4"  height="4"  rx="2" fill="#000"/>
-      <circle cx="11" cy="31" r="2.5" fill="white" stroke="#000" strokeWidth="1.5"/>
-      <circle cx="25" cy="31" r="2.5" fill="white" stroke="#000" strokeWidth="1.5"/>
-    </svg>
-  );
-}
 
 export default function ThermalGroupReceipt({
   groupCode,
@@ -185,7 +172,7 @@ export default function ThermalGroupReceipt({
 
       {/* Logo zone */}
       <div style={S.logoZone}>
-        <ToyIcon />
+        <img src={publicCfg?.logo_url || '/logo.png'} alt={eventName} style={{ width: '74px', height: 'auto', display: 'block', margin: '0 auto 7px' }} />
         <div style={S.eventName}>{eventName}</div>
         <div style={S.eventSub}>{eventVenue}</div>
         <div style={S.eventSub}>{eventDate}</div>

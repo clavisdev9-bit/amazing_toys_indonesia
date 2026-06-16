@@ -21,6 +21,7 @@ async function listProducts({ tenantId, category, search, inStockOnly, page = 1,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.odoo_categ_name,
            p.is_on_hold, p.is_display_only, p.max_per_customer,
+           p.is_preorder, p.preorder_note,
            t.tenant_id, t.tenant_name, t.booth_location, t.floor_label
     FROM products p
     JOIN tenants t ON t.tenant_id = p.tenant_id

@@ -16,18 +16,8 @@ function formatEventDateRange(start, end) {
   return `${s.getDate()} ${ms} - ${e.getDate()} ${BULAN_ID[e.getMonth()]} ${e.getFullYear()}`;
 }
 
-// No static fallbacks — values always come from /config/public (admin config).
-// bustPublicConfigCache() is called by ConfigTab on save, so the next receipt
-// render always reads the latest admin-configured values.
-
-/*
- * Font strategy for thermal printers:
- *   - Primary: Courier New  (system font, no internet required, designed for fixed-pitch print)
- *   - Weights capped at 600  — weights 700+ spread heat on thermal head → blur
- *   - Colors: pure #000 for important text, #555 for secondary
- */
-const MONO  = "'Courier New', Courier, monospace";
-const SANS  = "Arial, Helvetica, sans-serif";
+const MONO = "'Courier New', Courier, monospace";
+const SANS = "Arial, Helvetica, sans-serif";
 
 const S = {
   root: {
@@ -35,69 +25,84 @@ const S = {
     fontFamily: MONO,
     fontSize: '12px',
     color: '#000',
-    lineHeight: '1.55',
+    lineHeight: '1.5',
     background: '#fff',
     WebkitFontSmoothing: 'none',
     MozOsxFontSmoothing: 'unset',
   },
   logoZone: {
     textAlign: 'center',
-    paddingBottom: '10px',
-    borderBottom: '1px solid #000',
-    marginBottom: '10px',
+    paddingBottom: '11px',
+  },
+  logo: {
+    width: '74px',
+    height: 'auto',
+    display: 'block',
+    margin: '0 auto 7px',
   },
   eventName: {
     fontFamily: SANS,
-    fontSize: '14px',
-    fontWeight: '700',
-    letterSpacing: '0.5px',
-    lineHeight: '1.2',
+    fontSize: '25px',
+    fontWeight: '900',
+    letterSpacing: '0.3px',
+    lineHeight: '1.08',
     marginTop: '5px',
     color: '#000',
+    textTransform: 'uppercase',
   },
   eventSub: {
     fontFamily: SANS,
-    fontSize: '10px',
-    fontWeight: '400',
-    color: '#555',
-    marginTop: '2px',
+    fontSize: '12.5px',
+    fontWeight: '800',
+    color: '#000',
+    marginTop: '3px',
   },
   metaRow: {
     display: 'flex',
     justifyContent: 'space-between',
-    fontSize: '11px',
+    gap: '10px',
+    fontSize: '12px',
     color: '#000',
-    marginBottom: '3px',
+    marginBottom: '4px',
   },
-  metaKey: { color: '#555', fontWeight: '400' },
-  metaVal: { fontWeight: '400', textAlign: 'right' },
-  ruleDashed: { border: 'none', borderTop: '1px dashed #888', margin: '8px 0' },
-  ruleSolid:  { border: 'none', borderTop: '1px solid #000', margin: '8px 0' },
-  ruleDouble: { border: 'none', borderTop: '2px solid #000', margin: '8px 0' },
+  metaKey: { color: '#000', fontWeight: '900', whiteSpace: 'nowrap', fontSize: '12px' },
+  metaVal: { fontWeight: '700', fontSize: '12px', textAlign: 'right' },
+  ruleSolid:  { border: 'none', borderTop: '2px solid #000', margin: '9px 0' },
+  ruleDashed: { border: 'none', borderTop: '2px dashed #000', margin: '9px 0' },
+  ruleHair:   { border: 'none', borderTop: '1px solid #9a9a9a', margin: '9px 0' },
   sectionTitle: {
     fontFamily: SANS,
-    fontSize: '10px',
-    fontWeight: '600',
-    letterSpacing: '1.5px',
+    fontSize: '15px',
+    fontWeight: '900',
+    letterSpacing: '0.09em',
     textTransform: 'uppercase',
     color: '#000',
-    marginBottom: '6px',
+    marginBottom: '7px',
   },
-  itemWrap: { marginBottom: '8px' },
+  pickupTitle: {
+    fontFamily: SANS,
+    fontSize: '10px',
+    fontWeight: '900',
+    letterSpacing: '0.09em',
+    textTransform: 'uppercase',
+    color: '#000',
+    marginBottom: '7px',
+  },
+  itemWrap: { marginBottom: '9px' },
   itemTop: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'baseline',
-    fontSize: '12px',
-    fontWeight: '600',
+    gap: '8px',
     color: '#000',
   },
-  itemName:  { flex: 1, paddingRight: '6px', lineHeight: '1.35' },
-  itemPrice: { whiteSpace: 'nowrap', fontWeight: '600' },
-  itemSub:   { fontSize: '10px', color: '#555', fontWeight: '400', marginTop: '1px', paddingLeft: '2px' },
+  itemName:  { flex: 1, lineHeight: '1.3', fontWeight: '800', fontSize: '13px' },
+  itemPrice: { whiteSpace: 'nowrap', fontWeight: '800', fontSize: '13px' },
+  itemSub:   { fontSize: '11.5px', color: '#555', fontWeight: '600', marginTop: '2px' },
   totalRow: {
     display: 'flex',
     justifyContent: 'space-between',
+    gap: '10px',
     fontSize: '11px',
     color: '#000',
     marginBottom: '3px',
@@ -106,56 +111,41 @@ const S = {
   grandTotal: {
     display: 'flex',
     justifyContent: 'space-between',
-    fontSize: '12px',
-    fontWeight: '600',
+    alignItems: 'baseline',
+    gap: '10px',
+    fontFamily: SANS,
+    fontSize: '21px',
+    fontWeight: '900',
     color: '#000',
-    marginTop: '5px',
-    paddingTop: '5px',
-    borderTop: '1px solid #000',
+    marginTop: '4px',
   },
   payBadge: {
     display: 'inline-block',
-    border: '1px solid #000',
-    padding: '2px 6px',
-    fontSize: '10px',
-    fontWeight: '400',
-    letterSpacing: '0.8px',
+    background: '#000',
+    color: '#fff',
+    fontFamily: SANS,
+    padding: '4px 13px',
+    fontSize: '11.5px',
+    fontWeight: '800',
+    letterSpacing: '0.06em',
     textTransform: 'uppercase',
-    color: '#000',
-    marginTop: '6px',
+    marginTop: '9px',
   },
   qrZone: {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    margin: '10px 0 4px',
-    padding: '8px',
-    border: '1px solid #000',
+    gap: '11px',
+    margin: '4px 0',
+    padding: '9px',
+    border: '1.5px solid #000',
   },
-  qrText: { fontSize: '10px', color: '#000', lineHeight: '1.5', flex: 1 },
-  footer:       { textAlign: 'center', marginTop: '10px' },
-  footerStrong: {
-    fontFamily: SANS,
-    fontSize: '12px',
-    fontWeight: '600',
-    color: '#000',
-  },
-  footerLine: { fontFamily: SANS, fontSize: '10px', color: '#555', fontWeight: '400', lineHeight: '1.6' },
+  qrText: { fontSize: '11.5px', color: '#000', lineHeight: '1.45', flex: 1 },
+  footer:       { textAlign: 'center', marginTop: '11px' },
+  footerStrong: { fontFamily: SANS, fontSize: '13px', fontWeight: '900', color: '#000' },
+  footerLine:   { fontFamily: SANS, fontSize: '11px', color: '#555', fontWeight: '600', lineHeight: '1.6' },
+  footerMail:   { fontFamily: SANS, fontSize: '10.5px', color: '#555', fontWeight: '700', lineHeight: '1.6', marginTop: '6px' },
 };
 
-function ToyIcon() {
-  return (
-    <svg width="34" height="34" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="6"  y="14" width="24" height="16" rx="3" fill="#000"/>
-      <rect x="9"  y="17" width="7"  height="7"  rx="1" fill="white"/>
-      <rect x="20" y="17" width="7"  height="7"  rx="1" fill="white"/>
-      <rect x="14" y="6"  width="8"  height="8"  rx="4" fill="#000"/>
-      <rect x="16" y="4"  width="4"  height="4"  rx="2" fill="#000"/>
-      <circle cx="11" cy="31" r="2.5" fill="white" stroke="#000" strokeWidth="1.5"/>
-      <circle cx="25" cy="31" r="2.5" fill="white" stroke="#000" strokeWidth="1.5"/>
-    </svg>
-  );
-}
 
 export default function ThermalReceipt({
   txn,
@@ -163,7 +153,7 @@ export default function ThermalReceipt({
   cashierName,
   customer,
   cashReceived = null,
-  qrSize = 100,
+  qrSize = 88,
 }) {
   const publicCfg = usePublicConfig();
 
@@ -178,7 +168,6 @@ export default function ThermalReceipt({
   const cashChange    = success?.cashChange ?? null;
   const items         = txn?.items ?? [];
   const taxRate       = parseFloat(txn?.tax_rate ?? 0);
-  const itemCount     = items.filter(i => i.approval_status !== 'REJECTED').reduce((sum, i) => sum + (i.approved_quantity ?? i.quantity ?? 1), 0);
   const isPreorder    = (txn?.order_type ?? success?.orderType) === 'PREORDER';
 
   const tenantMap = new Map();
@@ -194,13 +183,15 @@ export default function ThermalReceipt({
   return (
     <div style={S.root}>
 
-      {/* Logo zone */}
+      {/* Header */}
       <div style={S.logoZone}>
-        <ToyIcon />
+        <img src={publicCfg?.logo_url || '/logo.png'} alt={eventName} style={S.logo} />
         <div style={S.eventName}>{eventName}</div>
         <div style={S.eventSub}>{eventVenue}</div>
         <div style={S.eventSub}>{eventDate}</div>
       </div>
+
+      <hr style={S.ruleSolid} />
 
       {/* Transaction meta */}
       <div style={S.metaRow}>
@@ -232,27 +223,24 @@ export default function ThermalReceipt({
 
       {/* CR-05X: PRE-ORDER warning box */}
       {isPreorder && (
-        <>
-          <div style={{ border: '1px solid #000', padding: '6px 8px', marginBottom: '8px', textAlign: 'center' }}>
-            <div style={{ fontFamily: SANS, fontSize: '11px', fontWeight: '600', letterSpacing: '1px', color: '#000' }}>
-              *** PRE-ORDER TRANSACTION ***
-            </div>
-            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '2px' }}>
-              Barang akan dikirim — tidak diambil di booth.
-            </div>
-            {txn?.shipping_name && (
-              <div style={{ fontFamily: SANS, fontSize: '10px', color: '#000', marginTop: '4px', fontWeight: '600' }}>
-                Dikirim ke: {txn.shipping_name}
-                {txn.shipping_city ? `, ${txn.shipping_city}` : ''}
-              </div>
-            )}
-            {txn?.shipping_address && (
-              <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '1px' }}>
-                {txn.shipping_address}
-              </div>
-            )}
+        <div style={{ border: '1px solid #000', padding: '6px 8px', marginBottom: '8px', textAlign: 'center' }}>
+          <div style={{ fontFamily: SANS, fontSize: '11px', fontWeight: '600', letterSpacing: '1px', color: '#000' }}>
+            *** PRE-ORDER TRANSACTION ***
           </div>
-        </>
+          <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '2px' }}>
+            Barang akan dikirim — tidak diambil di booth.
+          </div>
+          {txn?.shipping_name && (
+            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#000', marginTop: '4px', fontWeight: '600' }}>
+              Dikirim ke: {txn.shipping_name}{txn.shipping_city ? `, ${txn.shipping_city}` : ''}
+            </div>
+          )}
+          {txn?.shipping_address && (
+            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '1px' }}>
+              {txn.shipping_address}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Items */}
@@ -273,7 +261,7 @@ export default function ThermalReceipt({
 
       <hr style={S.ruleSolid} />
 
-      {/* Totals — item prices include tax; discount shown if applicable */}
+      {/* Totals */}
       {parseFloat(txn?.discount_amount ?? 0) > 0 && (
         <div style={{ ...S.totalRow, color: '#2a7a5a' }}>
           <span>Diskon{txn?.voucher_code ? ` (${txn.voucher_code})` : ''}</span>
@@ -300,30 +288,36 @@ export default function ThermalReceipt({
 
       {paymentMethod && (
         <div>
-          <span style={S.payBadge}>PAID - {paymentMethod}</span>
+          <span style={S.payBadge}>Paid &middot; {paymentMethod}</span>
         </div>
       )}
 
-      <hr style={S.ruleDouble} />
+      <hr style={S.ruleDashed} />
 
       {/* Pickup reminder — hidden for pre-order */}
       {!isPreorder && tenantGroups.length > 0 && (
         <>
-          <div style={S.sectionTitle}>Collect your items at</div>
-          {tenantGroups.map((g, i) => (
-            <div key={i} style={S.metaRow}>
-              <span>{g.tenantName}</span>
-              <span style={S.metaVal}>{g.boothLocation || '-'}</span>
-            </div>
-          ))}
-          <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '4px' }}>
+          <div style={S.pickupTitle}>Collect Your Items At</div>
+          <div style={{ textAlign: 'center' }}>
+            {tenantGroups.map((g, i) => (
+              <div key={i} style={{ marginBottom: '6px' }}>
+                <div style={{ fontFamily: SANS, fontWeight: '900', fontSize: '10px', lineHeight: '1.2', color: '#000' }}>
+                  {g.tenantName}
+                </div>
+                <div style={{ fontFamily: SANS, fontWeight: '900', fontSize: '10px', lineHeight: '1.2', marginTop: '2px', color: '#000' }}>
+                  {g.boothLocation || '-'}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontFamily: SANS, fontSize: '11px', color: '#555', marginTop: '6px', fontWeight: '600', textAlign: 'center' }}>
             Show your pickup slip at each booth.
           </div>
-          <hr style={S.ruleDashed} />
+          <hr style={S.ruleHair} />
         </>
       )}
 
-      {/* QR Code — level H = 30% error correction, tolerates print blur */}
+      {/* QR Code — level H = 30% error correction */}
       <div style={S.qrZone}>
         <QRCodeSVG
           value={txnId}
@@ -334,13 +328,13 @@ export default function ThermalReceipt({
           bgColor="#ffffff"
         />
         <div style={S.qrText}>
-          <span style={{ fontWeight: '600' }}>Scan for your</span><br />
-          <span style={{ fontWeight: '600' }}>digital receipt</span><br /><br />
-          {txnId}
+          <span style={{ fontWeight: '800' }}>Scan for your<br />digital receipt</span>
+          <div style={{ height: '8px' }} />
+          <span style={{ fontWeight: '600', fontSize: '10px', wordBreak: 'break-all' }}>{txnId}</span>
         </div>
       </div>
 
-      <hr style={S.ruleDashed} />
+      <hr style={S.ruleHair} />
 
       {/* Footer */}
       <div style={S.footer}>
@@ -348,9 +342,7 @@ export default function ThermalReceipt({
         <div style={S.footerStrong}>Thank you for visiting!</div>
         <div style={S.footerLine}>Keep this receipt for your records.</div>
         {publicCfg?.contact_email && (
-          <div style={{ ...S.footerLine, marginTop: '6px', fontSize: '9px' }}>
-            {publicCfg.contact_email}
-          </div>
+          <div style={S.footerMail}>{publicCfg.contact_email}</div>
         )}
       </div>
 

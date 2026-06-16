@@ -136,6 +136,7 @@ async function adminListProducts({ tenantId, search, includeInactive = true, pag
     SELECT p.product_id, p.product_name, p.category, p.price,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.is_active, p.created_at, p.updated_at,
+           p.is_preorder, p.preorder_note,
            t.tenant_id, t.tenant_name, t.booth_location
     FROM products p
     LEFT JOIN tenants t ON t.tenant_id = p.tenant_id
@@ -513,6 +514,8 @@ const DEFAULT_INTEGRATION_CONFIG = {
   odoo_circuit_breaker_reset_min: 2,
   odoo_tenant_product_mapping: '{}',
   odoo_default_tenant_id: 'T001',
+  odoo_default_salesperson_id: null,
+  odoo_default_tax_id: null,
   // Payment Voucher: Odoo journal_id per SOS payment method
   // Format: { "CASH": <journal_id>, "QRIS": <journal_id>, "EDC": <journal_id>, "TRANSFER": <journal_id> }
   odoo_payment_journals: {},
@@ -572,7 +575,7 @@ async function getIntegrationConfigRaw() {
  */
 async function _connectOdoo() {
   const cfg      = await getIntegrationConfigRaw();
-  const baseUrl  = cfg.odoo_base_url  || process.env.ODOO_BASE_URL;
+  const baseUrl  = (cfg.odoo_base_url  || process.env.ODOO_BASE_URL  || '').replace(/\/+$/, '');
   const db       = cfg.odoo_db        || process.env.ODOO_DB;
   const login    = cfg.odoo_login     || process.env.ODOO_LOGIN;
   const password = cfg.odoo_password  || process.env.ODOO_PASSWORD;
@@ -631,6 +634,7 @@ async function _connectOdoo() {
  * Used by the connection wizard in the admin UI.
  */
 async function verifyOdooConnection({ base_url, db, login, password }) {
+  base_url = (base_url || '').replace(/\/+$/, '');
   const authRaw = await fetch(`${base_url}/web/session/authenticate`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -44,6 +44,14 @@ async function execute({ triggeredBy = 'scheduler', configSnapshot = {} } = {}) 
   }, TIMEOUT_MS);
 
   try {
+    const cfg = await adminSvc.getIntegrationConfigRaw();
+    if (!cfg.odoo_is_active) {
+      clearTimeout(timeoutHandle);
+      _running = false;
+      await jobRunLog.finish(runId, { status: 'skipped', errorMessage: 'SKIPPED — Odoo integration not active' });
+      return { job_name: JOB_NAME, status: 'skipped' };
+    }
+
     const result     = await adminSvc.syncOdooProducts(false);
     const durationMs = Date.now() - t0;
     const stats      = result.stats ?? {};

@@ -84,7 +84,9 @@
       "Bash(ls -la \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\backend\\\\migrations\\\\\" | head -50)",
       "Bash(docker compose *)",
       "mcp__Claude_in_Chrome__navigate",
-      "mcp__Claude_in_Chrome__tabs_context_mcp"
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"package.json\" | head -5)",
+      "Bash(grep -E \"\\\\.\\(jsx?|tsx?\\)$\")"
     ]
   }
 }

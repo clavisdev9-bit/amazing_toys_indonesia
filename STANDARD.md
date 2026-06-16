@@ -1,7 +1,7 @@
 # Coding Standard — Amazing Toys Fair 2026
 **Project:** Amazing Toy Show— SOS × Odoo 18 Integration  
 **Maintained by:** clavis Development  
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-16
 
 ---
 
@@ -1348,3 +1348,282 @@ Namun untuk kode yang lebih ringkas dan aman, `entity_id::text = $1 OR entity_co
 ### Referensi
 
 BUG-021 (STD-012) — tipe kolom FK harus sama dengan kolom yang direferensi.
+
+---
+
+## STD-026 — Odoo: Deteksi Nama Field Dinamis via `fields_get`, Jangan Hardcode
+
+**Berlaku untuk:** Semua field di Odoo model yang namanya bisa berbeda antar instance atau versi (`sale.order.line`, `account.move.line`, dsb.)
+
+**Latar Belakang:** RC-14 → RC-19 — kode selalu mengirim `tax_id` (hardcoded) tapi Odoo instance `demo-260614a` menggunakan `tax_ids`. Semua error "Invalid field 'tax_id'" akar masalahnya adalah nama field yang salah.
+
+### Aturan
+
+**A. Gunakan `fields_get` untuk deteksi nama field di startup:**
+
+```javascript
+// Di resolveStartupRefs() — odoo.client.js
+// BENAR ✅ — fields_get lebih reliable di Odoo SaaS vs ir.model.fields
+const solTaxCheck = await callKw('sale.order.line', 'fields_get',
+  [['tax_id', 'tax_ids', 'taxes_id']], { attributes: ['type'] });
+const taxLineFieldName = 'tax_id'   in solTaxCheck ? 'tax_id'
+  : 'tax_ids'  in solTaxCheck ? 'tax_ids'
+  : 'taxes_id' in solTaxCheck ? 'taxes_id'
+  : null;
+_cache.taxLineFieldName = taxLineFieldName;  // 'tax_ids' pada demo-260614a
+
+// SALAH ❌ — hardcode nama field
+lineVals.tax_id = [[6, 0, [taxId]]];   // gagal jika instance pakai 'tax_ids'
+```
+
+**B. Kenapa bukan `ir.model.fields`?**
+
+`ir.model.fields` search_read pada Odoo Online SaaS dapat di-filter oleh company context atau dibatasi akses — bisa mengembalikan 0 hasil meski field ada. `fields_get` memanggil method Python langsung pada class model, tidak kena restriction yang sama.
+
+**C. Gunakan hasil deteksi secara konsisten:**
+
+```javascript
+// Di order.push.js lineVals — gunakan nama yang terdeteksi
+if (cache.defaultTaxId && cache.taxLineFieldName) {
+  lineVals[cache.taxLineFieldName] = [[6, 0, [cache.defaultTaxId]]];  // 'tax_ids'
+}
+```
+
+**D. Wajib log hasil deteksi di startup:**
+
+```json
+{ "taxLineFieldName": "tax_ids", "hasTaxIdField": true }
+```
+
+### Checklist
+
+- [ ] Field name dikandidatkan dalam list (`fields_get` dengan array kandidat), bukan satu nama
+- [ ] Hasil deteksi dicache di `_cache.taxLineFieldName`
+- [ ] Semua penggunaan field gunakan `cache.taxLineFieldName` (dinamis)
+- [ ] Startup log menyertakan `taxLineFieldName` dan `hasTaxIdField` untuk verifikasi
+
+### Referensi
+
+RC-19 (BUG-010) — `ir.model.fields` mengembalikan 0 hasil → kode menyimpulkan field tidak ada → tax tidak dikirim. `fields_get` mendeteksi `tax_ids` sebagai nama field yang benar.
+
+---
+
+## STD-027 — Odoo: Self-Healing untuk Optional Fields (Try → Detect → Disable → Retry)
+
+**Berlaku untuk:** Semua field optional yang dikirim ke Odoo yang mungkin tidak ada di semua instance.
+
+**Latar Belakang:** RC-17 (BUG-009) — `sale.order.create` dengan `tax_id` ditolak Odoo → loop infinite karena tidak ada recovery. Pattern self-healing mencegah hal ini.
+
+### Aturan
+
+**A. Saat `sale.order.create` menolak field — recovery inline, JANGAN null `taxLineFieldName`:**
+
+```javascript
+} catch (err) {
+  const _taxField = cache.taxLineFieldName;
+  const rejected = _taxField && err.message?.includes(`Invalid field '${_taxField}'`);
+  if (rejected) {
+    // BENAR ✅ — strip dari vals, retry inline
+    // taxLineFieldName TIDAK di-null — biarkan Step 1.5 mencoba write()
+    for (const line of orderVals.order_line) { delete line[2][_taxField]; }
+    odooOrderId = await odoo.create('sale.order', orderVals);  // retry
+
+    // SALAH ❌ — null taxLineFieldName di sini memblokir Step 1.5
+    // cache.taxLineFieldName = null;
+  }
+}
+```
+
+**B. Saat `sale.order.line.write` menolak field — BARU disable untuk session:**
+
+```javascript
+} catch (taxErr) {
+  const fieldRejected = taxErr.message?.includes(`Invalid field '${_taxField15}'`);
+  if (fieldRejected) {
+    cache.taxLineFieldName = null;   // disable untuk semua order berikutnya
+    cache.hasTaxIdField    = false;
+    logger.warn('tax field not writable on this instance — disabling for session');
+  } else {
+    logger.warn('tax write failed — product default tax will apply', { error: taxErr.message });
+  }
+}
+```
+
+**C. Klasifikasi respons Odoo terhadap optional field:**
+
+| Situasi | Tindakan |
+|---------|----------|
+| Create tolak field | Strip dari vals + retry create inline (Step 1.5 masih berjalan) |
+| Write tolak field | Disable `taxLineFieldName` + `hasTaxIdField = false` untuk session |
+| Network/timeout | Masuk retry queue |
+| 429 rate limit | Exponential backoff (sudah di `callKw`) |
+
+**D. Jangan `cb.recordFailure('odoo')` untuk "Invalid field" error:**
+
+Error "Invalid field" bukan Odoo down — jangan trip circuit breaker untuk validation error. `recordFailure` hanya untuk network error, timeout, 5xx.
+
+### Checklist
+
+- [ ] Create failure: strip field + retry inline, `taxLineFieldName` tetap intact
+- [ ] Write failure "Invalid field": null `taxLineFieldName`, log warning, order tetap lanjut
+- [ ] Write failure lain (network, permission): log warning tanpa null `taxLineFieldName`
+- [ ] Tidak ada `cb.recordFailure` untuk "Invalid field" error
+
+### Referensi
+
+RC-17 (BUG-009) — loop karena tidak ada inline recovery.  
+RC-18 (BUG-010) — Step 1.5 write setelah create.  
+RC-19 (BUG-010) — RC-17 tidak boleh null `taxLineFieldName`.
+
+---
+
+## STD-028 — Odoo: Urutan Step Order Push dan Field `note`
+
+**Berlaku untuk:** `integration/src/services/order.push.js` dan semua modifikasi ke alur order push.
+
+### Urutan Step Wajib
+
+```
+Step 1:   sale.order.create (draft)
+            ├─ Sertakan tax field (jika taxLineFieldName terdeteksi)
+            └─ RC-17: jika Odoo tolak → strip field + retry inline
+
+Step 1.5: sale.order.line write (tax override, sebelum confirm)
+            ├─ WAJIB dijalankan jika taxLineFieldName ada (terlepas RC-17 fired atau tidak)
+            └─ Jika write juga gagal "Invalid field" → disable taxLineFieldName untuk session
+
+Step 2:   action_confirm → state = 'sale'
+Step 3:   action_lock → state = 'done'
+
+[B]:      sale.advance.payment.inv (wizard) → account.move
+            └─ Odoo otomatis copy tax dari sale.order.line → tidak perlu write terpisah
+
+[C]:      account_move.action_post → invoice posted
+[D]:      account.payment.register (wizard) → payment registered
+```
+
+**Step 1.5 HARUS sebelum action_confirm** — setelah confirm, SO di-lock dan taxes di-copy ke invoice. Tax yang salah saat confirm → invoice dengan tax salah.
+
+### Format Field `note` Wajib
+
+Transaction ID SELALU di posisi pertama:
+
+```javascript
+const paymentNote = [
+  `TXN: ${transactionId}`,                              // ← SELALU posisi pertama
+  `Payment Method: ${txn.payment_method || 'UNKNOWN'}`,
+  `Ref: ${txn.payment_reference || '-'}`,
+  `Cash Received: Rp ${txn.cash_received || 0}`,
+  `Change: Rp ${txn.cash_change || 0}`,
+  `Cashier: ${txn.cashier_name || '-'}`,
+  `Paid At: ${txn.paid_at || '-'}`,
+].join(' | ');
+```
+
+**Kenapa TXN di posisi pertama:** Odoo list view memotong field `note` — item pertama harus identifier utama agar order bisa di-trace tanpa buka detail.
+
+### Referensi
+
+RC-18, RC-19 (BUG-010) — Step 1.5 pattern.  
+RC-20 (NOTE-001) — TXN ID di posisi pertama dalam paymentNote.
+
+---
+
+## STD-029 — Odoo: Sumber Konfigurasi Tax ID
+
+**Berlaku untuk:** `integration/src/clients/odoo.client.js` fungsi `loadCredentials()`.
+
+### Aturan
+
+Tax ID Odoo SELALU dibaca dari `tax_config` (primary), fallback ke `integration_config`.
+
+```javascript
+// BENAR ✅ — baca keduanya secara parallel
+const [integRow, taxRow] = await Promise.all([
+  db.query("SELECT value FROM system_settings WHERE key = 'integration_config'"),
+  db.query("SELECT value FROM system_settings WHERE key = 'tax_config'"),
+]);
+const taxIdFromTaxConfig = taxCfg?.odoo_tax_id ? Number(taxCfg.odoo_tax_id) : null;
+const defaultTaxId = taxIdFromTaxConfig                              // primary
+  || (cfg.odoo_default_tax_id ? Number(cfg.odoo_default_tax_id) : null);  // fallback
+
+// SALAH ❌ — hanya baca integration_config
+return { defaultTaxId: cfg.odoo_default_tax_id ? Number(...) : null };  // integration_config.odoo_default_tax_id = null
+```
+
+**Source of Truth Tax:**
+
+| Source | Field | Diisi via |
+|--------|-------|-----------|
+| `tax_config.odoo_tax_id` | **Primary** | Admin → Pajak & SPT |
+| `integration_config.odoo_default_tax_id` | Fallback | Admin → Integrasi |
+
+### Checklist
+
+- [ ] `loadCredentials()` query dua table: `tax_config` dan `integration_config`
+- [ ] `tax_config.odoo_tax_id` digunakan sebagai primary
+- [ ] Startup log menampilkan `defaultTaxId` — verifikasi angka Tax ID benar
+
+### Referensi
+
+RC-16 (BUG-008) — `loadCredentials()` hanya baca `integration_config`, padahal Tax ID ada di `tax_config`.
+
+---
+
+## STD-030 — SELECT Eksplisit di List Query Wajib Disinkronkan Saat Migrasi Kolom Baru
+
+**Berlaku untuk:** Semua fungsi `list`/`getAll` di backend yang menggunakan SELECT eksplisit (bukan `SELECT *`) pada tabel yang kolom barunya ditambahkan via migration.
+
+**Latar Belakang:** BUG-011 (RC-21) — `adminListProducts()` menggunakan SELECT eksplisit yang tidak menyertakan `is_preorder` dan `preorder_note`. Kolom-kolom ini ditambahkan oleh migration 029, tapi SELECT list query tidak diperbarui. Akibatnya, form Edit Produk selalu menampilkan toggle Pre-Order = OFF meskipun DB menyimpan `true`.
+
+### Aturan
+
+**A. Setiap migrasi `ADD COLUMN` HARUS diikuti review SELECT eksplisit yang ada:**
+
+Saat menambahkan kolom baru ke tabel, cari semua SELECT query untuk tabel tersebut yang menggunakan daftar kolom eksplisit (bukan `*`) dan tambahkan kolom baru ke dalamnya jika relevan untuk frontend.
+
+```javascript
+// SALAH ❌ — kolom baru tidak ditambahkan ke list query
+SELECT p.product_id, p.product_name, ..., p.updated_at,
+       t.tenant_id, t.tenant_name   -- is_preorder tidak ada
+
+// BENAR ✅ — kolom baru disertakan
+SELECT p.product_id, p.product_name, ..., p.updated_at,
+       p.is_preorder, p.preorder_note,   -- ← tambahkan setelah migrasi
+       t.tenant_id, t.tenant_name
+```
+
+**B. Perbedaan `RETURNING *` vs SELECT eksplisit:**
+
+| Operasi | Kolom baru otomatis masuk? |
+|---------|--------------------------|
+| `INSERT ... RETURNING *` | **Ya** — `*` include semua kolom |
+| `UPDATE ... RETURNING *` | **Ya** — `*` include semua kolom |
+| `SELECT col1, col2, ... FROM` | **Tidak** — harus ditambah manual |
+| `SELECT * FROM` | **Ya** — tapi tidak direkomendasikan untuk production list query |
+
+**C. Cara mendeteksi SELECT yang perlu diupdate:**
+
+Setelah menulis migration `ADD COLUMN IF NOT EXISTS new_col`, grep nama tabel di seluruh `backend/src/`:
+
+```bash
+grep -rn "FROM products" backend/src/
+# Review setiap hasil — apakah SELECT-nya eksplisit dan belum include kolom baru?
+```
+
+**D. Kolom yang "hanya untuk form edit" tetap harus ada di list query:**
+
+Frontend biasanya mengisi form edit dari data yang sudah ada di list state (bukan fetch ulang per item). Jika kolom hanya dibutuhkan saat edit, tetap harus ada di list query — jika tidak, form akan selalu menampilkan nilai default (false/null/empty).
+
+**E. Checklist migrasi kolom baru yang ditampilkan di form:**
+
+- [ ] Tambahkan `ADD COLUMN IF NOT EXISTS` di schema guard `app.js`
+- [ ] Grep nama tabel di `backend/src/` — temukan semua SELECT eksplisit
+- [ ] Tambahkan kolom baru ke setiap SELECT eksplisit yang relevan
+- [ ] Verifikasi response API via `curl` atau DB query bahwa kolom baru muncul di response
+- [ ] Test frontend: form edit menampilkan nilai yang tersimpan di DB (bukan selalu default)
+
+### Referensi
+
+BUG-011 / RC-21 — `adminListProducts()` tidak include `is_preorder` → toggle Pre-Order selalu OFF di form edit.  
+STD-010 — Schema guard wajib di `app.js` untuk kolom baru.

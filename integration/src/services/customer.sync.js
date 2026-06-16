@@ -71,13 +71,15 @@ async function resolveOrCreatePartner(customer) {
       partners = await odoo.searchRead(
         'res.partner',
         [['phone', '=', phone_number]],
-        ['id', 'name', 'phone', 'ref', 'property_stock_customer']
+        ['id', 'name', 'phone', 'ref', 'property_stock_customer', 'is_company', 'parent_id']
       );
-      if (partners.length > 0) {
-        const partnerId = partners[0].id;
+      // Skip company partners and contacts-of-companies — phone numbers are shared with company
+      const phoneMatch = partners.find(p => !p.is_company && !p.parent_id);
+      if (phoneMatch) {
+        const partnerId = phoneMatch.id;
         const phoneUpdateVals = { ref: customer_id, name: full_name, email: email || false };
         const custLocId2 = _customerLocationId();
-        if (custLocId2 && !partners[0].property_stock_customer) phoneUpdateVals.property_stock_customer = custLocId2;
+        if (custLocId2 && !phoneMatch.property_stock_customer) phoneUpdateVals.property_stock_customer = custLocId2;
         await odoo.write('res.partner', [partnerId], phoneUpdateVals);
         await xref.upsertXref('customer', customer_id, partnerId);
         audit.log({
@@ -97,14 +99,16 @@ async function resolveOrCreatePartner(customer) {
       partners = await odoo.searchRead(
         'res.partner',
         [['email', '=', email], ['customer_rank', '>', 0]],
-        ['id', 'name', 'email', 'ref', 'property_stock_customer']
+        ['id', 'name', 'email', 'ref', 'property_stock_customer', 'is_company', 'parent_id']
       );
-      if (partners.length > 0) {
-        const partnerId = partners[0].id;
+      // Skip company partners and contacts-of-companies
+      const emailMatch = partners.find(p => !p.is_company && !p.parent_id);
+      if (emailMatch) {
+        const partnerId = emailMatch.id;
         const emailUpdateVals = { ref: customer_id, name: full_name, email };
         if (phoneValid) emailUpdateVals.phone = phone_number;
         const custLocId3 = _customerLocationId();
-        if (custLocId3 && !partners[0].property_stock_customer) emailUpdateVals.property_stock_customer = custLocId3;
+        if (custLocId3 && !emailMatch.property_stock_customer) emailUpdateVals.property_stock_customer = custLocId3;
         await odoo.write('res.partner', [partnerId], emailUpdateVals);
         await xref.upsertXref('customer', customer_id, partnerId);
         audit.log({

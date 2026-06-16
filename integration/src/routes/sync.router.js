@@ -6,6 +6,7 @@
 const express = require('express');
 const env     = require('../config/env');
 const logger  = require('../config/logger');
+const odoo    = require('../clients/odoo.client');
 const { pushProductsToOdoo } = require('../services/push.product.sync');
 
 const router = express.Router();
@@ -43,6 +44,18 @@ router.post('/push/products', requireSecret, async (req, res) => {
       message: err.message || 'Product push to Odoo failed',
     });
   }
+});
+
+/**
+ * POST /sync/reload-config
+ * Called by the SOS backend whenever admin saves new Odoo credentials.
+ * Invalidates the cached Odoo session so the next Odoo call re-authenticates
+ * with fresh credentials read directly from DB (via odoo.client loadCredentials).
+ */
+router.post('/reload-config', requireSecret, (req, res) => {
+  odoo.invalidateSession();
+  logger.info('sync.router: Odoo session invalidated — will re-auth with fresh DB config on next call');
+  return res.json({ success: true, message: 'Config reload triggered. Odoo will re-authenticate on next call.' });
 });
 
 module.exports = router;

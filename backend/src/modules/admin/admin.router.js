@@ -9,6 +9,17 @@ const { broadcastToAll } = require('../../ws/websocket');
 const router    = express.Router();
 const adminOnly = [authenticate, authorize('ADMIN')];
 
+// Fire-and-forget: tell integration service to invalidate its cached Odoo session
+// so it re-authenticates with the latest credentials from DB on the next Odoo call.
+function _notifyIntegrationReload() {
+  const integrationUrl = process.env.INTEGRATION_WEBHOOK_URL || 'http://localhost:4000';
+  fetch(`${integrationUrl}/sync/reload-config`, {
+    method:  'POST',
+    headers: { 'x-webhook-secret': process.env.WEBHOOK_SECRET || '' },
+    signal:  AbortSignal.timeout(5000),
+  }).catch(() => {}); // non-fatal — integration service may be offline
+}
+
 // ── Users ─────────────────────────────────────────────────────────────────────
 
 router.get('/users', ...adminOnly, async (req, res, next) => {
@@ -319,7 +330,9 @@ router.post('/odoo/config', ...adminOnly, async (req, res, next) => {
       ...(password ? { odoo_password: password } : {}),
       odoo_company_id:   Number(company_id),
       odoo_company_name: company_name || '',
+      odoo_is_active:    true,
     });
+    _notifyIntegrationReload();
     res.json({ success: true, data });
   } catch (err) { next(err); }
 });
@@ -413,6 +426,7 @@ router.get('/integration', ...adminOnly, async (_req, res, next) => {
 router.put('/integration', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.saveIntegrationConfig(req.body);
+    _notifyIntegrationReload();
     res.json({ success: true, message: 'Konfigurasi integrasi disimpan.', data });
   } catch (err) { next(err); }
 });

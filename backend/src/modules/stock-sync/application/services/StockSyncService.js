@@ -20,19 +20,23 @@ class StockSyncService {
       "SELECT value FROM system_settings WHERE key = 'integration_config'"
     );
     const cfg      = result.rows[0]?.value ? JSON.parse(result.rows[0].value) : {};
-    const baseUrl  = cfg.odoo_base_url || process.env.ODOO_BASE_URL;
+    const isActive = cfg.odoo_is_active === true;
+    const baseUrl  = (cfg.odoo_base_url || process.env.ODOO_BASE_URL || '').replace(/\/+$/, '');
     const database = cfg.odoo_db       || process.env.ODOO_DB;
     const login    = cfg.odoo_login    || process.env.ODOO_LOGIN;
     const password = cfg.odoo_password || process.env.ODOO_PASSWORD;
     const companyId = cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null;
 
+    if (!isActive) {
+      return { isActive: false };
+    }
     if (!baseUrl || !database || !login || !password) {
       throw Object.assign(
         new Error('Odoo credentials not configured. Set via Admin → Integrasi.'),
         { statusCode: 502 }
       );
     }
-    return { baseUrl, db: database, login, password, companyId };
+    return { isActive: true, baseUrl, db: database, login, password, companyId };
   }
 
   /**
@@ -42,7 +46,13 @@ class StockSyncService {
    * @returns {Promise<SyncResultDTO>}
    */
   async syncStock({ triggeredBy, productIds = null }) {
-    const config          = await this._loadOdooConfig();
+    const config = await this._loadOdooConfig();
+    if (!config.isActive) {
+      return new SyncResultDTO({
+        batchId: null, total: 0, success: 0, failed: 0, skipped: 0,
+        records: [], steps: [], syncedAt: new Date().toISOString(),
+      });
+    }
     const httpClient      = new OdooHttpClient(config);           // companyId injected into RPC context
     const productAdapter  = new OdooProductAdapter(httpClient);
     const stockAdapter    = new OdooStockAdapter(httpClient, config.companyId);  // explicit domain filters

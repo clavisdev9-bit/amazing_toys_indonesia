@@ -85,6 +85,7 @@ function start() {
           AND (x.odoo_id IS NULL
                OR (x.sync_metadata->>'confirmFailed')::boolean = true
                OR (x.sync_metadata->>'manualConfirmRequired')::boolean = true)
+          AND (x.sync_metadata->>'deadLetter')::boolean IS NOT TRUE
         ORDER BY t.paid_at DESC
         LIMIT 5
       `);

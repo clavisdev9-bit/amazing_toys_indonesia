@@ -22,27 +22,43 @@ let _creds = null;
  */
 async function loadCredentials() {
   try {
-    const r = await db.query("SELECT value FROM system_settings WHERE key = 'integration_config'");
-    if (r.rows[0]?.value) {
-      let cfg = r.rows[0].value;
+    const [integRow, taxRow] = await Promise.all([
+      db.query("SELECT value FROM system_settings WHERE key = 'integration_config'"),
+      db.query("SELECT value FROM system_settings WHERE key = 'tax_config'"),
+    ]);
+
+    // tax_config.odoo_tax_id is the authoritative Odoo Tax ID configured in Admin → Pajak & SPT.
+    // Fall back to integration_config.odoo_default_tax_id for backwards compatibility.
+    let taxCfg = taxRow.rows[0]?.value;
+    if (typeof taxCfg === 'string') taxCfg = JSON.parse(taxCfg);
+    const taxIdFromTaxConfig = taxCfg?.odoo_tax_id ? Number(taxCfg.odoo_tax_id) : null;
+
+    if (integRow.rows[0]?.value) {
+      let cfg = integRow.rows[0].value;
       if (typeof cfg === 'string') cfg = JSON.parse(cfg);
       if (cfg.odoo_base_url && cfg.odoo_db && cfg.odoo_login && cfg.odoo_password) {
+        const defaultTaxId = taxIdFromTaxConfig
+          || (cfg.odoo_default_tax_id ? Number(cfg.odoo_default_tax_id) : null);
         return {
           baseUrl:   cfg.odoo_base_url,
           db:        cfg.odoo_db,
           login:     cfg.odoo_login,
           password:  cfg.odoo_password,
-          companyId: cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null,
+          companyId:            cfg.odoo_company_id ? Number(cfg.odoo_company_id) : null,
+          defaultSalespersonId: cfg.odoo_default_salesperson_id ? Number(cfg.odoo_default_salesperson_id) : null,
+          defaultTaxId,
         };
       }
     }
   } catch (_) { /* fall through to env */ }
   return {
-    baseUrl:   env.ODOO_BASE_URL,
-    db:        env.ODOO_DB,
-    login:     env.ODOO_LOGIN,
-    password:  env.ODOO_PASSWORD,
-    companyId: null,
+    baseUrl:              env.ODOO_BASE_URL,
+    db:                   env.ODOO_DB,
+    login:                env.ODOO_LOGIN,
+    password:             env.ODOO_PASSWORD,
+    companyId:            null,
+    defaultSalespersonId: null,
+    defaultTaxId:         null,
   };
 }
 
@@ -246,6 +262,7 @@ async function resolveStartupRefs() {
   await _sleep(150);
   const sosFields   = await searchRead('ir.model.fields', [['model', '=', 'sale.order'], ['name', 'in', ['x_studio_sos_transaction_id', 'x_studio_sos_tenant_ids']]], ['name', 'ttype', 'relation']);
   await _sleep(150);
+  await _sleep(150);
   const warehouses  = await searchRead('stock.warehouse', warehouseDomain, ['id', 'name', 'code'], { limit: 1 });
   await _sleep(150);
   const custLocs    = await searchRead('stock.location', custLocDomain, ['id', 'name'], { limit: 1 });
@@ -265,19 +282,66 @@ async function resolveStartupRefs() {
   const txnField      = sosFields.find(f => f.name === 'x_studio_sos_transaction_id');
   const tenantField   = sosFields.find(f => f.name === 'x_studio_sos_tenant_ids');
   const voucherField  = sosFields.find(f => f.name === 'x_voucher_code');
+  // Detect which field name Odoo uses for taxes on sale.order.line.
+  // fields_get is more reliable than ir.model.fields on Odoo Online SaaS
+  // (which can return 0 results due to access restrictions on that model).
+  // Standard name is 'tax_id'; some versions use 'tax_ids' or 'taxes_id'.
+  let taxLineFieldName = null;
+  try {
+    const solTaxCheck = await callKw('sale.order.line', 'fields_get',
+      [['tax_id', 'tax_ids', 'taxes_id']], { attributes: ['type'] });
+    taxLineFieldName = 'tax_id'   in solTaxCheck ? 'tax_id'
+      : 'tax_ids'  in solTaxCheck ? 'tax_ids'
+      : 'taxes_id' in solTaxCheck ? 'taxes_id'
+      : null;
+  } catch (_e) { /* non-fatal — taxLineFieldName stays null */ }
+
   _cache.hasSosTransactionId    = !!txnField;
   _cache.hasSosTenantId         = !!tenantField;
   _cache.tenantIdFieldType      = tenantField?.ttype     || null;
   _cache.tenantIdFieldRelation  = tenantField?.relation  || null;
   _cache.hasVoucherCodeField    = !!voucherField;
+  _cache.taxLineFieldName       = taxLineFieldName;
+  _cache.hasTaxIdField          = taxLineFieldName !== null;
   _cache.warehouseId = warehouses[0]?.id || null;
   _cache.customerLocationId = custLocs[0]?.id || null;
   _cache.fallbackRouteId = fallbackRoutes[0]?.id || null;
   _cache.fallbackRouteName = fallbackRoutes[0]?.name || null;
+  _cache.defaultSalespersonId   = _creds?.defaultSalespersonId || null;
+  _cache.defaultTaxId           = _creds?.defaultTaxId || null;
+  _cache.defaultTaxRate         = null;
+  _cache.defaultTaxPriceInclude = false;
+
+  // If a default tax is configured, fetch its rate and price_include flag so
+  // order.push.js can gross-up price_unit when needed (price_include = True).
+  if (_cache.defaultTaxId) {
+    await _sleep(150);
+    const taxes = await searchRead(
+      'account.tax',
+      [['id', '=', _cache.defaultTaxId]],
+      ['id', 'name', 'amount', 'amount_type', 'price_include']
+    );
+    if (taxes[0]) {
+      _cache.defaultTaxRate         = taxes[0].amount_type === 'percent' ? taxes[0].amount / 100 : null;
+      _cache.defaultTaxPriceInclude = !!taxes[0].price_include;
+      logger.info('Odoo default tax resolved', {
+        taxId:        _cache.defaultTaxId,
+        name:         taxes[0].name,
+        rate:         taxes[0].amount,
+        priceInclude: _cache.defaultTaxPriceInclude,
+      });
+    }
+  }
+
   logger.info('Odoo startup refs resolved', {
     currencyIdIdr: _cache.currencyIdIdr,
     customerLocationId: _cache.customerLocationId,
     hasSosFields: _cache.hasSosTransactionId,
+    taxLineFieldName: _cache.taxLineFieldName,
+    hasTaxIdField: _cache.hasTaxIdField,
+    defaultTaxId: _cache.defaultTaxId,
+    defaultTaxRate: _cache.defaultTaxRate,
+    defaultTaxPriceInclude: _cache.defaultTaxPriceInclude,
     journals: Object.keys(_cache.journals),
     warehouseId: _cache.warehouseId,
     fallbackRouteId: _cache.fallbackRouteId,

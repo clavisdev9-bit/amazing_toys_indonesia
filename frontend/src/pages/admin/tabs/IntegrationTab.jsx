@@ -145,7 +145,7 @@ export default function IntegrationTab() {
     }
     setOdooSaving(true);
     try {
-      await saveOdooConfig({
+      const r = await saveOdooConfig({
         base_url:     config.odoo_base_url,
         db:           config.odoo_db,
         login:        config.odoo_login,
@@ -153,7 +153,8 @@ export default function IntegrationTab() {
         company_id:   config.odoo_company_id,
         company_name: config.odoo_company_name || '',
       });
-      addToast('Koneksi Odoo & company tersimpan.', 'success');
+      setConfig(r.data.data);
+      addToast('Koneksi Odoo & company tersimpan. Integrasi diaktifkan.', 'success');
       setSaved(true);
     } catch (err) {
       addToast(err.response?.data?.message ?? 'Gagal menyimpan koneksi Odoo.', 'error');
@@ -501,7 +502,50 @@ export default function IntegrationTab() {
               </div>
             </section>
 
-            {/* Section 3: Webhook Security — RECOMMENDED */}
+            {/* Section 3: Default Salesperson — OPTIONAL */}
+            <section>
+              <SectionTitle color="orange">
+                👤 Default Sales Person
+                <span className="ml-2 text-xs font-normal text-gray-400">(opsional)</span>
+              </SectionTitle>
+              <div className="space-y-2">
+                <Input label="Default Salesperson User ID"
+                  hint="→ odoo_default_salesperson_id"
+                  type="number" min="1"
+                  value={config.odoo_default_salesperson_id || ''}
+                  onChange={(e) => set('odoo_default_salesperson_id', e.target.value ? parseInt(e.target.value) : '')}
+                  placeholder="Contoh: 7" />
+                <p className="text-xs text-gray-400">
+                  ID integer <code className="bg-gray-100 px-1 rounded">res.users</code> yang akan diset sebagai salesperson di setiap Sale Order.
+                  Kosong = Odoo akan menggunakan user API login sebagai salesperson.
+                  Cek di Odoo: Pengaturan → Pengguna → pilih user → lihat ID di URL.
+                </p>
+              </div>
+            </section>
+
+            {/* Section 4: Default Tax — OPTIONAL */}
+            <section>
+              <SectionTitle color="orange">
+                🧾 Default Tax (PPN)
+                <span className="ml-2 text-xs font-normal text-gray-400">(opsional)</span>
+              </SectionTitle>
+              <div className="space-y-2">
+                <Input label="Default Tax ID"
+                  hint="→ odoo_default_tax_id"
+                  type="number" min="1"
+                  value={config.odoo_default_tax_id || ''}
+                  onChange={(e) => set('odoo_default_tax_id', e.target.value ? parseInt(e.target.value) : '')}
+                  placeholder="Contoh: 3" />
+                <p className="text-xs text-gray-400">
+                  ID integer <code className="bg-gray-100 px-1 rounded">account.tax</code> untuk PPN yang akan di-set eksplisit di setiap order line.
+                  Pastikan tax di Odoo dikonfigurasi <strong>Tax Excluded</strong> (bukan "Tax Included in Price").
+                  Cek di Odoo: Accounting → Configuration → Taxes → PPN 11% → lihat ID di URL.
+                  Kosong = order line tidak memiliki pajak (tax_id = []).
+                </p>
+              </div>
+            </section>
+
+            {/* Section 4: Webhook Security — RECOMMENDED */}
             <section>
               <SectionTitle color="orange">🔐 Keamanan Webhook</SectionTitle>
               <div className="space-y-2">
