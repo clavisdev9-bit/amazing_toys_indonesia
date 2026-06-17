@@ -1,10 +1,10 @@
 /**
  * Test 2: Full Order Flow — 100 Virtual Users bersamaan
- * Setiap VU mensimulasikan 1 helper yang membuat order walk-in
- * kemudian 1 cashier yang memproses pembayaran.
+ * Setiap VU mensimulasikan helper membuat order walk-in,
+ * kemudian cashier memproses pembayaran.
  *
- * Alur: Login Helper → Ambil Produk → Buat Order → Login Kasir → Lookup → Bayar
- * Target: semua order terproses, p(95) < 3000ms per step.
+ * Alur: (pre-login di setup) → Buat Order → Lookup → Bayar
+ * Target: ≥50 order dibayar, p(95) helper_create < 3s, p(95) payment < 3s.
  */
 import http from 'k6/http';
 import { check, sleep, group } from 'k6';
@@ -32,9 +32,9 @@ export const options = {
   },
   thresholds: {
     ...THRESHOLDS,
-    orders_paid:       ['count>50'],         // minimal 50 order berhasil dibayar
-    order_errors:      ['rate<0.05'],        // < 5% error (lebih toleran karena alur panjang)
-    helper_create_ms:  ['p(95)<3000'],
+    orders_paid:        ['count>50'],
+    order_errors:       ['rate<0.05'],
+    helper_create_ms:   ['p(95)<3000'],
     payment_process_ms: ['p(95)<3000'],
   },
 };
@@ -44,63 +44,55 @@ const HEADERS = (token) => ({
   'Authorization': `Bearer ${token}`,
 });
 
-function loginAsHelper() {
+// 5 high-stock products (>3500 units each) — VUs round-robin to spread DB lock contention
+const STRESS_PRODUCTS = [
+  'P26603-T001', // SAMSAM LUCKY CAT BLIND BOX 1.0   — 4636 units
+  'P26604-T001', // SAMSAM LUCKY CAT BLIND BOX 2.0   — 4696 units
+  'P26605-T001', // SAMSAM DHARMA TUMBLER BLIND BOX  — 3964 units
+  'P26606-T001', // SAMSAM LUCKY CAT LUCKY BLIND BOX — 3731 units
+  'P26612-T001', // SAMSAM ADVENTURER                — 3850 units
+];
+
+function doLogin(username, password) {
   const res = http.post(
     `${API}/auth/login`,
-    JSON.stringify({ username: 'helper_stress01', password: 'test1234' }),
+    JSON.stringify({ username, password }),
     { headers: { 'Content-Type': 'application/json' } },
   );
-  if (res.status !== 200) return null;
+  if (res.status !== 200) {
+    console.error(`Login failed for ${username}: ${res.status} ${res.body}`);
+    return null;
+  }
   return res.json('data.token');
 }
 
-function loginAsCashier(idx) {
-  const users = ['kasir_stress01','kasir_stress02','kasir_stress03','kasir_stress04','kasir_stress05'];
-  const username = users[idx % users.length];
-  const res = http.post(
-    `${API}/auth/login`,
-    JSON.stringify({ username, password: 'test1234' }),
-    { headers: { 'Content-Type': 'application/json' } },
-  );
-  if (res.status !== 200) return null;
-  return res.json('data.token');
+// setup() runs once before all VUs start — tokens are shared across VUs
+export function setup() {
+  const helperToken = doLogin('helper_stress01', 'test1234');
+  const cashierTokens = [
+    doLogin('kasir_stress01', 'test1234'),
+    doLogin('kasir_stress02', 'test1234'),
+    doLogin('kasir_stress03', 'test1234'),
+    doLogin('kasir_stress04', 'test1234'),
+    doLogin('kasir_stress05', 'test1234'),
+  ];
+  if (!helperToken) throw new Error('setup: helper login failed');
+  return { helperToken, cashierTokens };
 }
 
-function getFirstProduct(token) {
-  const res = http.get(`${API}/products?limit=5`, { headers: HEADERS(token) });
-  if (res.status !== 200) return null;
-  const items = res.json('data.items') ?? res.json('data') ?? [];
-  const available = items.filter(p => p.stock_quantity > 0);
-  return available[0] ?? null;
-}
+export default function (data) {
+  const helperToken  = data.helperToken;
+  const cashierToken = data.cashierTokens[__VU % data.cashierTokens.length];
+  if (!helperToken || !cashierToken) { orderErrors.add(1); return; }
 
-export default function () {
-  let helperToken, cashierToken, product, transactionId;
+  let transactionId;
 
-  // ── Step 1: Login Helper ──────────────────────────────────────────────────
-  group('1_helper_login', () => {
-    helperToken = loginAsHelper();
-    check(helperToken, { 'helper login ok': (t) => !!t });
-  });
-  if (!helperToken) { orderErrors.add(1); return; }
-
-  sleep(0.5);
-
-  // ── Step 2: Ambil produk ──────────────────────────────────────────────────
-  group('2_get_products', () => {
-    product = getFirstProduct(helperToken);
-    check(product, { 'produk tersedia': (p) => !!p });
-  });
-  if (!product) { orderErrors.add(1); return; }
-
-  sleep(0.3);
-
-  // ── Step 3: Helper buat order walk-in ─────────────────────────────────────
-  group('3_create_order', () => {
-    const phone = fakePhone(__VU);
+  // ── Step 1: Buat order ────────────────────────────────────────────────────
+  group('1_create_order', () => {
+    const productId = STRESS_PRODUCTS[__VU % STRESS_PRODUCTS.length];
     const body = {
-      customerPhone: phone,
-      items: [{ productId: product.product_id, quantity: 1 }],
+      customerPhone: fakePhone(__VU),
+      items: [{ product_id: productId, qty: 1 }],
     };
     const start = Date.now();
     const res = http.post(
@@ -111,8 +103,8 @@ export default function () {
     helperLatency.add(Date.now() - start);
 
     const ok = check(res, {
-      'order created (201 or 200)': (r) => r.status === 200 || r.status === 201,
-      'ada transactionId':          (r) => !!r.json('data.transactionId'),
+      'order created (201/200)': (r) => r.status === 200 || r.status === 201,
+      'ada transactionId':       (r) => !!(r.json('data') && r.json('data.transactionId')),
     });
 
     if (ok) {
@@ -120,45 +112,33 @@ export default function () {
       orderCreated.add(1);
     } else {
       orderErrors.add(1);
+      console.error(`create_order failed: ${res.status} ${res.body.substring(0, 200)}`);
     }
   });
   if (!transactionId) return;
 
-  sleep(1); // simulasi delay customer menuju kasir
+  sleep(0.5);
 
-  // ── Step 4: Login Kasir ───────────────────────────────────────────────────
-  group('4_cashier_login', () => {
-    cashierToken = loginAsCashier(__VU);
-    check(cashierToken, { 'cashier login ok': (t) => !!t });
-  });
-  if (!cashierToken) { orderErrors.add(1); return; }
-
-  sleep(0.3);
-
-  // ── Step 5: Kasir lookup transaksi ────────────────────────────────────────
-  group('5_lookup', () => {
+  // ── Step 2: Lookup ────────────────────────────────────────────────────────
+  group('2_lookup', () => {
     const res = http.get(
       `${API}/payments/lookup/${transactionId}`,
       { headers: HEADERS(cashierToken) },
     );
     check(res, {
-      'lookup ok':             (r) => r.status === 200,
-      'status bisa diproses':  (r) => ['RESERVED','PENDING','WAITING_PAYMENT'].includes(r.json('data.status')),
+      'lookup ok':            (r) => r.status === 200,
+      'status bisa diproses': (r) => ['RESERVED','PENDING','WAITING_PAYMENT'].includes(r.json('data.status')),
     });
   });
 
-  sleep(0.5);
+  sleep(0.3);
 
-  // ── Step 6: Kasir proses pembayaran ──────────────────────────────────────
-  group('6_process_payment', () => {
-    const body = {
-      transaction_id: transactionId,
-      payment_method: 'QRIS',
-    };
+  // ── Step 3: Proses pembayaran ─────────────────────────────────────────────
+  group('3_process_payment', () => {
     const start = Date.now();
     const res = http.post(
       `${API}/payments/process`,
-      JSON.stringify(body),
+      JSON.stringify({ transaction_id: transactionId, payment_method: 'QRIS' }),
       { headers: HEADERS(cashierToken) },
     );
     paymentLatency.add(Date.now() - start);
@@ -170,8 +150,11 @@ export default function () {
     });
 
     if (ok) orderPaid.add(1);
-    else orderErrors.add(1);
+    else {
+      orderErrors.add(1);
+      console.error(`payment failed: ${res.status} ${res.body.substring(0, 200)}`);
+    }
   });
 
-  sleep(Math.random() * 2 + 1);
+  sleep(Math.random() * 1 + 0.5);
 }

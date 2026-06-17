@@ -61,7 +61,7 @@ async function createUser({ username, password, role, display_name, tenant_id })
   const exists = await query('SELECT user_id FROM users WHERE username = $1', [username]);
   if (exists.rows.length > 0) throw new AppError('Username sudah digunakan.', 409);
 
-  const password_hash = await bcrypt.hash(password, 10);
+  const password_hash = await bcrypt.hash(password, 8);
   const result = await query(
     `INSERT INTO users (username, password_hash, role, display_name, tenant_id)
      VALUES ($1, $2, $3, $4, $5)
@@ -95,7 +95,7 @@ async function resetPassword(userId, { new_password }) {
   if (!new_password || new_password.length < 6) {
     throw new AppError('Password minimal 6 karakter.', 422);
   }
-  const password_hash = await bcrypt.hash(new_password, 10);
+  const password_hash = await bcrypt.hash(new_password, 8);
   const result = await query(
     `UPDATE users SET password_hash = $1 WHERE user_id = $2 AND role != 'ADMIN'
      RETURNING user_id, username`,

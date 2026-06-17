@@ -26,45 +26,45 @@ const C = {
   warmBg: '#FBF7F0', border: '#E8E2D5', soft: '#F4EEE2', muted: '#9B8E7E',
 };
 
-// ─── Sidebar menu config (labels resolved via t() in Sidebar component) ───────
+// ─── Sidebar menu config ──────────────────────────────────────────────────────
 const MENUS = [
   {
-    id: 'order', tKey: 'helper.panelCreate', dot: C.olive,
+    id: 'order', label: 'Buat Order', dot: C.olive,
     subs: [
-      { id: 'membuat',     tKey: 'helper.panelCreate' },
-      { id: 'outstanding', tKey: 'helper.panelOutstanding' },
-      { id: 'paid',        tKey: 'helper.panelPaid' },
+      { id: 'membuat', label: 'Membuat Order' },
+      { id: 'outstanding', label: 'Outstanding' },
+      { id: 'paid', label: 'Paid' },
     ],
   },
   {
-    id: 'approval', tKey: 'helper.panelApproval', dot: C.gold, hasBadge: 'approval',
+    id: 'approval', label: 'Approval', dot: C.gold, hasBadge: 'approval',
     subs: [
-      { id: 'belum_approve',     tKey: 'helper.tabNotApproved' },
-      { id: 'sudah_approve',     tKey: 'helper.tabApproved' },
-      { id: 'preorder_approval', tKey: 'helper.tabPreorderApproval' },
+      { id: 'belum_approve', label: 'Belum Approve' },
+      { id: 'sudah_approve', label: 'Sudah Approve' },
+      { id: 'preorder_approval', label: 'Approval Pre-Order' },
     ],
   },
-  { id: 'history', tKey: 'helper.panelHistory', dot: C.muted, subs: null },
+  { id: 'history', label: 'History', dot: C.muted, subs: null },
   {
-    id: 'handover', tKey: 'helper.panelHandover', dot: C.crimson, hasBadge: 'handover',
+    id: 'handover', label: 'Serah Terima', dot: C.crimson, hasBadge: 'handover',
     subs: [
-      { id: 'handover_outstanding', tKey: 'helper.panelHandover' },
-      { id: 'sudah_handover',       tKey: 'helper.panelHandover' },
+      { id: 'handover_outstanding', label: 'Outstanding' },
+      { id: 'sudah_handover', label: 'Sudah Serah Terima' },
     ],
   },
 ];
 
-// ─── Panel metadata (titles/subtitles resolved via t() in TopBar) ────────────
+// ─── Panel metadata ───────────────────────────────────────────────────────────
 const PANEL_META = {
-  'order/membuat':             { titleKey: 'helper.panelCreate',       subtitleKey: 'helper.panelCreateSub',       showScan: true,  scanKey: 'helper.searchOrder' },
-  'order/outstanding':         { titleKey: 'helper.panelOutstanding',  subtitleKey: 'helper.panelOutstandingSub',  showScan: true,  scanKey: 'helper.searchOrder' },
-  'order/paid':                { titleKey: 'helper.panelPaid',         subtitleKey: 'helper.panelPaidSub',         showScan: true,  scanKey: 'helper.searchOrder' },
-  'approval/belum_approve':    { titleKey: 'helper.panelApproval',     subtitleKey: 'helper.panelApprovalSub',     showScan: true,  scanKey: 'helper.scanOrder' },
-  'approval/sudah_approve':    { titleKey: 'helper.tabApproved',       subtitleKey: 'helper.panelApprovalSub',     showScan: true,  scanKey: 'helper.searchOrder' },
-  'approval/preorder_approval':{ titleKey: 'helper.tabPreorderApproval', subtitleKey: 'helper.preorderApprovalDesc', showScan: false },
-  'history':                   { titleKey: 'helper.panelHistory',      subtitleKey: 'helper.panelHistorySub',      showScan: false },
-  'handover/handover_outstanding': { titleKey: 'helper.panelHandover', subtitleKey: 'helper.panelHandoverSub',     showScan: true,  scanKey: 'helper.scanOrder' },
-  'handover/sudah_handover':   { titleKey: 'helper.statusDelivered',   subtitleKey: 'helper.panelHandoverSub',     showScan: true,  scanKey: 'helper.searchOrder' },
+  'order/membuat':             { title: 'Membuat Order',       subtitle: 'Buat pesanan baru untuk customer walk-in',    showScan: true,  scanPlaceholder: 'Cari produk / scan barcode...' },
+  'order/outstanding':         { title: 'Order Outstanding',   subtitle: 'Pesanan yang belum selesai pembayaran',       showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'order/paid':                { title: 'Order Paid',          subtitle: 'Pesanan yang sudah dibayar',                  showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'approval/belum_approve':    { title: 'Antrian Approval',    subtitle: 'Pesanan customer menunggu persetujuan',       showScan: true,  scanPlaceholder: 'Cari / scan QR order...' },
+  'approval/sudah_approve':    { title: 'Sudah Disetujui',     subtitle: 'Pesanan yang telah disetujui',                showScan: true,  scanPlaceholder: 'Cari nomor order...' },
+  'approval/preorder_approval':{ title: 'Approval Pre-Order',  subtitle: 'Pre-order yang sudah dibayar — siap diproses', showScan: false },
+  'history':                   { title: 'History',             subtitle: 'Semua transaksi booth hari ini',              showScan: false },
+  'handover/handover_outstanding': { title: 'Serah Terima',   subtitle: 'Pesanan PAID siap diserahkan ke customer',    showScan: true,  scanPlaceholder: 'Scan QR atau ketik nomor order...' },
+  'handover/sudah_handover':   { title: 'Sudah Serah Terima', subtitle: 'Serah terima telah selesai dilakukan',        showScan: true,  scanPlaceholder: 'Cari nomor order...' },
 };
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -74,19 +74,14 @@ function statusDot(status) {
   return C.crimson;
 }
 
-const STATUS_LABEL_KEYS = {
-  PAID: null, APPROVED: null, HANDED_OVER: 'helper.statusDelivered', COMPLETED: 'helper.statusDone',
-  PENDING: null, CREATED: null, RESERVED: null,
-  WAITING_PAYMENT: 'helper.statusWaitingPayment', PENDING_APPROVAL: 'helper.statusWaitingApproval',
-  CANCELLED: 'helper.statusCancelled', REJECTED: 'helper.statusRejected', EXPIRED: 'helper.statusExpired',
-};
-
-function statusLabel(status, t) {
-  const tKey = STATUS_LABEL_KEYS[status];
-  if (tKey && t) return t(tKey);
-  // Statuses without a key stay as-is (they're already in English or are proper nouns)
-  const FALLBACK = { HANDED_OVER: 'Diserahkan', COMPLETED: 'Selesai', WAITING_PAYMENT: 'Menunggu Bayar', PENDING_APPROVAL: 'Menunggu Approval', CANCELLED: 'Dibatalkan', REJECTED: 'Ditolak', EXPIRED: 'Kedaluwarsa' };
-  return FALLBACK[status] || status;
+function statusLabel(status) {
+  const MAP = {
+    PAID: 'Paid', APPROVED: 'Approved', HANDED_OVER: 'Diserahkan', COMPLETED: 'Selesai',
+    PENDING: 'Pending', CREATED: 'Created', RESERVED: 'Reserved',
+    WAITING_PAYMENT: 'Menunggu Bayar', PENDING_APPROVAL: 'Menunggu Approval',
+    CANCELLED: 'Dibatalkan', REJECTED: 'Ditolak', EXPIRED: 'Kedaluwarsa',
+  };
+  return MAP[status] || status;
 }
 
 // ─── Shared sub-components ────────────────────────────────────────────────────
@@ -105,8 +100,7 @@ function Banner({ type, children }) {
 }
 
 function OrderCard({ order, action }) {
-  const { t } = useLang();
-  const name = order.customer_name || order.customer_reg_phone || order.customer_phone || t('preorder.walkIn');
+  const name = order.customer_name || order.customer_reg_phone || order.customer_phone || 'Walk-in';
   return (
     <div style={{ background: '#fff', borderRadius: 10, border: `1px solid ${C.border}`, padding: '12px 14px', marginBottom: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: action ? 8 : 0 }}>
@@ -118,7 +112,7 @@ function OrderCard({ order, action }) {
           <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: C.goldDark }}>{formatRupiah(order.total_amount)}</p>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 600, color: '#5a4e3e', marginTop: 2 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusDot(order.status), display: 'inline-block', flexShrink: 0 }} />
-            {statusLabel(order.status, t)}
+            {statusLabel(order.status)}
           </span>
         </div>
       </div>
@@ -137,7 +131,6 @@ function RefreshBtn({ onClick }) {
 
 // ─── Sidebar ──────────────────────────────────────────────────────────────────
 function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCount, boothName, user, role, onLogout, lang, setLang, onOpenMap }) {
-  const { t } = useLang();
   const [expanded, setExpanded] = useState(activeMenu);
   const logoUrl = useAppLogo();
 
@@ -217,7 +210,7 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
                 }}
               >
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: isMenuActive && !menu.subs ? 'rgba(255,255,255,0.75)' : menu.dot, flexShrink: 0 }} />
-                <span style={{ flex: 1, lineHeight: 1.35 }}>{t(menu.tKey)}</span>
+                <span style={{ flex: 1, lineHeight: 1.35 }}>{menu.label}</span>
                 {badge > 0 && (
                   <span style={{ background: C.crimson, color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 9, padding: '1px 5px', minWidth: 16, textAlign: 'center', lineHeight: '14px', flexShrink: 0 }}>
                     {badge > 99 ? '99+' : badge}
@@ -243,7 +236,7 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
                     }}
                   >
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: isSubActive ? C.gold : '#d0c8bc', flexShrink: 0 }} />
-                    {t(sub.tKey)}
+                    {sub.label}
                   </div>
                 );
               })}
@@ -289,21 +282,20 @@ function Sidebar({ activeMenu, activeSub, onNavigate, approvalCount, handoverCou
 
 // ─── TopBar ───────────────────────────────────────────────────────────────────
 function TopBar({ meta, searchQuery, setSearchQuery }) {
-  const { t } = useLang();
   const [scannerOpen, setScannerOpen] = useState(false);
   if (!meta) return null;
 
   return (
     <div style={{ padding: '14px 20px 12px', borderBottom: `1px solid ${C.border}`, background: '#fff', flexShrink: 0 }}>
-      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#2a1e10' }}>{t(meta.titleKey)}</h2>
-      {meta.subtitleKey && <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted, fontWeight: 500 }}>{t(meta.subtitleKey)}</p>}
+      <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#2a1e10' }}>{meta.title}</h2>
+      {meta.subtitle && <p style={{ margin: '2px 0 0', fontSize: 12, color: C.muted, fontWeight: 500 }}>{meta.subtitle}</p>}
       {meta.showScan && (
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
           <input
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder={meta.scanKey ? t(meta.scanKey) : 'Ketik atau scan...'}
+            placeholder={meta.scanPlaceholder || 'Ketik atau scan...'}
             style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', background: C.warmBg, color: '#2a1e10', outline: 'none' }}
           />
           <button

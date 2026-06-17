@@ -97,7 +97,13 @@
       "PowerShell(head -100)",
       "Bash(cd \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\605749a9-85b7-40e2-b061-75506500d06e\\\\46749590-c3c9-4e21-9c2a-b01ae7daaa68\\\\skills\\\\xlsx\" && python --version && ls scripts/)",
       "Bash(node -e \"const bcrypt=require\\('bcrypt'\\); bcrypt.hash\\('test1234',10\\).then\\(h=>console.log\\(h\\)\\)\")",
-      "Bash(choco install *)"
+      "Bash(choco install *)",
+      "PowerShell(docker exec -i hybrid_postgres psql -U postgres -d amazing_toys_hybrid)",
+      "Bash(node tools/generate-tour-guide.js)",
+      "Bash(npm root *)",
+      "Bash(node -e \"require\\('docx'\\)\" --require \"$\\(npm root -g\\)/docx\")",
+      "Bash(node -e \"require\\('C:/Users/arist/AppData/Roaming/npm/node_modules/docx'\\); console.log\\('ok'\\)\")",
+      "Bash(Select-Object Name, Length)"
     ]
   }
 }

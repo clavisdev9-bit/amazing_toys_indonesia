@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useLang } from '../../context/LangContext';
 
 /**
  * Generic autocomplete combobox.
@@ -15,11 +14,9 @@ export default function ComboboxField({
   isLoading = false,
   error = null,
   required = false,
-  placeholder,
+  placeholder = 'Ketik untuk mencari...',
   validationError,
 }) {
-  const { t } = useLang();
-  const resolvedPlaceholder = placeholder ?? t('combobox.placeholder');
   const selectedOption  = options.find(o => o.value === value) ?? null;
   const [inputText, setInputText]       = useState(selectedOption?.label ?? '');
   const [open, setOpen]                 = useState(false);
@@ -101,7 +98,7 @@ export default function ComboboxField({
         onChange={handleInputChange}
         onFocus={() => { if (value != null) setInputText(''); setOpen(true); }}
         onKeyDown={handleKeyDown}
-        placeholder={resolvedPlaceholder}
+        placeholder={placeholder}
         autoComplete="off"
         role="combobox"
         aria-expanded={open}
@@ -123,7 +120,7 @@ export default function ComboboxField({
           ) : error ? (
             <li className="px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg">{error}</li>
           ) : filtered.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-gray-400 italic">{t('combobox.noResults')}</li>
+            <li className="px-3 py-2 text-sm text-gray-400 italic">Tidak ada hasil ditemukan.</li>
           ) : (
             filtered.map((opt, idx) => (
               <li

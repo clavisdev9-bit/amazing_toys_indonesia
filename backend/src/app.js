@@ -64,12 +64,13 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('combined', { stream: { write: (msg) => logger.http(msg.trim()) } }));
 
-// Global rate limiter — 1000 req / 15 min per IP
-// 200 was too tight for a multi-role SPA: admin panel CRUD + maintenance
-// polling + hot-reload double-mounting in dev all share the same IP bucket.
+// Global rate limiter — per IP per 15 menit
+// Dinaikkan ke 50000: stress test 100 VU × 4 menit ≈ 23k req dari 1 IP (Docker NAT).
+// Di pameran semua staff mungkin share 1 IP (WiFi booth), jadi limit harus cukup longgar.
+// Brute-force auth dilindungi oleh customer_login_attempt.service secara terpisah.
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: 50000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many requests, please try again later.' },

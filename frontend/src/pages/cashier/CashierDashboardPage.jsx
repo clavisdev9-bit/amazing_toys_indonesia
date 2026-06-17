@@ -111,16 +111,6 @@ export default function CashierDashboardPage() {
       }
 
       // Single TRX — go directly to payment page (existing flow)
-      // Warn cashier if this order is already being processed (scanned but not yet paid)
-      if (txnData.status === 'WAITING_PAYMENT') {
-        setLookupError(t('cashier.errAlreadyScanned'));
-        setTimeout(() => {
-          setLookupError('');
-          const code = voucherCode.trim().toUpperCase() || undefined;
-          navigate(`/cashier/bayar/${txnId.trim()}`, { state: code ? { preVoucher: code } : undefined });
-        }, 2500);
-        return;
-      }
       const code = voucherCode.trim().toUpperCase() || undefined;
       navigate(`/cashier/bayar/${txnId.trim()}`, { state: code ? { preVoucher: code } : undefined });
     } catch (err) {
@@ -210,7 +200,7 @@ export default function CashierDashboardPage() {
             activeTab === 'preorder' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'
           }`}
         >
-          {t('cashier.preorderTab')} {preorderQueue.length > 0 && (
+          Pre-Order {preorderQueue.length > 0 && (
             <span className="ml-1 bg-orange-100 text-orange-700 text-xs rounded-full px-1.5 py-0.5">{preorderQueue.length}</span>
           )}
         </button>
@@ -228,7 +218,7 @@ export default function CashierDashboardPage() {
             activeTab === 'expired' ? 'border-red-500 text-red-600' : 'border-transparent text-gray-500'
           }`}
         >
-          {t('cashier.expiredTab')} {expired.length > 0 && <span className="ml-1 bg-red-100 text-red-600 text-xs rounded-full px-1.5 py-0.5">{expired.length}</span>}
+          Kadaluarsa {expired.length > 0 && <span className="ml-1 bg-red-100 text-red-600 text-xs rounded-full px-1.5 py-0.5">{expired.length}</span>}
         </button>
         <button
           onClick={() => { setActiveTab('groups'); loadGroups(); }}
@@ -236,7 +226,7 @@ export default function CashierDashboardPage() {
             activeTab === 'groups' ? 'border-violet-600 text-violet-600' : 'border-transparent text-gray-500'
           }`}
         >
-          {t('cashier.groupInvoiceTab')} {groups.length > 0 && <span className="ml-1 bg-violet-100 text-violet-700 text-xs rounded-full px-1.5 py-0.5">{groups.length}</span>}
+          Group Invoice {groups.length > 0 && <span className="ml-1 bg-violet-100 text-violet-700 text-xs rounded-full px-1.5 py-0.5">{groups.length}</span>}
         </button>
       </div>
 
@@ -250,44 +240,31 @@ export default function CashierDashboardPage() {
             <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noQueue')}</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
-              {queue.map((txn, idx) => {
-                const isBeingProcessed = txn.status === 'WAITING_PAYMENT';
-                return (
-                  <button
-                    key={txn.transaction_id}
-                    onClick={() => navigate(`/cashier/bayar/${txn.transaction_id}`)}
-                    className={`w-full px-4 py-3 text-left flex items-center justify-between gap-2 ${
-                      isBeingProcessed ? 'bg-yellow-50 hover:bg-yellow-100' : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <span className={`text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                        isBeingProcessed ? 'bg-yellow-200 text-yellow-800' : 'bg-gray-100 text-gray-500'
-                      }`}>{idx + 1}</span>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="font-mono text-sm font-semibold text-gray-900">{txn.transaction_id}</p>
-                          {txn.order_type === 'PREORDER' && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 shrink-0">PRE-ORDER</span>
-                          )}
-                          {isBeingProcessed && (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 border border-yellow-300 shrink-0">⏳ Sedang Diproses</span>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500">
-                          {txn.booth_location ? `${txn.booth_location} · ` : ''}
-                          {txn.customer_name || txn.customer_phone || txn.walk_in_phone || t('cashier.walkIn')} ·{' '}
-                          {formatDate(txn.created_at)}
-                        </p>
-                      </div>
+              {queue.map(txn => (
+                <button
+                  key={txn.transaction_id}
+                  onClick={() => navigate(`/cashier/bayar/${txn.transaction_id}`)}
+                  className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-mono text-sm font-semibold text-gray-900">{txn.transaction_id}</p>
+                      {txn.order_type === 'PREORDER' && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 shrink-0">PRE-ORDER</span>
+                      )}
                     </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-sm font-bold text-blue-700">{formatRupiah(txn.total_amount)}</p>
-                      <Badge status={txn.status} label={t(`badge.${txn.status}`)} />
-                    </div>
-                  </button>
-                );
-              })}
+                    <p className="text-xs text-gray-500">
+                      {txn.booth_location ? `${txn.booth_location} · ` : ''}
+                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'} ·{' '}
+                      {formatDate(txn.created_at)}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-blue-700">{formatRupiah(txn.total_amount)}</p>
+                    <Badge status={txn.status} label={t(`badge.${txn.status}`)} />
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -297,11 +274,11 @@ export default function CashierDashboardPage() {
       {activeTab === 'preorder' && (
         <div>
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-gray-400">{t('cashier.preorderDesc')}</p>
+            <p className="text-xs text-gray-400">Pre-order yang sudah disetujui helper, menunggu pembayaran.</p>
             <button onClick={loadPreorderQueue} className="text-xs text-orange-600 hover:underline">{t('helper.refresh')}</button>
           </div>
           {preorderQueue.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noPreorder')}</p>
+            <p className="text-gray-400 text-sm text-center py-8">Tidak ada pre-order menunggu pembayaran.</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
               {preorderQueue.map(txn => (
@@ -316,16 +293,16 @@ export default function CashierDashboardPage() {
                       <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 shrink-0">🔖 PRE-ORDER</span>
                     </div>
                     <p className="text-xs text-gray-500">
-                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || t('cashier.walkIn')}
+                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'}
                       {txn.booth_location ? ` · ${txn.booth_location}` : ''}
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      {t('cashier.approvedAtLabel')}: {txn.approved_at ? formatDate(txn.approved_at) : '-'} · {t('cashier.createdAtLabel')}: {formatDate(txn.created_at)}
+                      Disetujui: {txn.approved_at ? formatDate(txn.approved_at) : '-'} · Dibuat: {formatDate(txn.created_at)}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-orange-700">{formatRupiah(txn.total_amount)}</p>
-                    <span className="text-xs font-semibold text-orange-500">{t('cashier.notPaidLabel')}</span>
+                    <span className="text-xs font-semibold text-orange-500">Belum Dibayar</span>
                   </div>
                 </button>
               ))}
@@ -366,11 +343,11 @@ export default function CashierDashboardPage() {
       {activeTab === 'expired' && (
         <div>
           <div className="flex justify-between items-center mb-2">
-            <p className="text-xs text-gray-400">{t('cashier.expiredTabDesc')}</p>
+            <p className="text-xs text-gray-400">Transaksi yang melewati batas waktu tanpa pembayaran.</p>
             <button onClick={loadExpired} className="text-xs text-red-500 hover:underline">{t('helper.refresh')}</button>
           </div>
           {expired.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noExpiredToday')}</p>
+            <p className="text-gray-400 text-sm text-center py-8">Tidak ada transaksi kadaluarsa hari ini.</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
               {expired.map((txn) => (
@@ -382,10 +359,10 @@ export default function CashierDashboardPage() {
                     <p className="font-mono text-sm font-semibold text-gray-700">{txn.transaction_id}</p>
                     <p className="text-xs text-gray-500">
                       {txn.booth_location ? `${txn.booth_location} · ` : ''}
-                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || t('cashier.walkIn')} ·{' '}
+                      {txn.customer_name || txn.customer_phone || txn.walk_in_phone || 'Walk-in'} ·{' '}
                       Dibuat {formatDate(txn.created_at)}
                     </p>
-                    <p className="text-xs text-red-400 mt-0.5">{t('cashier.expiredAt')}: {formatDate(txn.expires_at)}</p>
+                    <p className="text-xs text-red-400 mt-0.5">Kadaluarsa: {formatDate(txn.expires_at)}</p>
                   </div>
                   <div className="text-right shrink-0">
                     <p className="text-sm font-bold text-gray-500">{formatRupiah(txn.total_amount)}</p>
@@ -404,7 +381,7 @@ export default function CashierDashboardPage() {
             <button onClick={loadGroups} className="text-xs text-violet-600 hover:underline">{t('helper.refresh')}</button>
           </div>
           {groups.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">{t('cashier.noGroupInvoice')}</p>
+            <p className="text-gray-400 text-sm text-center py-8">Belum ada group invoice hari ini.</p>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden divide-y">
               {groups.map(grp => {
@@ -424,7 +401,7 @@ export default function CashierDashboardPage() {
                           </span>
                         </div>
                         <p className="text-xs text-gray-500 mt-0.5 truncate">
-                          {grp.customer_name || grp.customer_phone || t('cashier.walkIn')}{grp.customer_phone && grp.customer_name ? ` · ${grp.customer_phone}` : ''} · {formatDate(grp.created_at)}
+                          {grp.customer_name || grp.customer_phone || 'Walk-in'}{grp.customer_phone && grp.customer_name ? ` · ${grp.customer_phone}` : ''} · {formatDate(grp.created_at)}
                         </p>
                       </div>
                       <div className="text-right shrink-0 flex flex-col items-end gap-1">
@@ -438,7 +415,7 @@ export default function CashierDashboardPage() {
                     {isOpen && (
                       <div className="bg-violet-50 border-t border-violet-100 px-4 py-3">
                         {expandedGroup.loading ? (
-                          <p className="text-xs text-gray-400 py-2">{t('cashier.loadingDetail')}</p>
+                          <p className="text-xs text-gray-400 py-2">Memuat detail…</p>
                         ) : expandedGroup.detail ? (
                           <>
                             {/* Transaction list */}
@@ -471,7 +448,7 @@ export default function CashierDashboardPage() {
                             </div>
                           </>
                         ) : (
-                          <p className="text-xs text-red-400 py-2">{t('cashier.groupDetailError')}</p>
+                          <p className="text-xs text-red-400 py-2">Gagal memuat detail group.</p>
                         )}
                       </div>
                     )}

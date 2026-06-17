@@ -487,29 +487,6 @@ async function sendPreorderExpired(phone, customerName) {
   }
 }
 
-async function sendOrderRejected(phone, customerName, reason) {
-  const settings = await _getWaSettings();
-  if (settings.provider === 'DISABLED') return { status: 'SKIPPED' };
-  if (!phone) return { status: 'SKIPPED' };
-
-  const { eventName } = await _getEventConfig();
-  const message =
-    `❌ *Pesanan Ditolak*\n\n` +
-    `Halo *${customerName}*, pesanan Anda di *${eventName}* telah ditolak oleh petugas.\n\n` +
-    `*Alasan:* ${reason || 'Tidak ada keterangan'}\n\n` +
-    `Silakan hubungi petugas booth jika ada pertanyaan.\n\n` +
-    `Terima kasih 🙏`;
-
-  try {
-    const result = await _callGateway(settings, phone, message);
-    logger.info('[WA] order_rejected terkirim', { phone: phone.slice(0, 5) + '***' });
-    return result;
-  } catch (err) {
-    logger.error('[WA] Gagal kirim order_rejected', { error: err.message });
-    return { status: 'FAILED', error: err.message };
-  }
-}
-
 module.exports = {
   sendOrderQR,
   getWaConfig,
@@ -524,5 +501,4 @@ module.exports = {
   sendPreorderCompleted,
   sendPreorderCancelled,
   sendPreorderExpired,
-  sendOrderRejected,
 };

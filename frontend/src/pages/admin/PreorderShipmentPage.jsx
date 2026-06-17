@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { getPreorderList, updateShipment, confirmArrived, confirmReadyToShip } from '../../api/preorder';
 import { formatRupiah, formatDate } from '../../utils/format';
 import Spinner from '../../components/ui/Spinner';
-import { useLang } from '../../context/LangContext';
 
 // ── Design tokens (same palette as HelperPage) ────────────────────────────────
 const C = {
@@ -21,18 +20,13 @@ function formatRupiahShort(n) {
 
 // BUG-051-02b: added 'pending' tab — PENDING/PENDING_APPROVAL pre-orders visible for admin monitoring.
 // BUG-051-02: added 'paid' tab — PAID pre-orders now visible for admin processing.
-const STATUS_TAB_KEYS = [
-  { key: 'pending',   tKey: 'preorder.tab.pending',   color: '#7C3AED' },
-  { key: 'paid',      tKey: 'preorder.tab.paid',       color: C.orange },
-  { key: 'awaiting',  tKey: 'preorder.tab.awaiting',   color: C.gold },
-  { key: 'arrived',   tKey: 'preorder.tab.arrived',    color: C.olive },
-  { key: 'completed', tKey: 'preorder.tab.completed',  color: C.muted },
+const STATUS_TABS = [
+  { key: 'pending',   label: 'Menunggu Pembayaran',  color: '#7C3AED' },
+  { key: 'paid',      label: 'Sudah Dibayar',        color: C.orange },
+  { key: 'awaiting',  label: 'Menunggu Kirim',       color: C.gold },
+  { key: 'arrived',   label: 'Barang Sudah Sampai',  color: C.olive },
+  { key: 'completed', label: 'Selesai',              color: C.muted },
 ];
-
-const STATUS_BADGE_CONFIG = {
-  PENDING_APPROVAL: { tKey: 'preorder.statusPendingApproval', bg: '#EDE9FE', color: '#7C3AED' },
-  PENDING:          { tKey: 'preorder.statusPending',          bg: '#FEF3C7', color: '#92400E' },
-};
 
 function Banner({ children, color }) {
   return (
@@ -43,47 +37,46 @@ function Banner({ children, color }) {
 }
 
 function ShipModal({ txn, onClose, onDone }) {
-  const { t } = useLang();
   const [courier, setCourier] = useState('');
   const [tracking, setTracking] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   async function submit() {
-    if (!courier.trim() || !tracking.trim()) { setErr(t('preorder.courierRequired')); return; }
+    if (!courier.trim() || !tracking.trim()) { setErr('Ekspedisi dan nomor resi wajib diisi.'); return; }
     setSaving(true);
     try {
       await updateShipment(txn.transaction_id, { courier: courier.trim(), tracking_number: tracking.trim() });
       onDone();
     } catch (e) {
-      setErr(e.response?.data?.message || t('preorder.shipError'));
+      setErr(e.response?.data?.message || 'Gagal memperbarui pengiriman.');
     } finally { setSaving(false); }
   }
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
       <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 360, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-        <h3 style={{ margin: '0 0 4px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>{t('preorder.shipModalTitle')}</h3>
+        <h3 style={{ margin: '0 0 4px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>Input Resi Pengiriman</h3>
         <p style={{ margin: '0 0 14px', fontSize: 12, color: C.muted }}>{txn.transaction_id} — {txn.customer_name || txn.shipping_name}</p>
         <div style={{ marginBottom: 10 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#5a4e3e', marginBottom: 3 }}>{t('preorder.courierLabel')}</label>
-          <input value={courier} onChange={e => setCourier(e.target.value)} placeholder={t('preorder.courierPh')}
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#5a4e3e', marginBottom: 3 }}>Ekspedisi *</label>
+          <input value={courier} onChange={e => setCourier(e.target.value)} placeholder="JNE / SiCepat / J&T / dll"
             style={{ width: '100%', boxSizing: 'border-box', padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', outline: 'none' }} />
         </div>
         <div style={{ marginBottom: 10 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#5a4e3e', marginBottom: 3 }}>{t('preorder.trackingLabel')}</label>
-          <input value={tracking} onChange={e => setTracking(e.target.value)} placeholder={t('preorder.trackingPh')}
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#5a4e3e', marginBottom: 3 }}>Nomor Resi *</label>
+          <input value={tracking} onChange={e => setTracking(e.target.value)} placeholder="000000000000"
             style={{ width: '100%', boxSizing: 'border-box', padding: '7px 10px', borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: 'inherit', outline: 'none' }} />
         </div>
         {err && <p style={{ margin: '0 0 10px', fontSize: 12, color: C.crimson, fontWeight: 600 }}>{err}</p>}
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={onClose} disabled={saving}
             style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}>
-            {t('preorder.cancelBtn')}
+            Batal
           </button>
           <button onClick={submit} disabled={saving}
             style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: C.olive, color: '#fff', cursor: saving ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 13, fontFamily: 'inherit', opacity: saving ? 0.7 : 1 }}>
-            {saving ? t('preorder.savingBtn') : t('preorder.confirmShipBtn')}
+            {saving ? 'Menyimpan...' : 'Konfirmasi Kirim'}
           </button>
         </div>
       </div>
@@ -91,20 +84,24 @@ function ShipModal({ txn, onClose, onDone }) {
   );
 }
 
+const STATUS_BADGE = {
+  PENDING_APPROVAL: { label: 'Menunggu Approval Helper', bg: '#EDE9FE', color: '#7C3AED' },
+  PENDING:          { label: 'Menunggu Pembayaran',       bg: '#FEF3C7', color: '#92400E' },
+};
+
 function TxnCard({ txn, tabKey, onAction }) {
-  const { t } = useLang();
-  const name = txn.customer_name || txn.shipping_name || t('preorder.walkIn');
+  const name = txn.customer_name || txn.shipping_name || 'Walk-in';
   const phone = txn.customer_phone || txn.shipping_phone;
-  const badgeCfg = STATUS_BADGE_CONFIG[txn.status];
+  const badge = STATUS_BADGE[txn.status];
   return (
     <div style={{ background: '#fff', borderRadius: 12, border: `1px solid ${C.border}`, padding: '12px 14px', marginBottom: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
         <div style={{ minWidth: 0, flex: 1, paddingRight: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
             <p style={{ margin: 0, fontFamily: 'monospace', fontWeight: 700, fontSize: 13, color: '#2a1e10' }}>{txn.transaction_id}</p>
-            {badgeCfg && (
-              <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: badgeCfg.bg, color: badgeCfg.color }}>
-                {t(badgeCfg.tKey)}
+            {badge && (
+              <span style={{ fontSize: 10.5, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: badge.bg, color: badge.color }}>
+                {badge.label}
               </span>
             )}
           </div>
@@ -119,7 +116,7 @@ function TxnCard({ txn, tabKey, onAction }) {
       {/* Shipping info */}
       {txn.shipping_address && (
         <div style={{ fontSize: 11.5, color: '#5a4e3e', marginBottom: 8, background: C.orangeLight, border: `1px solid ${C.orangeBorder}`, borderRadius: 6, padding: '5px 8px' }}>
-          <strong>{t('preorder.shippingLabel')}:</strong> {txn.shipping_name}{txn.shipping_city ? `, ${txn.shipping_city}` : ''}<br />
+          <strong>Pengiriman:</strong> {txn.shipping_name}{txn.shipping_city ? `, ${txn.shipping_city}` : ''}<br />
           {txn.shipping_address}
         </div>
       )}
@@ -127,36 +124,36 @@ function TxnCard({ txn, tabKey, onAction }) {
       {/* Courier info for shipped/arrived */}
       {txn.courier && (
         <div style={{ fontSize: 11.5, color: '#2563EB', marginBottom: 8 }}>
-          <strong>{txn.courier}</strong> · {t('preorder.resiLabel')}: <span style={{ fontFamily: 'monospace' }}>{txn.tracking_number}</span>
-          {txn.shipped_at && <span style={{ color: C.muted }}> · {t('preorder.shippedOn')} {formatDate(txn.shipped_at)}</span>}
+          <strong>{txn.courier}</strong> · Resi: <span style={{ fontFamily: 'monospace' }}>{txn.tracking_number}</span>
+          {txn.shipped_at && <span style={{ color: C.muted }}> · Dikirim {formatDate(txn.shipped_at)}</span>}
         </div>
       )}
       {txn.arrived_at && (
-        <div style={{ fontSize: 11.5, color: C.olive, marginBottom: 8 }}>{t('preorder.arrivedOn')}: {formatDate(txn.arrived_at)}</div>
+        <div style={{ fontSize: 11.5, color: C.olive, marginBottom: 8 }}>Tiba: {formatDate(txn.arrived_at)}</div>
       )}
 
       {/* Action buttons */}
       {tabKey === 'pending' && (
         <div style={{ fontSize: 12, color: '#7C3AED', fontWeight: 600, textAlign: 'center', padding: '6px 0', background: '#EDE9FE', borderRadius: 7 }}>
-          {txn.status === 'PENDING_APPROVAL' ? t('preorder.waitingApproval') : t('preorder.waitingPayment')}
+          Menunggu {txn.status === 'PENDING_APPROVAL' ? 'persetujuan helper' : 'pembayaran customer'}
         </div>
       )}
       {tabKey === 'paid' && (
         <button onClick={() => onAction('ready', txn)}
           style={{ width: '100%', padding: '8px 0', borderRadius: 9, background: C.orange, color: '#fff', border: 'none', fontWeight: 800, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-          {t('preorder.processShipBtn')}
+          🚀 Proses Pengiriman
         </button>
       )}
       {/* CR-050: AWAITING_SHIPMENT → ARRIVED directly (no resi input needed) */}
       {tabKey === 'awaiting' && (
         <button onClick={() => onAction('arrived', txn)}
           style={{ width: '100%', padding: '8px 0', borderRadius: 9, background: C.olive, color: '#fff', border: 'none', fontWeight: 800, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}>
-          {t('preorder.confirmArrivalBtn')}
+          ✅ Konfirmasi Barang Sudah Sampai
         </button>
       )}
       {tabKey === 'arrived' && (
         <div style={{ fontSize: 12, color: C.olive, fontWeight: 600, textAlign: 'center', padding: '6px 0' }}>
-          {t('preorder.waitingHelper')}
+          Menunggu serah terima oleh Helper
         </div>
       )}
     </div>
@@ -164,7 +161,6 @@ function TxnCard({ txn, tabKey, onAction }) {
 }
 
 export default function PreorderShipmentPage() {
-  const { t } = useLang();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('pending');
   const [orders, setOrders] = useState([]);
@@ -186,9 +182,9 @@ export default function PreorderShipmentPage() {
     setError('');
     getPreorderList(activeTab)
       .then(r => setOrders(r.data.data || []))
-      .catch(() => setError(t('preorder.loadError')))
+      .catch(() => setError('Gagal memuat data pre-order.'))
       .finally(() => setLoading(false));
-  }, [activeTab, t]);
+  }, [activeTab]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -198,10 +194,10 @@ export default function PreorderShipmentPage() {
     try {
       await confirmReadyToShip(readyConfirm.transaction_id);
       setReadyConfirm(null);
-      showToast(t('preorder.readySuccess'));
+      showToast('Status diperbarui ke AWAITING_SHIPMENT — pindah ke tab Menunggu Kirim.');
       load();
     } catch (e) {
-      showToast(e.response?.data?.message || t('preorder.processError'), 'error');
+      showToast(e.response?.data?.message || 'Gagal memproses pengiriman.', 'error');
     } finally { setActionLoading(false); }
   }
 
@@ -211,16 +207,16 @@ export default function PreorderShipmentPage() {
     try {
       await confirmArrived(arrivedConfirm.transaction_id);
       setArrivedConfirm(null);
-      showToast(t('preorder.arrivedSuccess'));
+      showToast('Status diperbarui ke ARRIVED.');
       load();
     } catch (e) {
-      showToast(e.response?.data?.message || t('preorder.arrivedError'), 'error');
+      showToast(e.response?.data?.message || 'Gagal konfirmasi kedatangan.', 'error');
     } finally { setActionLoading(false); }
   }
 
   function handleAction(type, txn) {
-    if (type === 'ready')   setReadyConfirm(txn);
-    if (type === 'ship')    setShipModal(txn);
+    if (type === 'ready')  setReadyConfirm(txn);
+    if (type === 'ship')   setShipModal(txn);
     if (type === 'arrived') setArrivedConfirm(txn);
   }
 
@@ -237,17 +233,17 @@ export default function PreorderShipmentPage() {
       {/* Header */}
       <div style={{ background: C.olive, color: '#fff', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={() => navigate('/admin')} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', borderRadius: 8, padding: '5px 10px', cursor: 'pointer', fontSize: 13, fontFamily: 'inherit', fontWeight: 700 }}>
-          {t('preorder.back')}
+          ← Kembali
         </button>
         <div>
-          <h1 style={{ margin: 0, fontWeight: 800, fontSize: 16 }}>{t('preorder.pageTitle')}</h1>
-          <p style={{ margin: '2px 0 0', fontSize: 12, opacity: 0.8 }}>{t('preorder.pageSubtitle')}</p>
+          <h1 style={{ margin: 0, fontWeight: 800, fontSize: 16 }}>📦 Manajemen Pengiriman Pre-Order</h1>
+          <p style={{ margin: '2px 0 0', fontSize: 12, opacity: 0.8 }}>Kelola pengiriman barang pre-order kepada customer</p>
         </div>
       </div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: `1.5px solid ${C.border}`, background: '#fff', overflowX: 'auto' }}>
-        {STATUS_TAB_KEYS.map(tab => (
+        {STATUS_TABS.map(tab => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
@@ -259,7 +255,7 @@ export default function PreorderShipmentPage() {
               whiteSpace: 'nowrap',
             }}
           >
-            {t(tab.tKey)}
+            {tab.label}
           </button>
         ))}
       </div>
@@ -273,13 +269,13 @@ export default function PreorderShipmentPage() {
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
               <button onClick={load} style={{ fontSize: 12, color: C.gold, fontWeight: 700, cursor: 'pointer', border: 'none', background: 'none', fontFamily: 'inherit' }}>
-                {t('preorder.refresh')}
+                ↺ Refresh
               </button>
             </div>
 
             {orders.length === 0 && (
               <p style={{ textAlign: 'center', color: C.muted, padding: '40px 0', fontSize: 13 }}>
-                {t('preorder.emptyMsg')}
+                Tidak ada data pre-order untuk status ini.
               </p>
             )}
 
@@ -294,21 +290,21 @@ export default function PreorderShipmentPage() {
       {readyConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 340, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>{t('preorder.readyModalTitle')}</h3>
+            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>🚀 Proses Pengiriman</h3>
             <p style={{ margin: '0 0 6px', fontSize: 13, color: '#5a4e3e' }}>
-              {t('preorder.readyConfirmBody', { id: readyConfirm.transaction_id })}
+              Konfirmasi bahwa <strong>{readyConfirm.transaction_id}</strong> siap diproses untuk pengiriman?
             </p>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: C.muted }}>
-              {t('preorder.readyConfirmDesc')}
+              Status akan berubah ke <strong>AWAITING_SHIPMENT</strong> — transaksi akan pindah ke tab "Menunggu Kirim".
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setReadyConfirm(null)} disabled={actionLoading}
                 style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}>
-                {t('preorder.cancelBtn')}
+                Batal
               </button>
               <button onClick={handleReady} disabled={actionLoading}
                 style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: C.orange, color: '#fff', cursor: actionLoading ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 13, fontFamily: 'inherit', opacity: actionLoading ? 0.7 : 1 }}>
-                {actionLoading ? t('preorder.processing') : t('preorder.yesProcess')}
+                {actionLoading ? 'Memproses...' : 'Ya, Proses'}
               </button>
             </div>
           </div>
@@ -320,7 +316,7 @@ export default function PreorderShipmentPage() {
         <ShipModal
           txn={shipModal}
           onClose={() => setShipModal(null)}
-          onDone={() => { setShipModal(null); showToast(t('preorder.shipDoneToast')); load(); }}
+          onDone={() => { setShipModal(null); showToast('Pengiriman dikonfirmasi — status SHIPPED.'); load(); }}
         />
       )}
 
@@ -328,21 +324,21 @@ export default function PreorderShipmentPage() {
       {arrivedConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#fff', borderRadius: 16, padding: 24, maxWidth: 340, width: '90%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>{t('preorder.arrivedModalTitle')}</h3>
+            <h3 style={{ margin: '0 0 8px', fontWeight: 800, fontSize: 15, color: '#2a1e10' }}>Konfirmasi Kedatangan</h3>
             <p style={{ margin: '0 0 6px', fontSize: 13, color: '#5a4e3e' }}>
-              {t('preorder.arrivedConfirmBody', { id: arrivedConfirm.transaction_id })}
+              Konfirmasi bahwa barang <strong>{arrivedConfirm.transaction_id}</strong> sudah tiba di Indonesia?
             </p>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: C.muted }}>
-              {t('preorder.arrivedConfirmDesc')}
+              Status akan berubah ke ARRIVED dan Helper dapat melakukan serah terima.
             </p>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setArrivedConfirm(null)} disabled={actionLoading}
                 style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff', cursor: 'pointer', fontWeight: 700, fontSize: 13, fontFamily: 'inherit' }}>
-                {t('preorder.cancelBtn')}
+                Batal
               </button>
               <button onClick={handleArrived} disabled={actionLoading}
                 style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: 'none', background: C.olive, color: '#fff', cursor: actionLoading ? 'not-allowed' : 'pointer', fontWeight: 800, fontSize: 13, fontFamily: 'inherit', opacity: actionLoading ? 0.7 : 1 }}>
-                {actionLoading ? t('preorder.processing') : t('preorder.yesConfirm')}
+                {actionLoading ? 'Memproses...' : 'Ya, Konfirmasi'}
               </button>
             </div>
           </div>

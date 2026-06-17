@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLang } from '../../context/LangContext';
 import { getProducts, getCategories, getProductByBarcode } from '../../api/products';
 import { createCashierOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
 import { formatRupiah } from '../../utils/format';
@@ -70,7 +69,6 @@ function ProductCard({ product, onAdd }) {
 export default function CashierPOSPage() {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
-  const { t } = useLang();
   const { subscribe } = useWebSocket();
   const { toasts, addToast, removeToast } = useToast();
 
@@ -133,9 +131,9 @@ export default function CashierPOSPage() {
       if (action === 'approve') {
         setCart(prev => prev.filter(i => i.id !== product_id));
         setAppliedVoucher(null);
-        addToast(t('cashierPos.itemDeletedByLeader'), 'success');
+        addToast('Item dihapus oleh leader.', 'success');
       } else {
-        addToast(t('cashierPos.deleteRequestRejected'), 'error');
+        addToast('Permintaan hapus ditolak oleh leader.', 'error');
       }
     });
   }, [subscribe, addToast]);
@@ -214,9 +212,9 @@ export default function CashierPOSPage() {
         subtotal: item.price * item.qty,
       });
       setPendingDeleteIds(prev => new Set(prev).add(item.id));
-      addToast(t('cashierPos.deleteRequestSent', { item: item.name }), 'info');
+      addToast(`Permintaan hapus "${item.name}" dikirim ke leader.`, 'info');
     } catch {
-      addToast(t('cashierPos.deleteRequestError'), 'error');
+      addToast('Gagal mengirim permintaan hapus. Coba lagi.', 'error');
     } finally {
       setDeletingIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
     }

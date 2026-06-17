@@ -41,10 +41,12 @@ foreach ($test in $Tests) {
     $startTime = Get-Date
 
     try {
-        k6 run `
-            --out "json=$outFile" `
-            --summary-trend-stats "min,avg,med,p(90),p(95),p(99),max" `
-            "$ScriptDir\$($test.file)"
+        # k6 dijalankan via Docker agar bisa akses backend di hybrid-net
+        docker run --rm `
+            --network hybrid_hybrid-net `
+            -v "${ScriptDir}:/scripts" `
+            grafana/k6 run /scripts/$($test.file) `
+            --summary-trend-stats "min,avg,med,p(90),p(95),p(99),max"
         $exitCode = $LASTEXITCODE
     } catch {
         $exitCode = 1

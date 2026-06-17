@@ -52,14 +52,15 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
+      UV_THREADPOOL_SIZE: 16
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: amazing_toys_hybrid
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD}
       DB_SSL: "false"
-      DB_POOL_MIN: 2
-      DB_POOL_MAX: 10
+      DB_POOL_MIN: 5
+      DB_POOL_MAX: 30
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
       CUSTOMER_TOKEN_EXPIRES_IN: ${CUSTOMER_TOKEN_EXPIRES_IN:-24h}

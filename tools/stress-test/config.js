@@ -1,9 +1,9 @@
 // ── Konfigurasi Stress Test ────────────────────────────────────────────────────
 // Edit bagian ini sesuai environment Anda
 
-export const BASE_URL = 'http://localhost:3002'; // port backend (docker mapped)
+export const BASE_URL = 'http://hybrid_backend:3001'; // port backend (docker mapped)
 export const API      = `${BASE_URL}/api/v1`;
-export const WS_URL   = 'ws://localhost:3002/ws';
+export const WS_URL   = 'ws://hybrid_backend:3001/ws';
 
 // Kredensial staff yang sudah ada di DB (dari seed)
 export const STAFF_CREDENTIALS = {
