@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import ThermalReceipt from './ThermalReceipt';
-import { directPrintReceipt } from '../../api/print';
 
 // ── Download receipt as HTML file ─────────────────────────────────────────────
 function downloadReceiptAsHtml(innerHtml, txnId) {
@@ -66,34 +65,13 @@ function downloadReceiptAsHtml(innerHtml, txnId) {
 
 // ── Status indicator ──────────────────────────────────────────────────────────
 function PrintStatusBadge({ status }) {
-  if (status === 'printing') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
-        <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-        </svg>
-        Mencetak…
-      </span>
-    );
-  }
-  if (status === 'success') {
+  if (status === 'done') {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5">
         <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
         </svg>
-        Berhasil dicetak
-      </span>
-    );
-  }
-  if (status === 'error') {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
-        <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
-        </svg>
-        Printer error
+        Dialog cetak dibuka
       </span>
     );
   }
@@ -112,13 +90,12 @@ export default function PrintConfirmationModal({
   onConfirmPrint,
 }) {
   const [sendEmail,   setSendEmail]   = useState(false);
-  const [printStatus, setPrintStatus] = useState(null); // null | 'printing' | 'success' | 'error'
-  const [printError,  setPrintError]  = useState('');
+  const [printStatus, setPrintStatus] = useState(null); // null | 'done'
   const modalRef   = useRef(null);
   const receiptRef = useRef(null);
 
   useEffect(() => {
-    if (isOpen) { setSendEmail(false); setPrintStatus(null); setPrintError(''); }
+    if (isOpen) { setSendEmail(false); setPrintStatus(null); }
   }, [isOpen]);
 
   useEffect(() => {
@@ -138,22 +115,43 @@ export default function PrintConfirmationModal({
 
   if (!isOpen || !txn) return null;
 
-  const hasEmail   = !!customer?.email;
-  const isPrinting = printStatus === 'printing';
+  const hasEmail = !!customer?.email;
 
-  // ESC/POS direct print — calls backend
-  async function handleDirectPrint() {
-    setPrintStatus('printing');
-    setPrintError('');
-    try {
-      await directPrintReceipt({ txn, success, cashierName, customer, cashReceived });
-      setPrintStatus('success');
-      onConfirmPrint(sendEmail);
-    } catch (err) {
-      const msg = err?.response?.data?.message ?? err.message ?? 'Printer tidak tersedia.';
-      setPrintError(msg);
-      setPrintStatus('error');
+  // Print via browser print dialog (PDF-capable)
+  function handlePrintPdf() {
+    const innerHtml = receiptRef.current?.innerHTML;
+    if (!innerHtml) return;
+    const win = window.open('', '_blank', 'width=420,height=700,scrollbars=yes');
+    if (!win) { alert('Pop-up diblokir browser. Izinkan pop-up untuk halaman ini.'); return; }
+    win.document.write(`<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Receipt ${txn?.transaction_id ?? ''}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    @page { size: 80mm auto; margin: 0; }
+    html { width: 80mm; }
+    body {
+      width: 80mm;
+      padding: 4mm 4mm 8mm;
+      background: #fff;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      color: #000;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
+    * { -webkit-font-smoothing: none; -moz-osx-font-smoothing: unset; text-rendering: optimizeSpeed; }
+  </style>
+</head>
+<body>${innerHtml}</body>
+</html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 400);
+    setPrintStatus('done');
+    onConfirmPrint(sendEmail);
   }
 
   // Download receipt as HTML file — uses rendered HTML preview
@@ -209,16 +207,6 @@ export default function PrintConfirmationModal({
           </div>
         </div>
 
-        {/* Printer error message */}
-        {printStatus === 'error' && (
-          <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
-            <span className="font-medium">Gagal:</span> {printError}
-            <span className="block mt-0.5 text-red-600">
-              Gunakan <strong>Browser Print</strong> di bawah sebagai alternatif.
-            </span>
-          </div>
-        )}
-
         {/* E-receipt checkbox */}
         {hasEmail && (
           <div className="flex items-center gap-2 mt-4">
@@ -237,22 +225,19 @@ export default function PrintConfirmationModal({
 
         {/* Action buttons */}
         <div className="mt-6 space-y-2">
-          {/* Primary: ESC/POS direct print */}
+          {/* Primary: Print PDF via browser dialog */}
           <button
             type="button"
-            onClick={handleDirectPrint}
-            disabled={isPrinting || printStatus === 'success'}
-            className={`w-full flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-colors
-              ${isPrinting || printStatus === 'success'
-                ? 'bg-emerald-400 text-white cursor-not-allowed'
-                : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+            onClick={handlePrintPdf}
+            className="w-full flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-colors bg-emerald-600 text-white hover:bg-emerald-700"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 6 2 18 2 18 9"/>
-              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-              <rect x="6" y="14" width="12" height="8"/>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="12" y1="18" x2="12" y2="12"/>
+              <line x1="9" y1="15" x2="15" y2="15"/>
             </svg>
-            {isPrinting ? 'Mencetak…' : printStatus === 'success' ? 'Dicetak' : 'Print Langsung (ESC/POS)'}
+            Print / Simpan PDF
           </button>
 
           {/* Secondary row: download HTML + cancel */}
@@ -260,8 +245,7 @@ export default function PrintConfirmationModal({
             <button
               type="button"
               onClick={handleDownloadHtml}
-              disabled={isPrinting}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 border border-gray-300 text-gray-700 rounded-md px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+              className="flex-1 inline-flex items-center justify-center gap-1.5 border border-gray-300 text-gray-700 rounded-md px-4 py-2 text-sm hover:bg-gray-50"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -281,9 +265,8 @@ export default function PrintConfirmationModal({
 
           {/* Hint text */}
           <p className="text-center text-xs text-gray-400 pt-1">
-            <strong>Print Langsung</strong> mendukung printer TCP/IP maupun USB (dikonfigurasi admin).
-            <br/>Untuk USB: pastikan nama printer Windows sudah diisi di Admin → Konfigurasi → Printer Thermal.
-            <br/>Gunakan <em>Download HTML</em> jika printer belum terhubung sama sekali.
+            <strong>Print / Simpan PDF</strong> membuka dialog cetak browser.
+            Pilih printer untuk cetak langsung, atau pilih <em>"Save as PDF"</em> untuk simpan file.
           </p>
         </div>
       </div>

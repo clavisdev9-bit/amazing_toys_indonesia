@@ -444,7 +444,9 @@ function MembuatOrderPanel({ searchQuery }) {
       return { product_id: pid, qty, product_name: p?.product_name, price: p?.price, is_preorder: p?.is_preorder };
     });
 
-  const hasPreorder = cartItems.some(i => i.is_preorder);
+  const hasPreorder  = cartItems.some(i =>  i.is_preorder);
+  const hasRegular   = cartItems.some(i => !i.is_preorder);
+  const hasMixedCart = hasPreorder && hasRegular;
   const subtotal = cartItems.reduce((s, i) => s + (i.price || 0) * i.qty, 0);
   const taxAmt = Math.round(subtotal * ppnRate / 100);
   const total = subtotal + taxAmt;
@@ -678,6 +680,25 @@ function MembuatOrderPanel({ searchQuery }) {
                 </div>
               ))}
 
+              {/* Mixed cart warning */}
+              {hasMixedCart && (
+                <div style={{ margin: '10px 0', padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1.5px solid #FECACA' }}>
+                  <p style={{ margin: '0 0 6px', fontSize: 12, fontWeight: 800, color: '#991B1B' }}>⚠ Order ini mengandung item PRE-ORDER dan REGULAR</p>
+                  <div style={{ marginBottom: 6 }}>
+                    {cartItems.map(i => (
+                      <div key={i.product_id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#374151', marginBottom: 2 }}>
+                        <span style={{ flex: 1 }}>{i.product_name}</span>
+                        <span style={{ padding: '1px 6px', borderRadius: 5, fontWeight: 700, fontSize: 10.5, background: i.is_preorder ? '#FED7AA' : '#D1FAE5', color: i.is_preorder ? '#EA580C' : '#065F46' }}>
+                          {i.is_preorder ? '🔖 PRE-ORDER' : '✓ REGULAR'}
+                        </span>
+                        <span style={{ color: '#6B7280', fontSize: 11 }}>×{i.qty}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p style={{ margin: 0, fontSize: 11.5, color: '#B91C1C' }}>Barang PRE-ORDER tidak bisa digabung dengan REGULAR. Buat order terpisah.</p>
+                </div>
+              )}
+
               {/* Tax & total */}
               <div style={{ padding: '10px 0', borderBottom: `1px solid ${C.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: C.muted, marginBottom: 4 }}>
@@ -767,10 +788,11 @@ function MembuatOrderPanel({ searchQuery }) {
             {/* Create order button */}
             <div style={{ padding: '12px 20px', paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))', borderTop: `1px solid ${C.border}` }}>
               <button
-                onClick={() => { setError(''); setConfirmModal(true); }}
-                style={{ width: '100%', padding: '14px 0', borderRadius: 12, background: C.olive, color: '#fff', border: 'none', fontWeight: 800, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}
+                onClick={() => { if (hasMixedCart) return; setError(''); setConfirmModal(true); }}
+                disabled={hasMixedCart}
+                style={{ width: '100%', padding: '14px 0', borderRadius: 12, background: hasMixedCart ? '#9CA3AF' : C.olive, color: '#fff', border: 'none', fontWeight: 800, fontSize: 15, cursor: hasMixedCart ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: hasMixedCart ? 0.7 : 1 }}
               >
-                🎫 Buat Order · {formatRupiah(total)}
+                {hasMixedCart ? '⚠ Tidak Bisa — Pisahkan Order' : `🎫 Buat Order · ${formatRupiah(total)}`}
               </button>
             </div>
           </div>

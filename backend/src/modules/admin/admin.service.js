@@ -117,12 +117,14 @@ async function deleteUser(userId) {
 
 // ── Master Data — Products ────────────────────────────────────────────────────
 
-async function adminListProducts({ tenantId, search, includeInactive = true, page = 1, limit = 20 }) {
+async function adminListProducts({ tenantId, search, includeInactive = true, availableOnly = false, syncedOnly = false, page = 1, limit = 20 }) {
   const offset = (page - 1) * limit;
   const conditions = [];
   const params = [];
 
-  if (!includeInactive) conditions.push(`p.is_active = TRUE`);
+  if (!includeInactive)  conditions.push(`p.is_active = TRUE`);
+  if (availableOnly)     conditions.push(`p.stock_quantity > 0`);
+  if (syncedOnly)        conditions.push(`x.odoo_id IS NOT NULL`);
   if (tenantId) { params.push(tenantId); conditions.push(`p.tenant_id = $${params.length}`); }
   if (search)   {
     params.push(`%${search}%`);
@@ -137,14 +139,20 @@ async function adminListProducts({ tenantId, search, includeInactive = true, pag
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.is_active, p.created_at, p.updated_at,
            p.is_preorder, p.preorder_note,
-           t.tenant_id, t.tenant_name, t.booth_location
+           t.tenant_id, t.tenant_name, t.booth_location,
+           x.odoo_id
     FROM products p
     LEFT JOIN tenants t ON t.tenant_id = p.tenant_id
+    LEFT JOIN integration_xref x ON x.entity_type = 'product' AND x.sos_id = p.product_id AND x.status = 'ACTIVE'
     ${where}
     ORDER BY p.is_active DESC, p.product_name ASC
     LIMIT $${params.length - 1} OFFSET $${params.length}
   `;
-  const countSql = `SELECT COUNT(*) FROM products p ${where}`;
+  const countSql = `
+    SELECT COUNT(*) FROM products p
+    LEFT JOIN integration_xref x ON x.entity_type = 'product' AND x.sos_id = p.product_id AND x.status = 'ACTIVE'
+    ${where}
+  `;
   const [data, count] = await Promise.all([
     query(sql, params),
     query(countSql, params.slice(0, -2)),
@@ -261,6 +269,19 @@ async function adminDeleteProduct(productId) {
   return { message: `Produk ${result.rows[0].product_name} dinonaktifkan.` };
 }
 
+async function adminBulkDeleteProducts(productIds) {
+  if (!Array.isArray(productIds) || productIds.length === 0)
+    throw new AppError('productIds wajib diisi.', 422);
+  const placeholders = productIds.map((_, i) => `$${i + 1}`).join(', ');
+  const result = await query(
+    `UPDATE products SET is_active = FALSE, updated_at = NOW()
+     WHERE product_id IN (${placeholders}) AND is_active = TRUE
+     RETURNING product_id`,
+    productIds,
+  );
+  return { updated: result.rowCount };
+}
+
 async function saveProductImage(base64Data) {
   if (!base64Data) throw new AppError('Data gambar wajib diisi.', 422);
 
@@ -329,6 +350,46 @@ async function adminCreateTenant({ tenant_name, booth_location, floor_label, con
     [tenant_id, tenant_name, booth_location, floor_label || null, contact_name, contact_phone, contact_email || null]
   );
   return result.rows[0];
+}
+
+async function adminBulkUploadTenants(rows) {
+  if (!Array.isArray(rows) || rows.length === 0)
+    throw new AppError('Data tenant tidak boleh kosong.', 422);
+
+  // Validate required fields
+  const errors = [];
+  rows.forEach((r, i) => {
+    if (!r.tenant_name)   errors.push(`Baris ${i + 2}: tenant_name wajib diisi.`);
+    if (!r.booth_location) errors.push(`Baris ${i + 2}: booth_location wajib diisi.`);
+    if (!r.contact_name)   errors.push(`Baris ${i + 2}: contact_name wajib diisi.`);
+    if (!r.contact_phone)  errors.push(`Baris ${i + 2}: contact_phone wajib diisi.`);
+  });
+  if (errors.length) throw new AppError(errors.join(' | '), 422);
+
+  // Get current max tenant_id to generate next sequential IDs
+  const maxRes = await query(`SELECT tenant_id FROM tenants ORDER BY tenant_id DESC LIMIT 1`);
+  let nextNum = maxRes.rows.length > 0 ? parseInt(maxRes.rows[0].tenant_id.slice(1), 10) + 1 : 1;
+
+  const inserted = [];
+  for (const r of rows) {
+    const tenant_id = `T${String(nextNum++).padStart(3, '0')}`;
+    const result = await query(
+      `INSERT INTO tenants (tenant_id, tenant_name, booth_location, floor_label, contact_name, contact_phone, contact_email, order_mode)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        tenant_id,
+        r.tenant_name.trim(),
+        r.booth_location.trim(),
+        r.floor_label?.trim() || null,
+        r.contact_name.trim(),
+        String(r.contact_phone).trim(),
+        r.contact_email?.trim() || null,
+        r.order_mode?.trim() || null,
+      ]
+    );
+    inserted.push(result.rows[0]);
+  }
+  return { created: inserted.length, tenants: inserted };
 }
 
 async function adminUpdateTenant(tenantId, data) {
@@ -1051,10 +1112,10 @@ module.exports = {
   // Users
   listUsers, createUser, updateUser, resetPassword, deleteUser,
   // Products
-  adminListProducts, adminCreateProduct, adminUpdateProduct, adminDeleteProduct,
+  adminListProducts, adminCreateProduct, adminUpdateProduct, adminDeleteProduct, adminBulkDeleteProducts,
   adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription, saveProductImage,
   // Tenants (booth master data)
-  adminListTenants, adminCreateTenant, adminUpdateTenant,
+  adminListTenants, adminCreateTenant, adminUpdateTenant, adminBulkUploadTenants,
   // Audit log
   getAuditLogs,
   // Config

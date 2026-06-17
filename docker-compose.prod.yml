@@ -1,0 +1,177 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: prod_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: amazing_toys_hybrid
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - prod_postgres_data:/var/lib/postgresql/data
+      # Init scripts — alphabetical, run ONCE on fresh volume (clean DB)
+      # Mock/sample data files (004, 007, 012) are excluded intentionally
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+      - ./backend/migrations/001_job_run_log.sql:/docker-entrypoint-initdb.d/03_job_run_log.sql:ro
+      - ./integration/migrations/001_integration_tables.sql:/docker-entrypoint-initdb.d/04_integration_tables.sql:ro
+      - ./backend/migrations/002_odoo_company.sql:/docker-entrypoint-initdb.d/05_odoo_company.sql:ro
+      - ./backend/migrations/003_customers_birth_date.sql:/docker-entrypoint-initdb.d/06_customers_birth_date.sql:ro
+      - ./backend/migrations/005_add_tax_columns.sql:/docker-entrypoint-initdb.d/07_add_tax_columns.sql:ro
+      - ./backend/migrations/005_bca_qris_transactions.sql:/docker-entrypoint-initdb.d/08_bca_qris_transactions.sql:ro
+      - ./backend/migrations/006_add_odoo_categ_name.sql:/docker-entrypoint-initdb.d/09_add_odoo_categ_name.sql:ro
+      - ./backend/migrations/008_wishlists.sql:/docker-entrypoint-initdb.d/10_wishlists.sql:ro
+      - ./backend/migrations/009_stock_sync_log.sql:/docker-entrypoint-initdb.d/11_stock_sync_log.sql:ro
+      - ./backend/migrations/009_payment_voucher_xref.sql:/docker-entrypoint-initdb.d/12_payment_voucher_xref.sql:ro
+      - ./backend/migrations/010_voucher_tables.sql:/docker-entrypoint-initdb.d/13_voucher_tables.sql:ro
+      - ./backend/migrations/011_cr035_hybrid_model_c.sql:/docker-entrypoint-initdb.d/14_cr035_hybrid_model_c.sql:ro
+      - ./backend/migrations/013_cr036_qr_delivery.sql:/docker-entrypoint-initdb.d/15_cr036_qr_delivery.sql:ro
+      - ./backend/migrations/014_cr036_waha_session.sql:/docker-entrypoint-initdb.d/16_cr036_waha_session.sql:ro
+      - ./backend/migrations/015_cr040_helper_approve.sql:/docker-entrypoint-initdb.d/17_cr040_helper_approve.sql:ro
+      - ./backend/migrations/016_drop_expires_at_not_null.sql:/docker-entrypoint-initdb.d/18_drop_expires_at_not_null.sql:ro
+      - ./backend/migrations/024_customer_otp_devices.sql:/docker-entrypoint-initdb.d/19_customer_otp_devices.sql:ro
+    # Postgres tidak di-expose ke host — akses hanya dari internal network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_hybrid"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - prod-net
+
+  # ── Backend (Node.js / Express) ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: prod_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      UV_THREADPOOL_SIZE: 16
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: amazing_toys_hybrid
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_SSL: "false"
+      DB_POOL_MIN: 5
+      DB_POOL_MAX: 30
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-8h}
+      CUSTOMER_TOKEN_EXPIRES_IN: ${CUSTOMER_TOKEN_EXPIRES_IN:-24h}
+      TXN_PENDING_TIMEOUT_MINUTES: ${TXN_PENDING_TIMEOUT_MINUTES:-30}
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      EMAIL_FROM: ${EMAIL_FROM}
+      EMAIL_NOTIFY_TO: ${EMAIL_NOTIFY_TO}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-5}
+      DEVICE_TRUST_DAYS: ${DEVICE_TRUST_DAYS:-30}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-3}
+      PRINTER_IP: ${PRINTER_IP}
+      PRINTER_PORT: ${PRINTER_PORT:-9100}
+      INTEGRATION_WEBHOOK_URL: http://integration:4000
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+    ports:
+      - "${BACKEND_DEV_PORT:-3003}:3001"
+    volumes:
+      - prod_uploads_data:/app/public/uploads
+      - prod_config_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - prod-net
+
+  # ── Integration Service (Odoo sync) ─────────────────────────────────────────
+  integration:
+    build:
+      context: ./integration
+      dockerfile: Dockerfile
+    container_name: prod_integration
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SOS_BASE_URL: http://backend:3001/api/v1
+      SOS_ADMIN_USERNAME: ${SOS_ADMIN_USERNAME:-integration_admin}
+      SOS_ADMIN_PASSWORD: ${SOS_ADMIN_PASSWORD}
+      ODOO_BASE_URL: ${ODOO_BASE_URL}
+      ODOO_DB: ${ODOO_DB}
+      ODOO_LOGIN: ${ODOO_LOGIN}
+      ODOO_PASSWORD: ${ODOO_PASSWORD}
+      ODOO_WALKIN_PARTNER_ID: ${ODOO_WALKIN_PARTNER_ID}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      XREF_DB_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/amazing_toys_hybrid
+      LOW_STOCK_THRESHOLD: ${LOW_STOCK_THRESHOLD:-10}
+      PRODUCT_SYNC_INTERVAL_MIN: ${PRODUCT_SYNC_INTERVAL_MIN:-30}
+      STOCK_SYNC_INTERVAL_MIN: ${STOCK_SYNC_INTERVAL_MIN:-30}
+      SWEEP_INTERVAL_MIN: ${SWEEP_INTERVAL_MIN:-5}
+      POLLING_INTERVAL_SEC: ${POLLING_INTERVAL_SEC:-60}
+      RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-3}
+      CIRCUIT_BREAKER_THRESHOLD: ${CIRCUIT_BREAKER_THRESHOLD:-5}
+      CIRCUIT_BREAKER_RESET_MIN: ${CIRCUIT_BREAKER_RESET_MIN:-2}
+      TENANT_PRODUCT_MAPPING: ${TENANT_PRODUCT_MAPPING:-{}}
+      DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-T001}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - prod-net
+
+  # ── WAHA (Self-hosted WhatsApp HTTP API) ────────────────────────────────────
+  sos_waha:
+    image: devlikeapro/waha
+    container_name: prod_waha
+    restart: unless-stopped
+    environment:
+      - WHATSAPP_API_KEY=${WAHA_API_KEY:-}
+      - WAHA_DASHBOARD_USERNAME=${WAHA_DASHBOARD_USERNAME:-admin}
+      - WAHA_DASHBOARD_PASSWORD=${WAHA_DASHBOARD_PASSWORD:-AmazingToys2026}
+    volumes:
+      - prod_waha_data:/app/.sessions
+    networks:
+      - prod-net
+    ports:
+      - "${WAHA_PORT:-3011}:3000"
+
+  # ── Frontend (React → Nginx) ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: prod_frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3030}:80"
+    depends_on:
+      - backend
+    networks:
+      - prod-net
+
+volumes:
+  prod_postgres_data:
+  prod_uploads_data:
+  prod_config_data:
+  prod_waha_data:
+
+networks:
+  prod-net:
+    driver: bridge

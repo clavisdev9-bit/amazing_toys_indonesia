@@ -3,7 +3,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import ProductBulkUpload from '../ProductBulkUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
-  adminDeleteProduct, uploadProductImage, syncOdooProducts, syncStock,
+  adminDeleteProduct, adminBulkDeleteProducts, uploadProductImage, syncOdooProducts, syncStock,
   adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription,
   getTaxConfig,
 } from '../../../api/admin';
@@ -206,6 +206,8 @@ export default function MasterDataTab() {
   const [search, setSearch]               = useState('');
   const [filterTenant, setFilterTenant]   = useState('');
   const [includeInactive, setInclude]     = useState(true);
+  const [filterAvailable, setFilterAvailable] = useState(false);
+  const [filterSynced, setFilterSynced]       = useState(false);
 
   const [createModal, setCreateModal] = useState(false);
   const [editModal, setEditModal]     = useState(null);
@@ -220,6 +222,10 @@ export default function MasterDataTab() {
   const [uploadFile, setUploadFile]   = useState(null);
   const [uploading, setUploading]     = useState(false);
   const [previewUrl, setPreviewUrl]   = useState(null);
+
+  const [selectedIds, setSelectedIds]     = useState(new Set());
+  const [bulkDeleteModal, setBulkDeleteModal] = useState(false);
+  const [bulkDeleting, setBulkDeleting]   = useState(false);
 
   const [qrModal, setQrModal]             = useState(null); // product for QR display
   const [holdingId, setHoldingId]         = useState(null); // productId being toggled
@@ -260,12 +266,15 @@ export default function MasterDataTab() {
       search:           search || undefined,
       tenant_id:        filterTenant || undefined,
       include_inactive: String(includeInactive),
+      available_only:   filterAvailable ? 'true' : undefined,
+      synced_only:      filterSynced    ? 'true' : undefined,
       page,
       page_size:        pageSize,
     })
       .then((r) => {
         setProducts(r.data.data?.items ?? []);
         if (r.data.data?.pagination) setPagination(r.data.data.pagination);
+        setSelectedIds(new Set());
       })
       .catch(() => addToast('Gagal memuat produk.', 'error'))
       .finally(() => setLoading(false));
@@ -274,7 +283,7 @@ export default function MasterDataTab() {
   // Reset to page 1 whenever filters change
   const resetPage = useCallback(() => setPage(1), []);
 
-  useEffect(() => { resetPage(); }, [search, filterTenant, includeInactive, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { resetPage(); }, [search, filterTenant, includeInactive, filterAvailable, filterSynced, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
   useEffect(() => {
     getTenants({ active_only: false }).then((r) => setTenants(r.data.data ?? []));
@@ -494,6 +503,40 @@ export default function MasterDataTab() {
     }
   }
 
+  const activeProducts = products.filter((p) => p.is_active);
+  const allActiveSelected = activeProducts.length > 0 && activeProducts.every((p) => selectedIds.has(p.product_id));
+
+  function toggleSelectAll() {
+    if (allActiveSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(activeProducts.map((p) => p.product_id)));
+    }
+  }
+
+  function toggleSelectOne(productId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(productId) ? next.delete(productId) : next.add(productId);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    setBulkDeleting(true);
+    try {
+      const r = await adminBulkDeleteProducts([...selectedIds]);
+      addToast(`${r.data.updated} produk berhasil dinonaktifkan.`, 'success');
+      setSelectedIds(new Set());
+      setBulkDeleteModal(false);
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menonaktifkan produk.', 'error');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   async function handleToggleHold(p) {
     setHoldingId(p.product_id);
     const nextHold = !p.is_on_hold;
@@ -609,6 +652,11 @@ export default function MasterDataTab() {
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
           ⬆ Upload Massal
         </Button>
+        <Button size="sm"
+          onClick={() => window.open('/admin/print-products', '_blank')}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          🖨️ Cetak
+        </Button>
         <Button size="sm" onClick={openCreate}
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
           + Tambah Produk
@@ -631,6 +679,14 @@ export default function MasterDataTab() {
           <input type="checkbox" checked={includeInactive} onChange={(e) => setInclude(e.target.checked)} className="rounded" />
           Tampilkan nonaktif
         </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+          <input type="checkbox" checked={filterAvailable} onChange={(e) => setFilterAvailable(e.target.checked)} className="rounded" />
+          Stok tersedia saja
+        </label>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer select-none">
+          <input type="checkbox" checked={filterSynced} onChange={(e) => setFilterSynced(e.target.checked)} className="rounded" />
+          Sudah sync ke Odoo
+        </label>
         {products.some((p) => p.is_on_hold) && (
           <span
             className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
@@ -641,6 +697,23 @@ export default function MasterDataTab() {
         )}
       </div>
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-3 bg-red-50 border border-red-200 rounded-lg">
+          <span className="text-sm font-medium text-red-700">{selectedIds.size} produk dipilih</span>
+          <button
+            onClick={() => setBulkDeleteModal(true)}
+            className="px-3 py-1 text-xs font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+            Nonaktifkan Semua
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="px-3 py-1 text-xs font-medium border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors">
+            Batal Pilih
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       {loading ? <Spinner /> : products.length === 0 ? (
         <EmptyState icon="📦" title="Belum ada produk" />
@@ -650,7 +723,16 @@ export default function MasterDataTab() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b">
                 <tr>
-                  {['ID / Nama','Deskripsi','Kategori','Harga','Stok','Tenant','Barcode','Status','Foto','Diperbarui','Aksi'].map((h) => (
+                  <th className="px-3 py-2.5 w-8">
+                    <input
+                      type="checkbox"
+                      checked={allActiveSelected}
+                      onChange={toggleSelectAll}
+                      className="rounded border-gray-300 cursor-pointer"
+                      title="Pilih semua aktif"
+                    />
+                  </th>
+                  {['ID / Nama','Deskripsi','Kategori','Harga','Stok','Tenant','Barcode','Odoo ID','Status','Foto','Diperbarui','Aksi'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -658,7 +740,17 @@ export default function MasterDataTab() {
               <tbody>
                 {products.map((p) => (
                   <tr key={p.product_id}
-                    className={`border-b last:border-0 ${!p.is_active ? 'opacity-50 bg-gray-50' : 'hover:bg-gray-50'}`}>
+                    className={`border-b last:border-0 ${selectedIds.has(p.product_id) ? 'bg-red-50' : !p.is_active ? 'opacity-50 bg-gray-50' : 'hover:bg-gray-50'}`}>
+                    <td className="px-3 py-2.5 w-8">
+                      {p.is_active && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.product_id)}
+                          onChange={() => toggleSelectOne(p.product_id)}
+                          className="rounded border-gray-300 cursor-pointer"
+                        />
+                      )}
+                    </td>
                     <td className="px-3 py-2.5">
                       <p className="font-medium text-gray-900">{p.product_name}</p>
                       <p className="text-xs text-gray-400 font-mono">{p.product_id}</p>
@@ -692,6 +784,11 @@ export default function MasterDataTab() {
                         </svg>
                         <span className="font-mono text-[9px] text-gray-400 truncate max-w-[72px] mt-0.5">{p.barcode}</span>
                       </button>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap">
+                      {p.odoo_id
+                        ? <span className="font-mono text-violet-700 bg-violet-50 px-1.5 py-0.5 rounded">#{p.odoo_id}</span>
+                        : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(p)}`}>
@@ -934,6 +1031,22 @@ export default function MasterDataTab() {
           <div className="flex gap-2 w-full pt-1">
             <Button variant="secondary" className="flex-1" onClick={() => setQrModal(null)}>Tutup</Button>
             <Button className="flex-1" onClick={handleDownloadQR}>Unduh PNG</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Delete Confirm */}
+      <Modal open={bulkDeleteModal} onClose={() => setBulkDeleteModal(false)} title="Nonaktifkan Produk Terpilih">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Nonaktifkan <span className="font-semibold text-red-600">{selectedIds.size} produk</span> sekaligus?
+            Produk tidak akan muncul di katalog pelanggan.
+          </p>
+          <div className="flex gap-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setBulkDeleteModal(false)}>Batal</Button>
+            <Button variant="danger" className="flex-1" loading={bulkDeleting} onClick={handleBulkDelete}>
+              Nonaktifkan {selectedIds.size} Produk
+            </Button>
           </div>
         </div>
       </Modal>

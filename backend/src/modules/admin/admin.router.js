@@ -115,6 +115,8 @@ router.get('/products', ...adminOnly, async (req, res, next) => {
       tenantId:        req.query.tenant_id,
       search:          req.query.search,
       includeInactive: req.query.include_inactive !== 'false',
+      availableOnly:   req.query.available_only === 'true',
+      syncedOnly:      req.query.synced_only === 'true',
       page:            parseInt(req.query.page                          || '1',  10),
       limit:           parseInt(req.query.page_size || req.query.limit  || '20', 10),
     });
@@ -168,6 +170,15 @@ router.patch('/products/:productId', ...adminOnly, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.delete('/products/bulk', ...adminOnly, async (req, res, next) => {
+  try {
+    const { product_ids } = req.body;
+    const data = await adminSvc.adminBulkDeleteProducts(product_ids);
+    broadcastToAll({ event: 'PRODUCT_UPDATED' });
+    res.json({ success: true, ...data });
+  } catch (err) { next(err); }
+});
+
 router.delete('/products/:productId', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminDeleteProduct(req.params.productId);
@@ -185,6 +196,13 @@ router.get('/tenants', ...adminOnly, async (req, res, next) => {
       includeInactive: req.query.include_inactive !== 'false',
     });
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.post('/tenants/bulk-upload', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await adminSvc.adminBulkUploadTenants(req.body.tenants);
+    res.status(201).json({ success: true, data });
   } catch (err) { next(err); }
 });
 

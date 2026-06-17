@@ -7,6 +7,7 @@ import Spinner from '../../../components/ui/Spinner';
 import EmptyState from '../../../components/ui/EmptyState';
 import ToastContainer from '../../../components/ui/Toast';
 import { useToast } from '../../../hooks/useToast';
+import BoothBulkUpload from '../BoothBulkUpload';
 
 const EMPTY_FORM = {
   tenant_name: '',
@@ -132,6 +133,7 @@ export default function BoothTab() {
   const [tenants, setTenants]   = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
 
   const [createModal, setCreateModal] = useState(false);
   const [form, setForm]               = useState({ ...EMPTY_FORM });
@@ -210,6 +212,12 @@ export default function BoothTab() {
     }
   }
 
+  if (showBulkUpload) {
+    return (
+      <BoothBulkUpload onBack={() => { setShowBulkUpload(false); fetchTenants(); }} />
+    );
+  }
+
   return (
     <>
       <ToastContainer toasts={toasts} removeToast={removeToast} />
@@ -218,6 +226,11 @@ export default function BoothTab() {
       <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white mb-4">
         <span className="text-base">🏪</span>
         <h2 className="text-sm font-semibold flex-1">Manajemen Booth Tenant</h2>
+        <Button size="sm"
+          onClick={() => setShowBulkUpload(true)}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          ⬆ Upload Massal
+        </Button>
         <Button size="sm"
           onClick={() => { setForm({ ...EMPTY_FORM }); setFormError(''); setCreateModal(true); }}
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">

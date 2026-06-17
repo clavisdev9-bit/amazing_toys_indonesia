@@ -216,7 +216,6 @@ function FormStep({ onOtpSent, logoUrl, eventName, t }) {
             >
               <option value="MALE">{t('register.male')}</option>
               <option value="FEMALE">{t('register.female')}</option>
-              <option value="PREFER_NOT_TO_SAY">{t('register.other')}</option>
             </select>
           </div>
           <DatePickerInput

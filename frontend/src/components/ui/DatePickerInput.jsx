@@ -122,9 +122,7 @@ export default function DatePickerInput({
         >
           <option value="">MM</option>
           {MONTHS_ID.map((m, i) => (
-            <option key={i + 1} value={i + 1}>
-              {String(i + 1).padStart(2, '0')} – {m}
-            </option>
+            <option key={i + 1} value={i + 1}>{m}</option>
           ))}
         </select>
 

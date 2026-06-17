@@ -11,7 +11,8 @@ export const deleteUser    = (id)          => client.delete(`/admin/users/${id}`
 export const getAdminProducts    = (params)    => client.get('/admin/products', { params });
 export const adminCreateProduct  = (data)      => client.post('/admin/products', data);
 export const adminUpdateProduct  = (id, data)  => client.patch(`/admin/products/${id}`, data);
-export const adminDeleteProduct  = (id)        => client.delete(`/admin/products/${id}`);
+export const adminDeleteProduct      = (id)         => client.delete(`/admin/products/${id}`);
+export const adminBulkDeleteProducts = (productIds) => client.delete('/admin/products/bulk', { data: { product_ids: productIds } });
 export const uploadProductImage  = (data)      => client.post('/admin/products/upload-image', data);
 
 // ── Audit Log ──────────────────────────────────────────────────────────────
@@ -26,9 +27,10 @@ export const getPrinterStatus = (userId) =>
   client.get('/print/status', userId ? { params: { userId } } : {});
 
 // ── Tenants (Booth Master Data) ────────────────────────────────────────────
-export const getAdminTenants   = (params)    => client.get('/admin/tenants', { params });
-export const adminCreateTenant = (data)      => client.post('/admin/tenants', data);
-export const adminUpdateTenant = (id, data)  => client.patch(`/admin/tenants/${id}`, data);
+export const getAdminTenants      = (params)    => client.get('/admin/tenants', { params });
+export const adminCreateTenant    = (data)      => client.post('/admin/tenants', data);
+export const adminUpdateTenant    = (id, data)  => client.patch(`/admin/tenants/${id}`, data);
+export const adminBulkUploadTenants = (tenants) => client.post('/admin/tenants/bulk-upload', { tenants });
 
 // ── Integration ────────────────────────────────────────────────────────────
 export const getIntegration     = ()             => client.get('/admin/integration');

@@ -113,7 +113,8 @@
       "Bash(xargs grep -l \"router\\\\|Router\\\\|Route\\\\|navigation\\\\|Layout\")",
       "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"*.jsx\" | head -5)",
       "Bash(grep -B 5 \"WHERE t.transaction_id = \\\\$1\" backend/src/modules/helper/helper.service.js)",
-      "Bash(awk '/^async function getBoothOrder\\\\\\(transactionId, helperTenantId\\\\\\)/,/^async function/ {print NR\": \"$0}' backend/src/modules/helper/helper.service.js)"
+      "Bash(awk '/^async function getBoothOrder\\\\\\(transactionId, helperTenantId\\\\\\)/,/^async function/ {print NR\": \"$0}' backend/src/modules/helper/helper.service.js)",
+      "PowerShell($env:PGPASSWORD = \"localdev123\"; psql -h localhost -p 5432 -U postgres -d amazing_toys_sos -f \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\database\\\\reset_transactions.sql\")"
     ]
   }
 }

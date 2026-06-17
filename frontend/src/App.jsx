@@ -69,6 +69,7 @@ import ProductPreorderTogglePage    from './pages/helper/ProductPreorderTogglePa
 // Admin page
 import AdminPage              from './pages/admin/AdminPage';
 import PreorderShipmentPage   from './pages/admin/PreorderShipmentPage';
+import MasterDataPrintPage    from './pages/admin/MasterDataPrintPage';
 // Leader pages
 import LeaderDashboardPage from './pages/leader/LeaderDashboardPage';
 import SalesReportPage from './pages/leader/SalesReportPage';
@@ -285,6 +286,7 @@ function AppRoutes() {
               <Route path="/admin" element={<AdminPage />} />
             </Route>
             <Route path="/admin/preorder" element={<PreorderShipmentPage />} />
+            <Route path="/admin/print-products" element={<MasterDataPrintPage />} />
           </Route>
 
           {/* 404 */}
