@@ -40,6 +40,9 @@ async function lookupTransaction(transactionId) {
   if (txn.status === 'COMPLETED' || txn.status === 'HANDED_OVER') {
     throw new AppError('Transaksi sudah selesai.', 409);
   }
+  if (txn.status === 'PENDING_APPROVAL') {
+    throw new AppError('Pesanan ini belum disetujui helper. Tidak bisa diproses kasir.', 403);
+  }
   if (!isCashierProcessable(txn.status)) {
     throw new AppError(`Transaksi tidak bisa diproses (status: ${txn.status}).`, 409);
   }

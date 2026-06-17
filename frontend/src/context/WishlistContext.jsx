@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { getWishlist, addToWishlist, removeFromWishlist } from '../api/wishlist';
 import { useAuth } from '../hooks/useAuth';
+import { useLang } from './LangContext';
 
 const LS_KEY = 'amazing_toys_wishlist';
 
@@ -15,6 +16,7 @@ const WishlistContext = createContext(null);
 
 export function WishlistProvider({ children }) {
   const { user } = useAuth();
+  const { t } = useLang();
   const [wishedIds, setWishedIds] = useState(loadLS);
   const [wishlistMode, setWishlistMode] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
@@ -50,7 +52,7 @@ export function WishlistProvider({ children }) {
     // Optimistic update
     setWishedIds(next);
     saveLS(next);
-    showToast(wasWished ? 'Dihapus dari wishlist' : 'Ditambahkan ke wishlist ❤️');
+    showToast(wasWished ? t('wishlist.removed') : t('wishlist.added'));
 
     try {
       if (wasWished) await removeFromWishlist(productId);

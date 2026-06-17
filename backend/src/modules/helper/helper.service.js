@@ -1149,6 +1149,14 @@ async function rejectOrder(transactionId, helperId, helperTenantId, reason = 'Di
       });
     } catch (e) { logger.warn('WS APPROVAL_QUEUE_UPDATE broadcast failed', { error: e.message }); }
 
+    // Notify customer via WA (fire-and-forget)
+    const customerPhone = txn.customer_phone || null;
+    const customerName  = txn.customer_name  || 'Pelanggan';
+    if (customerPhone) {
+      waSvc.sendOrderRejected(customerPhone, customerName, reason)
+        .catch(err => logger.warn('[WA] sendOrderRejected failed', { error: err.message }));
+    }
+
     return { transactionId, status: 'CANCELLED', reason };
   });
 }

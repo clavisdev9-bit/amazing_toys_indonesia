@@ -94,7 +94,10 @@
       "Bash(node --check src/modules/scheduler/jobs/TxnExpireJob.js)",
       "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Recurse -Directory)",
       "Bash(Select-Object -ExpandProperty FullName)",
-      "PowerShell(head -100)"
+      "PowerShell(head -100)",
+      "Bash(cd \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\605749a9-85b7-40e2-b061-75506500d06e\\\\46749590-c3c9-4e21-9c2a-b01ae7daaa68\\\\skills\\\\xlsx\" && python --version && ls scripts/)",
+      "Bash(node -e \"const bcrypt=require\\('bcrypt'\\); bcrypt.hash\\('test1234',10\\).then\\(h=>console.log\\(h\\)\\)\")",
+      "Bash(choco install *)"
     ]
   }
 }

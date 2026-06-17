@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
+import { useLang } from '../../context/LangContext';
 
 const TXN_PATTERN = /TXN-\d{8}-\d{5}/i;
 
@@ -43,10 +44,14 @@ function getMediaStream(constraints) {
 export default function QrScannerModal({
   onResult,
   onClose,
-  title = 'Scan QR Transaksi',
-  hint = 'Arahkan kamera ke QR code pada struk pelanggan',
+  title,
+  hint,
   resultParser = parseTxnFromQr,
 }) {
+  const { t } = useLang();
+  const resolvedTitle = title ?? t('qrScanner.defaultTitle');
+  const resolvedHint  = hint  ?? t('qrScanner.defaultHint');
+
   const videoRef        = useRef(null);
   const canvasRef       = useRef(null);
   const frozenRef       = useRef(null);
@@ -93,11 +98,11 @@ export default function QrScannerModal({
         const name = lastErr?.name || '';
         let friendly;
         if (name === 'NotAllowedError' || name === 'PermissionDeniedError')
-          friendly = 'Akses kamera ditolak. Izinkan kamera di pengaturan browser.';
+          friendly = t('qrScanner.errDenied');
         else if (name === 'NotFoundError' || name === 'DevicesNotFoundError')
-          friendly = 'Tidak ada kamera yang tersedia di perangkat ini.';
+          friendly = t('qrScanner.errNotFound');
         else if (name === 'NotReadableError' || name === 'TrackStartError')
-          friendly = 'Kamera sedang digunakan aplikasi lain. Tutup lalu coba lagi.';
+          friendly = t('qrScanner.errBusy');
         else if (name === 'NotSupportedError')
           friendly = 'Kamera membutuhkan koneksi HTTPS. Buka: https://' + window.location.host + window.location.pathname;
         else
@@ -131,7 +136,7 @@ export default function QrScannerModal({
         if (maybePromise !== undefined) await maybePromise;
       } catch (err) {
         if (!active) return;
-        setError('Kamera tidak dapat diputar. Coba refresh halaman.');
+        setError(t('qrScanner.errPlay'));
         setStarting(false);
         return;
       }
@@ -219,7 +224,7 @@ export default function QrScannerModal({
       <div className="relative bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-sm mx-0 sm:mx-4 z-10 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b">
-          <h2 className="font-semibold text-gray-900">{title}</h2>
+          <h2 className="font-semibold text-gray-900">{resolvedTitle}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none p-1">✕</button>
         </div>
 
@@ -265,7 +270,7 @@ export default function QrScannerModal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <span className="text-white text-sm font-semibold drop-shadow">QR Terdeteksi</span>
+                <span className="text-white text-sm font-semibold drop-shadow">{t('qrScanner.detected')}</span>
               </div>
             </div>
           )}
@@ -278,7 +283,7 @@ export default function QrScannerModal({
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
                 </svg>
-                Membuka kamera...
+                {t('qrScanner.opening')}
               </div>
             </div>
           )}
@@ -296,15 +301,15 @@ export default function QrScannerModal({
 
         {/* Footer */}
         {!error && !frozen && (
-          <p className="text-xs text-center text-gray-500 px-4 py-3">{hint}</p>
+          <p className="text-xs text-center text-gray-500 px-4 py-3">{resolvedHint}</p>
         )}
         {!error && frozen && (
-          <p className="text-xs text-center text-green-600 font-medium px-4 py-3">Memproses...</p>
+          <p className="text-xs text-center text-green-600 font-medium px-4 py-3">{t('qrScanner.processing')}</p>
         )}
         {error && (
           <div className="p-4">
             <button onClick={onClose} className="w-full py-2.5 rounded-xl bg-gray-100 text-sm font-medium text-gray-700 hover:bg-gray-200">
-              Tutup
+              {t('qrScanner.close')}
             </button>
           </div>
         )}

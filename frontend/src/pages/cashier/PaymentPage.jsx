@@ -134,6 +134,8 @@ export default function PaymentPage() {
         const status = err.response?.status;
         if (status === 409) {
           navigate(`/pesanan/${transactionId}/receipt`, { replace: true });
+        } else if (status === 403) {
+          setError(t('cashier.err409NotReady'));
         } else if (status === 422) {
           setError(t('payment.cancelled'));
         } else if (status === 410) {
@@ -182,6 +184,16 @@ export default function PaymentPage() {
       .catch(() => {});
   }, [transactionId]);
 
+  // WebSocket: auto-refresh jika cashier lain memproses order ini
+  useEffect(() => {
+    return subscribe('ORDER_PAID', (msg) => {
+      const id = msg.transactionId ?? msg.data?.transactionId;
+      if (id && id !== transactionId) return;
+      refreshTxn();
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscribe, transactionId]);
+
   // WebSocket: listen for delete request resolutions
   useEffect(() => {
     return subscribe('delete_request:resolved', (msg) => {
@@ -193,9 +205,9 @@ export default function PaymentPage() {
       });
       if (action === 'approve') {
         refreshTxn();
-        addToast('Item berhasil dihapus oleh leader.', 'success');
+        addToast(t('payment.itemDeletedByLeader'), 'success');
       } else {
-        addToast('Permintaan hapus ditolak oleh leader.', 'error');
+        addToast(t('payment.deleteRequestRejected'), 'error');
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -220,9 +232,9 @@ export default function PaymentPage() {
     try {
       await addItemToTransaction(transactionId, product.id, 1);
       await refreshTxn();
-      addToast(`${product.name} ditambahkan`, 'success');
+      addToast(t('payment.productAdded', { name: product.name }), 'success');
     } catch (err) {
-      addToast(err.response?.data?.message ?? 'Gagal menambahkan produk', 'error');
+      addToast(err.response?.data?.message ?? t('payment.productAddFailed'), 'error');
     } finally {
       setAddingProduct(null);
     }
@@ -240,9 +252,9 @@ export default function PaymentPage() {
         subtotal: parseFloat(item.subtotal),
       });
       setPendingDeleteIds(prev => new Set(prev).add(item.product_id));
-      addToast(`Permintaan hapus "${item.product_name}" dikirim ke leader.`, 'info');
+      addToast(t('payment.deleteRequestSent', { name: item.product_name }), 'info');
     } catch (err) {
-      addToast(err.response?.data?.message ?? 'Gagal mengirim permintaan hapus.', 'error');
+      addToast(err.response?.data?.message ?? t('payment.deleteRequestError'), 'error');
     } finally {
       setDeletingIds(prev => { const next = new Set(prev); next.delete(item.product_id); return next; });
     }
@@ -256,11 +268,13 @@ export default function PaymentPage() {
       await refreshTxn();
       const saved = result.data?.data?.discountAmount;
       addToast(
-        `Voucher ${code} diterapkan${saved ? ` — hemat ${formatRupiah(saved)}` : ''}`,
+        saved
+          ? t('payment.voucherApplied', { code, amount: formatRupiah(saved) })
+          : t('payment.voucherAppliedNoDiscount', { code }),
         'success'
       );
     } catch (err) {
-      addToast(err.response?.data?.message ?? 'Gagal menerapkan voucher', 'error');
+      addToast(err.response?.data?.message ?? t('payment.voucherFailed'), 'error');
       setVoucherKey(k => k + 1); // force VoucherInput remount → reset stale "applied" state
     } finally {
       setVoucherApplying(false);
@@ -539,7 +553,7 @@ export default function PaymentPage() {
                       <QRCodeSVG value={txn.transaction_id} size={160} level="M" includeMargin={false} />
                     </div>
                     <p className="text-xs text-center text-gray-500 max-w-[260px]">
-                      Tampilkan QR ini ke customer — scan via GoPay, OVO, BSI Mobile, atau app bank lain
+                      {t('payment.qrisHint')}
                     </p>
                     <p className="text-[11px] font-mono text-gray-400">{txn.transaction_id}</p>
                   </div>
@@ -549,9 +563,9 @@ export default function PaymentPage() {
                 {method === 'EDC' && (
                   <div className="flex flex-col items-center gap-2 py-3 bg-gray-50 rounded-xl border border-gray-200">
                     <span className="text-4xl">💳</span>
-                    <p className="text-sm font-semibold text-gray-700">Proses di mesin EDC</p>
+                    <p className="text-sm font-semibold text-gray-700">{t('payment.edcTitle')}</p>
                     <p className="text-xs text-gray-500 text-center max-w-[260px]">
-                      Gesek / tap / masukkan kartu customer di mesin EDC, lalu masukkan nomor referensi di bawah
+                      {t('payment.edcHint')}
                     </p>
                   </div>
                 )}
@@ -662,10 +676,10 @@ export default function PaymentPage() {
       <Modal
         open={confirmModal}
         onClose={() => setConfirmModal(false)}
-        title="Konfirmasi Pembayaran"
+        title={t('payment.confirmTitle')}
       >
         <div className="space-y-3">
-          <p className="text-sm text-gray-600">Apakah Anda yakin ingin memproses pembayaran ini?</p>
+          <p className="text-sm text-gray-600">{t('payment.confirmBody')}</p>
           <div className="bg-gray-50 rounded-lg px-4 py-3 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">ID Transaksi</span>
@@ -690,10 +704,10 @@ export default function PaymentPage() {
           </div>
           <div className="flex gap-2 pt-1">
             <Button variant="secondary" className="flex-1" onClick={() => setConfirmModal(false)}>
-              Batal
+              {t('payment.confirmCancel')}
             </Button>
             <Button variant="primary" className="flex-1" loading={processing} onClick={handleConfirmProcess}>
-              Ya, Proses
+              {t('payment.confirmOk')}
             </Button>
           </div>
         </div>

@@ -5,6 +5,7 @@ import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
 import Modal from '../ui/Modal';
 import { useWebSocket } from '../../hooks/useWebSocket';
+import { useLang } from '../../context/LangContext';
 
 // ── Smart merge helpers ────────────────────────────────────────────────────────
 // Preserve unchanged object references so React's Virtual DOM diffing can skip
@@ -43,6 +44,7 @@ function mergeQueue(prev, next) {
 // ── Per-item row ──────────────────────────────────────────────────────────────
 
 const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
+  const { t } = useLang();
   const [status, setStatus]           = useState(item.approval_status);
   const [busy, setBusy]               = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
@@ -63,7 +65,7 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
       setStatus('APPROVED');
       onItemUpdated();
     } catch (err) {
-      onError(err.response?.data?.message || 'Gagal menyetujui item.');
+      onError(err.response?.data?.message || t('approval.itemApproveErr'));
     } finally {
       setBusy(false);
     }
@@ -78,7 +80,7 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
       setRejectReason('');
       onItemUpdated();
     } catch (err) {
-      onError(err.response?.data?.message || 'Gagal menolak item.');
+      onError(err.response?.data?.message || t('approval.itemRejectErr'));
     } finally {
       setBusy(false);
     }
@@ -151,18 +153,18 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
       {!isPending && (
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0
           ${isApproved ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-          {isApproved ? 'Disetujui' : 'Ditolak'}
+          {isApproved ? t('approval.itemApproved') : t('approval.itemRejected')}
         </span>
       )}
 
       {/* Approve modal — with qty adjustment */}
-      <Modal open={showApproveModal} onClose={() => setShowApproveModal(false)} title="Setujui Item">
+      <Modal open={showApproveModal} onClose={() => setShowApproveModal(false)} title={t('approval.itemApproveTitle')}>
         <p className="text-sm text-gray-600 mb-3">
-          <span className="font-semibold">{item.product_name}</span> — qty dipesan:{' '}
-          <span className="font-bold">{item.quantity} pcs</span>
+          <span className="font-semibold">{item.product_name}</span>{' '}
+          — {t('approval.orderedQty', { qty: item.quantity })}
         </p>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Qty yang disetujui
+          {t('approval.qtyLabel')}
         </label>
         <div className="flex items-center gap-2 mb-1">
           <input
@@ -174,36 +176,42 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
             onBlur={() => setApprovedQty(String(approvedQtyNum))}
             className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
           />
-          <span className="text-xs text-gray-400">dari {item.quantity} pcs</span>
+          <span className="text-xs text-gray-400">{t('approval.qtyFrom', { n: item.quantity })}</span>
         </div>
         {approvedQtyNum < item.quantity && (
           <p className="text-xs text-amber-600 mb-3">
-            ⚠ {item.quantity - approvedQtyNum} pcs tidak akan disetujui (misal: cacat/kurang stok)
+            {t('approval.qtyPartialWarn', { n: item.quantity - approvedQtyNum })}
           </p>
         )}
         <div className="flex gap-2 mt-4">
-          <Button variant="secondary" className="flex-1" onClick={() => setShowApproveModal(false)}>Batal</Button>
+          <Button variant="secondary" className="flex-1" onClick={() => setShowApproveModal(false)}>
+            {t('approval.cancelBtn')}
+          </Button>
           <Button variant="primary" className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={handleApproveConfirm}>
-            ✓ Setujui {approvedQtyNum} pcs
+            {t('approval.approveItemBtn', { qty: approvedQtyNum })}
           </Button>
         </div>
       </Modal>
 
       {/* Reject modal */}
-      <Modal open={showRejectModal} onClose={() => setShowRejectModal(false)} title="Tolak Item">
+      <Modal open={showRejectModal} onClose={() => setShowRejectModal(false)} title={t('approval.itemRejectTitle')}>
         <p className="text-sm text-gray-600 mb-3">
-          Tolak <span className="font-semibold">{item.product_name}</span> ×{item.quantity}?
+          {t('approval.itemRejectTitle')} <span className="font-semibold">{item.product_name}</span> ×{item.quantity}?
         </p>
         <textarea
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
           rows={3}
-          placeholder="Alasan penolakan (opsional): stok habis, barang cacat, dibatalkan customer, dsb..."
+          placeholder={t('approval.rejectReasonPh')}
           value={rejectReason}
           onChange={(e) => setRejectReason(e.target.value)}
         />
         <div className="flex gap-2 mt-4">
-          <Button variant="secondary" className="flex-1" onClick={() => setShowRejectModal(false)}>Batal</Button>
-          <Button variant="danger" className="flex-1" onClick={handleRejectConfirm}>Tolak Item</Button>
+          <Button variant="secondary" className="flex-1" onClick={() => setShowRejectModal(false)}>
+            {t('approval.cancelBtn')}
+          </Button>
+          <Button variant="danger" className="flex-1" onClick={handleRejectConfirm}>
+            {t('approval.rejectItemBtn')}
+          </Button>
         </div>
       </Modal>
     </div>
@@ -213,6 +221,7 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
 // ── Approval card ─────────────────────────────────────────────────────────────
 
 const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll, approvingAll, rejectingAll, onRefresh }) {
+  const { t } = useLang();
   const [showRejectAllModal,  setShowRejectAllModal]  = useState(false);
   const [rejectAllReason,    setRejectAllReason]      = useState('');
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
@@ -250,7 +259,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
         </div>
         <span className={`text-xs font-semibold border rounded-full px-2.5 py-1
           ${allResolved ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-amber-100 text-amber-700 border-amber-200'}`}>
-          {allResolved ? '✓ Menunggu booth lain' : `⏳ ${pendingCount} item menunggu`}
+          {allResolved ? t('approval.allResolved') : t('approval.pendingCount', { n: pendingCount })}
         </span>
       </div>
 
@@ -259,7 +268,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
         <div className="flex items-center gap-2 mb-2">
           <span className="text-base">👤</span>
           <div>
-            <p className="text-sm font-medium text-gray-800">{txn.customer_name || 'Customer tidak diketahui'}</p>
+            <p className="text-sm font-medium text-gray-800">{txn.customer_name || t('approval.unknownCustomer')}</p>
             {txn.customer_phone && <p className="text-xs text-gray-400">{txn.customer_phone}</p>}
           </div>
         </div>
@@ -288,7 +297,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
 
       {/* Total */}
       <div className="flex items-center justify-between px-4 py-2 border-t bg-gray-50">
-        <span className="text-sm text-gray-500">Total (estimasi)</span>
+        <span className="text-sm text-gray-500">{t('approval.totalEstimate')}</span>
         <span className="font-bold text-base text-emerald-700">{formatRupiah(txn.total_amount)}</span>
       </div>
 
@@ -303,7 +312,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
             disabled={approvingAll}
             onClick={() => setShowRejectAllModal(true)}
           >
-            Tolak Semua
+            {t('approval.rejectAllBtn')}
           </Button>
           <Button
             variant="primary"
@@ -313,37 +322,40 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
             disabled={rejectingAll}
             onClick={() => setShowApproveAllModal(true)}
           >
-            ✓ Setujui Semua
+            {t('approval.approveAllBtn')}
           </Button>
         </div>
       )}
 
       {/* Approve all confirmation modal */}
-      <Modal open={showApproveAllModal} onClose={() => setShowApproveAllModal(false)} title={isPreorder ? 'Setujui Pre-Order' : 'Konfirmasi Setujui Semua'}>
+      <Modal
+        open={showApproveAllModal}
+        onClose={() => setShowApproveAllModal(false)}
+        title={t(isPreorder ? 'approval.approveAllPreTitle' : 'approval.approveAllTitle')}
+      >
         <p className="text-sm text-gray-600 mb-4">
-          Apakah anda yakin menyetujui transaksi{' '}
-          <span className="font-mono font-semibold">{txn.transaction_id}</span>?
+          {t('approval.approveAllBody', { id: txn.transaction_id })}
         </p>
         {isPreorder && (
           <div className="mb-4 space-y-2">
-            <p className="text-xs font-bold text-orange-700 mb-2">🔖 Data Pengiriman Pre-Order (wajib diisi)</p>
+            <p className="text-xs font-bold text-orange-700 mb-2">{t('approval.shippingTitle')}</p>
             <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-              placeholder="Nama penerima *" value={shippingName} onChange={e => setShippingName(e.target.value)} />
+              placeholder={t('approval.shippingNamePh')} value={shippingName} onChange={e => setShippingName(e.target.value)} />
             <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-              placeholder="No. HP penerima *" value={shippingPhone} onChange={e => setShippingPhone(e.target.value)} />
+              placeholder={t('approval.shippingPhonePh')} value={shippingPhone} onChange={e => setShippingPhone(e.target.value)} />
             <textarea className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 resize-none"
-              rows={2} placeholder="Alamat lengkap *" value={shippingAddress} onChange={e => setShippingAddress(e.target.value)} />
+              rows={2} placeholder={t('approval.shippingAddressPh')} value={shippingAddress} onChange={e => setShippingAddress(e.target.value)} />
             <div className="flex gap-2">
               <input className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="Kota" value={shippingCity} onChange={e => setShippingCity(e.target.value)} />
+                placeholder={t('approval.shippingCityPh')} value={shippingCity} onChange={e => setShippingCity(e.target.value)} />
               <input className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="Provinsi" value={shippingProvince} onChange={e => setShippingProvince(e.target.value)} />
+                placeholder={t('approval.shippingProvincePh')} value={shippingProvince} onChange={e => setShippingProvince(e.target.value)} />
             </div>
           </div>
         )}
         <div className="flex gap-2">
           <Button variant="secondary" className="flex-1" onClick={() => setShowApproveAllModal(false)}>
-            Batal
+            {t('approval.cancelBtn')}
           </Button>
           <Button
             variant="primary"
@@ -360,27 +372,26 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
               setShowApproveAllModal(false);
             }}
           >
-            Ya, Setujui
+            {t('approval.approveConfirmBtn')}
           </Button>
         </div>
       </Modal>
 
       {/* Reject all modal */}
-      <Modal open={showRejectAllModal} onClose={() => setShowRejectAllModal(false)} title="Tolak Semua Item">
+      <Modal open={showRejectAllModal} onClose={() => setShowRejectAllModal(false)} title={t('approval.rejectAllTitle')}>
         <p className="text-sm text-gray-600 mb-3">
-          Tolak <strong>semua item pending</strong> dari pesanan{' '}
-          <span className="font-mono font-semibold">{txn.transaction_id}</span>?
+          {t('approval.rejectAllBody', { id: txn.transaction_id })}
         </p>
         <textarea
           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
           rows={3}
-          placeholder="Alasan penolakan (opsional)..."
+          placeholder={t('approval.rejectAllReasonPh')}
           value={rejectAllReason}
           onChange={(e) => setRejectAllReason(e.target.value)}
         />
         <div className="flex gap-2 mt-4">
           <Button variant="secondary" className="flex-1" onClick={() => { setShowRejectAllModal(false); setRejectAllReason(''); }}>
-            Batal
+            {t('approval.cancelBtn')}
           </Button>
           <Button
             variant="danger"
@@ -392,7 +403,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
               setRejectAllReason('');
             }}
           >
-            Tolak Semua
+            {t('approval.rejectAllBtn')}
           </Button>
         </div>
       </Modal>
@@ -403,6 +414,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
 // ── Main tab ──────────────────────────────────────────────────────────────────
 
 export default function ApprovalQueueTab({ onCountChange }) {
+  const { t } = useLang();
   const [queue, setQueue]             = useState([]);
   const [loading, setLoading]         = useState(true);   // initial load only
   const [refreshing, setRefreshing]   = useState(false);  // silent background tick
@@ -429,8 +441,6 @@ export default function ApprovalQueueTab({ onCountChange }) {
     getApprovalQueue()
       .then((r) => {
         const data = r.data.data ?? [];
-        // Smart merge: only swap items whose data actually changed.
-        // Unchanged references let React skip those subtrees entirely.
         setQueue((prev) => mergeQueue(prev, data));
         onCountChange?.(data.length);
         setLastRefreshed(new Date());
@@ -441,15 +451,15 @@ export default function ApprovalQueueTab({ onCountChange }) {
         const msg    = err.response?.data?.message;
         setFetchError(
           status === 500
-            ? 'Gagal memuat antrian (server error 500). Pastikan migration database 015 dan 017 sudah diaplikasikan.'
-            : msg || 'Gagal memuat antrian. Periksa koneksi atau coba refresh.'
+            ? t('approval.loadFail500')
+            : msg || t('approval.loadFailGeneral')
         );
       })
       .finally(() => {
         setLoading(false);
         setRefreshing(false);
       });
-  }, [onCountChange]);
+  }, [onCountChange, t]);
 
   // Initial load
   useEffect(() => { fetchQueue(false); }, [fetchQueue]);
@@ -467,7 +477,7 @@ export default function ApprovalQueueTab({ onCountChange }) {
 
   function removeFromQueue(txnId) {
     setQueue((prev) => {
-      const updated = prev.filter((t) => t.transaction_id !== txnId);
+      const updated = prev.filter((tx) => tx.transaction_id !== txnId);
       onCountChange?.(updated.length);
       return updated;
     });
@@ -478,10 +488,10 @@ export default function ApprovalQueueTab({ onCountChange }) {
     try {
       await approveOrder(txnId, null, shippingFields);
       removeFromQueue(txnId);
-      showToast('Semua item disetujui. Stok dikurangi dan timer dimulai.');
+      showToast(t('approval.approveOkToast'));
       fetchQueue(true);
     } catch (err) {
-      showToast(err.response?.data?.message || 'Gagal menyetujui pesanan.', 'error');
+      showToast(err.response?.data?.message || t('approval.approveErrToast'), 'error');
     } finally {
       setApprovingId(null);
     }
@@ -492,10 +502,10 @@ export default function ApprovalQueueTab({ onCountChange }) {
     try {
       await rejectOrder(txnId, reason);
       removeFromQueue(txnId);
-      showToast('Pesanan ditolak.');
+      showToast(t('approval.rejectOkToast'));
       fetchQueue(true);
     } catch (err) {
-      showToast(err.response?.data?.message || 'Gagal menolak pesanan.', 'error');
+      showToast(err.response?.data?.message || t('approval.rejectErrToast'), 'error');
     } finally {
       setRejectingId(null);
     }
@@ -522,18 +532,18 @@ export default function ApprovalQueueTab({ onCountChange }) {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-bold text-gray-800">Antrian Persetujuan</h2>
+            <h2 className="text-sm font-bold text-gray-800">{t('approval.queueTitle')}</h2>
             {/* Pulsing dot — auto-refresh active indicator */}
-            <span className="relative flex h-2 w-2" title="Auto-refresh aktif setiap 20 detik">
+            <span className="relative flex h-2 w-2" title={t('approval.autoRefreshHint')}>
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
             </span>
           </div>
           <p className="text-xs text-gray-400">
-            Setujui atau tolak item satu per satu
+            {t('approval.queueSubtitle')}
             {lastRefreshedStr && (
               <span className="ml-2 text-gray-300">
-                · diperbarui {lastRefreshedStr}
+                · {t('approval.updatedAt', { time: lastRefreshedStr })}
                 {refreshing && <span className="ml-1 text-emerald-400">↻</span>}
               </span>
             )}
@@ -547,15 +557,15 @@ export default function ApprovalQueueTab({ onCountChange }) {
           <svg className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          Refresh
+          {t('approval.refresh')}
         </button>
       </div>
 
       {/* Legend */}
       <div className="flex gap-3 text-xs text-gray-400">
-        <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"/>Menunggu</span>
-        <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"/>Disetujui</span>
-        <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1"/>Ditolak</span>
+        <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1"/>{t('approval.legend.waiting')}</span>
+        <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1"/>{t('approval.legend.approved')}</span>
+        <span><span className="inline-block w-2 h-2 rounded-full bg-red-400 mr-1"/>{t('approval.legend.rejected')}</span>
       </div>
 
       {/* API error banner */}
@@ -563,13 +573,13 @@ export default function ApprovalQueueTab({ onCountChange }) {
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-start gap-3">
           <span className="text-red-500 text-lg leading-none mt-0.5">⚠</span>
           <div>
-            <p className="text-sm font-semibold text-red-700">Gagal memuat antrian</p>
+            <p className="text-sm font-semibold text-red-700">{t('approval.loadFail')}</p>
             <p className="text-xs text-red-600 mt-0.5">{fetchError}</p>
             <button
               onClick={() => fetchQueue(false)}
               className="mt-2 text-xs text-red-700 underline hover:no-underline"
             >
-              Coba lagi
+              {t('approval.retry')}
             </button>
           </div>
         </div>
@@ -581,8 +591,8 @@ export default function ApprovalQueueTab({ onCountChange }) {
       ) : queue.length === 0 && !fetchError ? (
         <div className="flex flex-col items-center py-12 text-center">
           <span className="text-5xl mb-3">✅</span>
-          <p className="font-semibold text-gray-700">Antrian kosong</p>
-          <p className="text-sm text-gray-400 mt-1">Tidak ada pesanan yang menunggu persetujuan.</p>
+          <p className="font-semibold text-gray-700">{t('approval.emptyTitle')}</p>
+          <p className="text-sm text-gray-400 mt-1">{t('approval.emptyDesc')}</p>
         </div>
       ) : queue.length > 0 ? (
         queue.map((txn) => (
