@@ -105,9 +105,13 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-gray-800 font-medium truncate">{item.product_name}</span>
-          {item.is_preorder && (
+          {item.is_preorder ? (
             <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 border border-orange-200 flex-shrink-0">
               🔖 PRE-ORDER
+            </span>
+          ) : (
+            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200 flex-shrink-0">
+              REGULER
             </span>
           )}
         </div>
@@ -129,18 +133,18 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
 
       {/* Action buttons — only when PENDING */}
       {isPending && (
-        <div className="flex gap-1 flex-shrink-0">
+        <div className="flex gap-1.5 flex-shrink-0">
           <button
             disabled={busy}
             onClick={() => { setApprovedQty(String(item.quantity)); setShowApproveModal(true); }}
-            className="px-2 py-1 text-xs font-semibold rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50"
+            className="w-9 h-9 flex items-center justify-center text-base font-bold rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 active:bg-emerald-300 disabled:opacity-50"
           >
-            {busy ? '...' : '✓'}
+            {busy ? <span className="text-xs">...</span> : '✓'}
           </button>
           <button
             disabled={busy}
             onClick={() => { setRejectReason(''); setShowRejectModal(true); }}
-            className="px-2 py-1 text-xs font-semibold rounded-md bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50"
+            className="w-9 h-9 flex items-center justify-center text-base font-bold rounded-lg bg-red-100 text-red-600 hover:bg-red-200 active:bg-red-300 disabled:opacity-50"
           >
             ✕
           </button>
@@ -217,7 +221,9 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
   const [rejectAllReason,    setRejectAllReason]      = useState('');
   const [showApproveAllModal, setShowApproveAllModal] = useState(false);
   const [toast, setToast]                             = useState(null);
-  const isPreorder = txn.order_type === 'PREORDER';
+  const [mixedChecked, setMixedChecked]               = useState(false);
+  const isPreorder    = txn.order_type === 'PREORDER';
+  const hasMixedCart  = txn.items?.some(i => i.is_preorder) && txn.items?.some(i => !i.is_preorder);
   // CR2: Shipping form pre-filled from customer registration data + event default address
   const [shippingName,     setShippingName]     = useState(txn.customer_name  || '');
   const [shippingPhone,    setShippingPhone]    = useState(txn.customer_phone || '');
@@ -278,6 +284,17 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
         ))}
       </div>
 
+      {/* Mixed cart warning */}
+      {hasMixedCart && (
+        <div className="mx-4 mb-2 px-3 py-2.5 rounded-lg bg-red-50 border border-red-300 flex items-start gap-2">
+          <span className="text-red-500 text-sm leading-none mt-0.5 flex-shrink-0">⚠</span>
+          <div>
+            <p className="text-xs font-bold text-red-700">Anomali: Campuran PRE-ORDER &amp; REGULER</p>
+            <p className="text-xs text-red-600 mt-0.5">Order ini mengandung kedua tipe item. Laporkan ke admin sebelum menyetujui.</p>
+          </div>
+        </div>
+      )}
+
       {/* Local toast */}
       {toast && (
         <div className={`mx-4 mb-2 px-3 py-2 rounded-lg text-xs font-medium text-white
@@ -319,7 +336,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
       )}
 
       {/* Approve all confirmation modal */}
-      <Modal open={showApproveAllModal} onClose={() => setShowApproveAllModal(false)} title={isPreorder ? 'Setujui Pre-Order' : 'Konfirmasi Setujui Semua'}>
+      <Modal open={showApproveAllModal} onClose={() => { setShowApproveAllModal(false); setMixedChecked(false); }} title={isPreorder ? 'Setujui Pre-Order' : 'Konfirmasi Setujui Semua'}>
         <p className="text-sm text-gray-600 mb-4">
           Apakah anda yakin menyetujui transaksi{' '}
           <span className="font-mono font-semibold">{txn.transaction_id}</span>?
@@ -341,15 +358,32 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
             </div>
           </div>
         )}
+        {hasMixedCart && (
+          <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-300">
+            <p className="text-xs font-bold text-red-700 mb-2">⚠ Anomali Terdeteksi: Campuran PRE-ORDER &amp; REGULER</p>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={mixedChecked}
+                onChange={e => setMixedChecked(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-red-300 text-red-600 focus:ring-red-500 flex-shrink-0"
+              />
+              <span className="text-xs text-red-700">Saya sudah periksa tipe barang dan memahami risiko menyetujui order campuran ini.</span>
+            </label>
+          </div>
+        )}
         <div className="flex gap-2">
-          <Button variant="secondary" className="flex-1" onClick={() => setShowApproveAllModal(false)}>
+          <Button variant="secondary" className="flex-1" onClick={() => { setShowApproveAllModal(false); setMixedChecked(false); }}>
             Batal
           </Button>
           <Button
             variant="primary"
             className="flex-1 bg-emerald-600 hover:bg-emerald-700"
             loading={approvingAll}
-            disabled={isPreorder && (!shippingName.trim() || !shippingPhone.trim() || !shippingAddress.trim())}
+            disabled={
+              (isPreorder && (!shippingName.trim() || !shippingPhone.trim() || !shippingAddress.trim())) ||
+              (hasMixedCart && !mixedChecked)
+            }
             onClick={() => {
               const sf = isPreorder ? {
                 shipping_name: shippingName, shipping_phone: shippingPhone,
@@ -358,6 +392,7 @@ const ApprovalCard = memo(function ApprovalCard({ txn, onApproveAll, onRejectAll
               } : null;
               onApproveAll(txn.transaction_id, sf);
               setShowApproveAllModal(false);
+              setMixedChecked(false);
             }}
           >
             Ya, Setujui

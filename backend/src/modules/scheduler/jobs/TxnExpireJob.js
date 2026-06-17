@@ -5,6 +5,7 @@ const { writeAuditLog } = require('../../../utils/auditLog');
 const logger = require('../../../config/logger');
 const waSvc      = require('../../wa/wa.service');
 const emailSvc   = require('../../../services/email.service');
+const { broadcastToAll } = require('../../../ws/websocket');
 
 const JOB_NAME = 'txn.expire.sweep';
 
@@ -132,6 +133,13 @@ async function execute() {
 
   const total = stockStatuses.length + pendingExpired.length;
   if (total === 0) logger.debug(`[${JOB_NAME}] no expired transactions found`);
+
+  // Notify all connected clients so cashier queue auto-refreshes (BUG-076)
+  if (total > 0) {
+    try {
+      broadcastToAll({ event: 'txn:expired', data: { count: total } });
+    } catch { /* non-critical — WebSocket may not be initialized yet */ }
+  }
 
   return { expired: total, withStockRestore: stockStatuses.length, pendingOnly: pendingExpired.length };
 }

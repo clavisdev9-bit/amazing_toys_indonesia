@@ -8,29 +8,45 @@ import Input from '../../components/ui/Input';
 import { useAppLogo, usePublicConfig } from '../../hooks/useAppLogo';
 import { useLang } from '../../context/LangContext';
 
-// ── Step 1: masukkan nomor telepon ────────────────────────────────────────────
+// ── Step 1: masukkan nomor HP atau email ─────────────────────────────────────
 
-function PhoneStep({ onOtpSent, onDirectLogin, logoUrl, eventName, t }) {
-  const [phone,   setPhone]   = useState('');
+function IdentifierStep({ onOtpSent, onDirectLogin, logoUrl, eventName, t }) {
+  const [mode,    setMode]    = useState('phone'); // 'phone' | 'email'
+  const [value,   setValue]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
+
+  function handleModeSwitch(newMode) {
+    setMode(newMode);
+    setValue('');
+    setError('');
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    const trimmed = value.trim();
+    if (!trimmed) { setError('Wajib diisi.'); return; }
+
     setLoading(true);
     try {
-      const device = await getDeviceInfo();
-      const res = await loginCustomer(phone.trim(), device.deviceId, {
+      const device     = await getDeviceInfo();
+      const identifier = mode === 'email' ? { email: trimmed } : { phone_number: trimmed };
+      const res        = await loginCustomer(identifier, device.deviceId, {
         deviceName: device.deviceName,
         browser:    device.browser,
       });
       const data = res.data.data;
 
       if (data.requiresOtp) {
-        onOtpSent({ tempToken: data.tempToken, maskedPhone: data.maskedPhone, deviceId: device.deviceId, device });
+        onOtpSent({
+          tempToken:        data.tempToken,
+          maskedIdentifier: data.maskedIdentifier || data.maskedPhone,
+          identifierType:   data.identifierType  || 'phone',
+          deviceId: device.deviceId,
+          device,
+        });
       } else {
-        // Trusted device — langsung login
         onDirectLogin(data.token, data.customer, device.deviceId);
       }
     } catch (err) {
@@ -52,6 +68,32 @@ function PhoneStep({ onOtpSent, onDirectLogin, logoUrl, eventName, t }) {
           <p className="text-sm text-gray-500">{eventName}</p>
         </div>
 
+        {/* Toggle phone / email */}
+        <div className="flex rounded-xl border border-gray-200 mb-4 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => handleModeSwitch('phone')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mode === 'phone'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {t('login.tabPhone') || 'Nomor HP'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleModeSwitch('email')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mode === 'email'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {t('login.tabEmail') || 'Email'}
+          </button>
+        </div>
+
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-4">
             {error}
@@ -59,14 +101,25 @@ function PhoneStep({ onOtpSent, onDirectLogin, logoUrl, eventName, t }) {
         )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <Input
-            label={t('login.phone')}
-            type="tel"
-            placeholder={t('login.phonePh')}
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            required
-          />
+          {mode === 'phone' ? (
+            <Input
+              label={t('login.phone')}
+              type="tel"
+              placeholder={t('login.phonePh')}
+              value={value}
+              onChange={(e) => { setValue(e.target.value); if (error) setError(''); }}
+              required
+            />
+          ) : (
+            <Input
+              label={t('login.email') || 'Email'}
+              type="email"
+              placeholder={t('login.emailPh') || 'contoh@email.com'}
+              value={value}
+              onChange={(e) => { setValue(e.target.value); if (error) setError(''); }}
+              required
+            />
+          )}
           <Button type="submit" size="full" loading={loading} className="mt-2">
             {t('login.submit')}
           </Button>
@@ -89,7 +142,7 @@ function PhoneStep({ onOtpSent, onDirectLogin, logoUrl, eventName, t }) {
 
 // ── Step 2: masukkan kode OTP ─────────────────────────────────────────────────
 
-function OtpStep({ tempToken, maskedPhone, deviceId, device, onSuccess, onBack, logoUrl, eventName }) {
+function OtpStep({ tempToken, maskedIdentifier, identifierType, deviceId, device, onSuccess, onBack, logoUrl, eventName }) {
   const [otp,     setOtp]     = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
@@ -155,10 +208,15 @@ function OtpStep({ tempToken, maskedPhone, deviceId, device, onSuccess, onBack, 
             ? <img src={logoUrl} alt="Logo" className="w-16 h-16 object-contain mx-auto mb-2" />
             : <div className="text-4xl mb-2">📱</div>
           }
-          <h1 className="text-xl font-bold text-gray-900">Verifikasi WhatsApp</h1>
+          <h1 className="text-xl font-bold text-gray-900">
+            {identifierType === 'email' ? 'Verifikasi Email' : 'Verifikasi WhatsApp'}
+          </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Kode 6 digit dikirim ke WhatsApp<br />
-            <span className="font-semibold text-gray-700">{maskedPhone || '****'}</span>
+            {identifierType === 'email'
+              ? 'Kode 6 digit dikirim ke email'
+              : 'Kode 6 digit dikirim ke WhatsApp'
+            }<br />
+            <span className="font-semibold text-gray-700">{maskedIdentifier || '****'}</span>
           </p>
         </div>
 
@@ -194,7 +252,7 @@ function OtpStep({ tempToken, maskedPhone, deviceId, device, onSuccess, onBack, 
 
         <div className="mt-4 pt-4 border-t flex justify-between text-xs text-gray-400">
           <button type="button" onClick={onBack} className="hover:text-gray-600">
-            ← Ganti Nomor
+            {identifierType === 'email' ? '← Ganti Email' : '← Ganti Nomor'}
           </button>
           <span className="text-gray-300">Berlaku 5 menit</span>
         </div>
@@ -219,15 +277,16 @@ export default function LoginCustomerPage() {
     return <Navigate to="/katalog" replace />;
   }
 
-  function handleOtpSent({ tempToken, maskedPhone, deviceId, device }) {
-    setOtpState({ tempToken, maskedPhone, deviceId, device });
+  function handleOtpSent({ tempToken, maskedIdentifier, identifierType, deviceId, device }) {
+    setOtpState({ tempToken, maskedIdentifier, identifierType, deviceId, device });
   }
 
   function handleLoginSuccess(token, customer, deviceId) {
     login(token, {
       role:       'CUSTOMER',
       name:       customer.full_name,
-      phone:      customer.phone_number,
+      phone:      customer.phone_number  || null,
+      email:      customer.email         || null,
       customerId: customer.customer_id,
       deviceId,
     });
@@ -247,7 +306,7 @@ export default function LoginCustomerPage() {
   }
 
   return (
-    <PhoneStep
+    <IdentifierStep
       onOtpSent={handleOtpSent}
       onDirectLogin={handleLoginSuccess}
       logoUrl={logoUrl}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getSettlementReport } from '../../api/leader';
 import { formatRupiah, formatDate } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -49,6 +50,42 @@ export default function SettlementPage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Settlement_${dateFrom}_${dateTo}`, [
+              {
+                name: 'Ringkasan',
+                rows: [
+                  { 'Keterangan': 'Total Terbayar', 'Jumlah Transaksi': data.totalTxn, 'Nominal': data.totalPaid },
+                  { 'Keterangan': 'Pending / Belum Bayar', 'Jumlah Transaksi': data.pending.count, 'Nominal': data.pending.amount },
+                  { 'Keterangan': 'Grand Total', 'Jumlah Transaksi': data.totalTxn + data.pending.count, 'Nominal': data.totalPaid + data.pending.amount },
+                ],
+              },
+              {
+                name: 'Per Metode',
+                rows: data.breakdown.map((b) => ({
+                  'Metode Pembayaran': METHOD_LABEL[b.paymentMethod] ?? b.paymentMethod,
+                  'Jumlah Transaksi': b.count,
+                  'Nominal': b.amount,
+                })),
+              },
+              {
+                name: 'Tren Harian',
+                rows: data.daily.map((r) => ({
+                  'Tanggal': r.date,
+                  'Transaksi': r.count,
+                  'Total Terbayar': r.amount,
+                })),
+              },
+            ])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : !data ? null : (
         <div className="space-y-4">

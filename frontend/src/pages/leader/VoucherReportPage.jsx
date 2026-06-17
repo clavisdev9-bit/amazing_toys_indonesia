@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getVoucherReport } from '../../api/leader';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -60,6 +61,27 @@ export default function VoucherReportPage() {
               <p className="text-2xl font-bold text-red-700">{formatRupiah(data.summary.totalDiscount)}</p>
             </div>
           </div>
+
+          {data.vouchers.length > 0 && (
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => exportToExcel(`Laporan_Voucher_${dateFrom}_${dateTo}`, [{
+                  name: 'Voucher',
+                  rows: data.vouchers.map((v) => ({
+                    'Kode': v.code,
+                    'Deskripsi': v.description ?? '-',
+                    'Tipe Diskon': v.discountType,
+                    'Nilai Diskon': v.discountType === 'PERCENT' ? `${v.discountValue}%` : v.discountValue,
+                    'Pemakaian': v.usageCount,
+                    'Total Diskon': v.totalDiscount,
+                  })),
+                }])}
+                className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+              >
+                ⬇ Export Excel
+              </button>
+            </div>
+          )}
 
           {data.vouchers.length === 0 ? (
             <EmptyState icon="🎟️" title="Tidak ada voucher dipakai" description="Ubah rentang tanggal" />

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getTopCustomers } from '../../api/leader';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -60,6 +61,29 @@ export default function TopCustomersPage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Top_Customer_${dateFrom}_${dateTo}`, [{
+              name: 'Top Customer',
+              rows: data.map((c) => ({
+                'Rank': c.rank,
+                'Nama Customer': c.customerName,
+                'No. HP': c.phone,
+                'Total Transaksi': c.totalTransaksi,
+                'Total Item': c.totalItem,
+                'Avg Order': c.avgBelanja,
+                'Total Belanja': c.totalBelanja,
+                'Terakhir Beli': c.lastPurchase ? new Date(c.lastPurchase).toLocaleDateString('id-ID') : '-',
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : data.length === 0 ? (
         <EmptyState icon="👤" title="Tidak ada data customer" description="Ubah rentang tanggal" />

@@ -847,6 +847,7 @@ export default function MasterDataTab() {
             value={bulkCatValue}
             onChange={(val) => setBulkCatValue(val)}
             categories={categories}
+            onAddNew={handleAddCategory}
             required
           />
           <p className="text-xs text-amber-600">Perhatian: tindakan ini akan mengubah kategori semua produk sekaligus.</p>

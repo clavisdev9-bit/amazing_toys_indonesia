@@ -16,39 +16,59 @@ const INITIAL_FORM = {
   birth_date:   '',
 };
 
-function validateForm(form, t) {
+function validateForm(form, mode, t) {
   const errors = {};
   if (!form.full_name.trim())
     errors.full_name = t('register.errName');
-  if (!form.phone_number.trim())
-    errors.phone_number = t('register.errPhone');
-  else if (!/^(08|\+628)\d{8,11}$/.test(form.phone_number.trim()))
-    errors.phone_number = t('register.errPhoneFormat');
-  if (!form.email.trim())
-    errors.email = t('register.errEmailRequired');
-  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
-    errors.email = t('register.errEmail');
+
+  if (mode === 'phone') {
+    if (!form.phone_number.trim())
+      errors.phone_number = t('register.errPhone');
+    else if (!/^\+?\d{7,15}$/.test(form.phone_number.replace(/\s/g, '')))
+      errors.phone_number = t('register.errPhoneFormat');
+    // email opsional di mode phone, validasi format saja jika diisi
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
+      errors.email = t('register.errEmail');
+  } else {
+    if (!form.email.trim())
+      errors.email = t('register.errEmailRequired');
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
+      errors.email = t('register.errEmail');
+    // phone opsional di mode email, validasi format saja jika diisi
+    if (form.phone_number.trim() && !/^\+?\d{7,15}$/.test(form.phone_number.replace(/\s/g, '')))
+      errors.phone_number = t('register.errPhoneFormat');
+  }
+
   return errors;
 }
 
 // ── Step 1: Formulir pendaftaran ──────────────────────────────────────────────
 
 function FormStep({ onOtpSent, logoUrl, eventName, t }) {
+  const [mode,        setMode]        = useState('phone'); // 'phone' | 'email'
   const [form,        setForm]        = useState(INITIAL_FORM);
   const [errors,      setErrors]      = useState({});
   const [serverError, setServerError] = useState('');
   const [loading,     setLoading]     = useState(false);
 
+  function handleModeSwitch(newMode) {
+    setMode(newMode);
+    setForm(INITIAL_FORM);
+    setErrors({});
+    setServerError('');
+  }
+
   function handleChange(e) {
     const { name, value } = e.target;
     setForm(prev => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: '' }));
+    if (serverError) setServerError('');
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
     setServerError('');
-    const validationErrors = validateForm(form, t);
+    const validationErrors = validateForm(form, mode, t);
     if (Object.keys(validationErrors).length > 0) {
       setErrors(validationErrors);
       return;
@@ -56,15 +76,27 @@ function FormStep({ onOtpSent, logoUrl, eventName, t }) {
     setLoading(true);
     try {
       const payload = {
-        full_name:    form.full_name.trim(),
-        phone_number: form.phone_number.trim(),
-        email:        form.email.trim(),
-        gender:       form.gender,
+        full_name: form.full_name.trim(),
+        gender:    form.gender,
         ...(form.birth_date && { birth_date: form.birth_date }),
+        ...(mode === 'phone'
+          ? {
+              phone_number: form.phone_number.trim(),
+              ...(form.email.trim() && { email: form.email.trim() }),
+            }
+          : {
+              email: form.email.trim(),
+              ...(form.phone_number.trim() && { phone_number: form.phone_number.trim() }),
+            }
+        ),
       };
-      const res = await register(payload);
-      const { tempToken, maskedPhone } = res.data.data;
-      onOtpSent({ tempToken, maskedPhone, phone_number: form.phone_number.trim() });
+      const res  = await register(payload);
+      const data = res.data.data;
+      onOtpSent({
+        tempToken:        data.tempToken,
+        maskedIdentifier: data.maskedIdentifier || data.maskedPhone,
+        identifierType:   data.identifierType   || 'phone',
+      });
     } catch (err) {
       setServerError(err.response?.data?.message ?? t('register.error'));
     } finally {
@@ -85,6 +117,32 @@ function FormStep({ onOtpSent, logoUrl, eventName, t }) {
           <p className="text-sm text-gray-500">{eventName}</p>
         </div>
 
+        {/* Toggle mode */}
+        <div className="flex rounded-xl border border-gray-200 mb-4 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => handleModeSwitch('phone')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mode === 'phone'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {t('register.tabPhone') || 'Nomor HP'}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleModeSwitch('email')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mode === 'email'
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {t('register.tabEmail') || 'Email'}
+          </button>
+        </div>
+
         {serverError && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 mb-4">
             {serverError}
@@ -101,26 +159,53 @@ function FormStep({ onOtpSent, logoUrl, eventName, t }) {
             error={errors.full_name}
             required
           />
-          <Input
-            label={t('register.phone')}
-            name="phone_number"
-            type="tel"
-            placeholder={t('register.phonePh')}
-            value={form.phone_number}
-            onChange={handleChange}
-            error={errors.phone_number}
-            required
-          />
-          <Input
-            label={t('register.email')}
-            name="email"
-            type="email"
-            placeholder={t('register.emailPh')}
-            value={form.email}
-            onChange={handleChange}
-            error={errors.email}
-            required
-          />
+
+          {mode === 'phone' ? (
+            <>
+              <Input
+                label={t('register.phone')}
+                name="phone_number"
+                type="tel"
+                placeholder={t('register.phonePh') || '+62 / +65 / +60 ...'}
+                value={form.phone_number}
+                onChange={handleChange}
+                error={errors.phone_number}
+                required
+              />
+              <Input
+                label={`${t('register.email')} (${t('register.optional') || 'opsional'})`}
+                name="email"
+                type="email"
+                placeholder={t('register.emailPh')}
+                value={form.email}
+                onChange={handleChange}
+                error={errors.email}
+              />
+            </>
+          ) : (
+            <>
+              <Input
+                label={t('register.email')}
+                name="email"
+                type="email"
+                placeholder={t('register.emailPh')}
+                value={form.email}
+                onChange={handleChange}
+                error={errors.email}
+                required
+              />
+              <Input
+                label={`${t('register.phone')} (${t('register.optional') || 'opsional'})`}
+                name="phone_number"
+                type="tel"
+                placeholder={t('register.phonePh') || '+62 / +65 / +60 ...'}
+                value={form.phone_number}
+                onChange={handleChange}
+                error={errors.phone_number}
+              />
+            </>
+          )}
+
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">{t('register.gender')}</label>
             <select
@@ -158,7 +243,7 @@ function FormStep({ onOtpSent, logoUrl, eventName, t }) {
 
 // ── Step 2: Verifikasi OTP WA ─────────────────────────────────────────────────
 
-function OtpStep({ tempToken, maskedPhone, phone_number, onSuccess, onBack, logoUrl, t }) {
+function OtpStep({ tempToken, maskedIdentifier, identifierType, onSuccess, onBack, logoUrl, t }) {
   const [otp,      setOtp]      = useState(['', '', '', '', '', '']);
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
@@ -235,8 +320,11 @@ function OtpStep({ tempToken, maskedPhone, phone_number, onSuccess, onBack, logo
           }
           <h1 className="text-xl font-bold text-gray-900">{t('register.otpTitle')}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {t('register.otpSubtitle')}<br />
-            <span className="font-semibold text-gray-700">{maskedPhone}</span>
+            {identifierType === 'email'
+              ? 'Kode dikirim ke email'
+              : t('register.otpSubtitle')
+            }<br />
+            <span className="font-semibold text-gray-700">{maskedIdentifier}</span>
           </p>
         </div>
 
@@ -244,7 +332,10 @@ function OtpStep({ tempToken, maskedPhone, phone_number, onSuccess, onBack, logo
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-4 flex items-start gap-2">
           <span className="text-blue-500 text-lg leading-none mt-0.5">🔐</span>
           <p className="text-xs text-blue-700">
-            Masukkan kode OTP dari WhatsApp untuk mengaktifkan akun Anda.
+            {identifierType === 'email'
+              ? 'Masukkan kode OTP dari email untuk mengaktifkan akun Anda.'
+              : 'Masukkan kode OTP dari WhatsApp untuk mengaktifkan akun Anda.'
+            }{' '}
             Kode berlaku selama 5 menit.
           </p>
         </div>
@@ -323,15 +414,16 @@ export default function RegisterPage() {
     return <Navigate to="/katalog" replace />;
   }
 
-  function handleOtpSent({ tempToken, maskedPhone, phone_number }) {
-    setOtpState({ tempToken, maskedPhone, phone_number });
+  function handleOtpSent({ tempToken, maskedIdentifier, identifierType }) {
+    setOtpState({ tempToken, maskedIdentifier, identifierType });
   }
 
   function handleSuccess(token, customer) {
     login(token, {
       role:       'CUSTOMER',
       name:       customer.full_name,
-      phone:      customer.phone_number,
+      phone:      customer.phone_number || null,
+      email:      customer.email        || null,
       customerId: customer.customer_id,
     });
     navigate('/katalog');

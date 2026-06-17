@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getHelperPerformance } from '../../api/leader';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -47,6 +48,28 @@ export default function HelperPerformancePage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Kinerja_Helper_${dateFrom}_${dateTo}`, [{
+              name: 'Kinerja Helper',
+              rows: data.map((h, i) => ({
+                'Rank': i + 1,
+                'Nama': h.displayName,
+                'Total Order': h.totalOrder,
+                'Order Lunas': h.paidOrder,
+                'Order Batal': h.cancelledOrder,
+                'Success Rate (%)': h.successRate,
+                'Revenue': h.revenue,
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : data.length === 0 ? (
         <EmptyState icon="🙋" title="Tidak ada data helper" description="Belum ada order yang dibuat oleh Helper pada periode ini" />

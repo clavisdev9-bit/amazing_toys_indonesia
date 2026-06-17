@@ -6,9 +6,10 @@ export const register = (data) => client.post('/auth/register', data);
 // Registrasi step 2: verifikasi OTP → akun aktif → terima token
 export const verifyRegisterOtp = (payload) => client.post('/auth/register/verify-otp', payload);
 
-// Customer login — step 1: kirim nomor → WA OTP atau langsung token (trusted device)
-export const loginCustomer = (phone_number, deviceId, deviceInfo) =>
-  client.post('/auth/login/customer', { phone_number, ...(deviceId && { deviceId }), ...(deviceInfo && { deviceInfo }) });
+// Customer login — step 1: kirim nomor HP atau email → OTP atau langsung token (trusted device)
+// identifier: { phone_number } atau { email }
+export const loginCustomer = (identifier, deviceId, deviceInfo) =>
+  client.post('/auth/login/customer', { ...identifier, ...(deviceId && { deviceId }), ...(deviceInfo && { deviceInfo }) });
 
 // Customer login — step 2: verifikasi OTP WA
 export const verifyCustomerOtp = (payload) => client.post('/auth/verify-otp/customer', payload);

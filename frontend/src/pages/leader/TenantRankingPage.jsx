@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getTenantRanking } from '../../api/leader';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -60,6 +61,29 @@ export default function TenantRankingPage() {
             <p className="text-xs text-blue-500 mb-0.5">Jumlah Tenant Aktif</p>
             <p className="text-xl font-bold text-blue-700">{data.rows.length}</p>
           </div>
+        </div>
+      )}
+
+      {!loading && data?.rows?.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Ranking_Tenant_${dateFrom}_${dateTo}`, [{
+              name: 'Ranking Tenant',
+              rows: data.rows.map((t) => ({
+                'Rank': t.rank,
+                'Nama Tenant': t.tenantName,
+                'Booth': t.boothLocation ?? '-',
+                'Revenue': t.revenue,
+                'Transaksi': t.totalTransaksi,
+                'Total Item': t.totalItem,
+                'Avg Order': t.avgOrderValue,
+                '% dari Total': data.totalRevenue > 0 ? Math.round((t.revenue / data.totalRevenue) * 100) : 0,
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
         </div>
       )}
 

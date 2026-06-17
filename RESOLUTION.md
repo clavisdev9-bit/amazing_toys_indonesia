@@ -1,5 +1,385 @@
 # Resolution Log
 
+## BUG-077 — Produk Tidak Muncul di Kasir POS (2026-06-17)
+
+**Page:** `/cashier/pos` → area product browser
+**Reporter:** Admin — daftar produk kosong, tampil "Tidak ada produk ditemukan."
+
+### Root Cause
+
+Backend crash saat startup karena `TxnExpireJob.js` menggunakan path `require` yang salah saat BUG-076 ditambahkan:
+
+```
+Error: Cannot find module '../../ws/websocket'
+Require stack: TxnExpireJob.js → JobBootstrap.js → admin.router.js → app.js
+```
+
+`TxnExpireJob.js` berada di `modules/scheduler/jobs/`, sehingga untuk mencapai `src/ws/websocket.js` dibutuhkan **3 level naik** (`../../../ws/websocket`), bukan 2.
+
+Ketika backend crash, semua API gagal. Frontend POS menangkap error secara diam-diam via `.catch(() => {})`, sehingga produk tidak muncul tanpa pesan error yang informatif.
+
+### Fix
+
+**`backend/src/modules/scheduler/jobs/TxnExpireJob.js`:**
+```javascript
+// Salah (2 level):
+const { broadcastToAll } = require('../../ws/websocket');
+
+// Benar (3 level):
+const { broadcastToAll } = require('../../../ws/websocket');
+```
+
+### Pelajaran
+
+Selalu verifikasi relative path `require()` dengan menghitung level direktori dari posisi file. Untuk file yang dalam subdirektori dalam (`modules/X/jobs/`), hitungan level mudah keliru. Gunakan `__dirname` + `path.join` atau alias modul jika struktur direktori dalam.
+
+---
+
+## BUG-076 — Queue Kasir Menampilkan Transaksi PENDING yang Sudah EXPIRED (2026-06-17)
+
+**Page:** `/cashier` → tab Queue
+**Reporter:** Admin — TXN-20260617-00525 dan TXN-20260617-00526 masih muncul sebagai PENDING padahal sudah EXPIRED di DB
+
+### Root Cause
+
+Dua masalah terpisah:
+
+1. **Backend — `TxnExpireJob.js`** tidak broadcast WebSocket event setelah sweep. Transaksi di-expire di DB tapi tidak ada notifikasi ke frontend.
+2. **Frontend — `CashierDashboardPage.jsx`** hanya memuat data sekali saat mount (`useEffect([], [])`), tidak ada mekanisme auto-refresh.
+
+Akibatnya: setelah sweep berjalan (setiap 5 menit), queue tetap menampilkan status lama sampai halaman di-reload manual.
+
+### Fix
+
+**Backend** — `backend/src/modules/scheduler/jobs/TxnExpireJob.js`:
+```javascript
+const { broadcastToAll } = require('../../ws/websocket');
+
+// di akhir execute(), setelah sweep selesai:
+if (total > 0) {
+  try {
+    broadcastToAll({ event: 'txn:expired', data: { count: total } });
+  } catch { /* non-critical */ }
+}
+```
+
+**Frontend** — `frontend/src/pages/cashier/CashierDashboardPage.jsx`:
+- Tambah import `useWebSocket` dan `useRef`
+- Subscribe event `txn:expired` → trigger `loadQueue()` + `loadExpired()`
+- Auto-poll fallback setiap 60 detik (antisipasi WebSocket putus):
+```javascript
+// subscribe txn:expired
+useEffect(() => {
+  return subscribe('txn:expired', () => {
+    loadQueue();
+    loadExpired();
+  });
+}, [subscribe, loadQueue, loadExpired]);
+
+// auto-poll 60s fallback dalam mount useEffect
+pollRef.current = setInterval(() => {
+  loadQueue();
+  loadExpired();
+}, 60_000);
+```
+
+### Pelajaran
+
+Job scheduler yang mengubah data harus selalu broadcast event WebSocket agar frontend dapat bereaksi secara real-time. Tambahkan auto-poll sebagai failsafe jika koneksi WebSocket tidak stabil.
+
+---
+
+## BUG-075 — Form Shipping Pre-Order Tidak Auto-Fill di Helper Order (2026-06-17)
+
+**Page:** `/helper` → tab Order → MembuatOrderPanel → form "Alamat Pengiriman (Pre-Order)"
+**Reporter:** Admin — form tidak terisi otomatis setelah lookup customer berhasil
+
+### Root Cause
+
+CR-062 menggunakan `useEffect` dengan dependency `[customerInfo]` untuk auto-fill:
+
+```javascript
+useEffect(() => {
+  if (customerInfo?.found === true) {
+    setShipName(customerInfo.full_name || '');
+    ...
+  }
+}, [customerInfo]);
+```
+
+Pendekatan ini rentan: React meng-schedule effect SETELAH render selesai, dan dalam beberapa kondisi (React 18 batching, concurrent mode) effect tidak di-trigger atau terlambat sehingga user tidak melihat perubahan.
+
+### Fix
+
+Hapus `useEffect` dan pindahkan auto-fill langsung ke dalam async callback lookup di `handlePhoneChange` — all state changes di-batch dalam satu React render:
+
+```javascript
+const data = res.data.data;
+setCustomerInfo({ found: true, ...data });
+setShipName(data.full_name || '');
+setShipPhone(data.phone_number || '');
+setShipAddress('Amazing Toy Show Indonesia');
+```
+
+### Pelajaran
+
+Gunakan direct state update dalam async callback daripada `useEffect` untuk efek samping yang bergantung pada hasil async operation. `useEffect` tepat untuk reactive side effects (DOM sync, subscriptions) — bukan untuk "setelah async selesai, lakukan X".
+
+---
+
+## CR-061 — Customer Phone Lookup di Helper Order Panel (2026-06-17)
+
+**Page:** `/helper` → tab Order → MembuatOrderPanel
+**Status:** RESOLVED
+
+### Perubahan
+- `backend/src/modules/cashier/cashier.router.js` — tambah `'HELPER'` ke `authorize()` di `/customer-lookup`
+- `frontend/src/pages/helper/HelperPage.jsx` — debounced lookup + customer info panel (pola CR-060)
+
+---
+
+## CR-060 — Verifikasi Customer di Kasir POS (2026-06-17)
+
+**Page:** `/cashier/pos`
+**Status:** RESOLVED
+
+### Perubahan
+- `backend/src/modules/cashier/cashier.service.js` — tambah `lookupCustomerByPhone(phone)`
+- `backend/src/modules/cashier/cashier.router.js` — tambah `GET /cashier/customer-lookup?phone=`
+- `frontend/src/api/cashier.js` — tambah `lookupCustomerByPhone(phone)`
+- `frontend/src/pages/cashier/CashierPOSPage.jsx` — debounced lookup + customer info panel
+
+---
+
+## BUG-074 — Registrasi via Email Gagal "Internal server error." saat Verifikasi OTP (2026-06-17)
+
+**Page:** `/daftar`
+**Reporter:** Customer daftar via email (mode email), isi juga phone opsional, OTP dikirim. Saat verifikasi OTP → "Internal server error."
+
+### Root Cause (3 bugs berantai)
+
+**Bug 1 — Router `/register` tidak mendukung email-only registration**
+Router memvalidasi `phone_number` sebagai required:
+```javascript
+body('phone_number').trim().notEmpty().matches(...)
+```
+Tanpa `.optional()`, jika `phone_number` tidak ada di body → "Validation failed." (422). Customer tidak bisa registrasi dengan email saja.
+
+**Bug 2 — `registerCustomer` tidak cek duplikat email saat phone mode**
+Kode cek duplikat hanya di `isEmailMode`:
+```javascript
+if (isEmailMode) { // cek email }
+else              { // cek phone saja, tidak cek email! }
+```
+`isEmailMode = !phone_number && !!email` — jika customer isi KEDUANYA (email mode UI + phone opsional), service anggap phone mode dan SKIP pengecekan duplikat email.
+
+Customer `aristya rahadiyan` (089999999999) sudah punya email `aristya.rahadian07@gmail.com`. Saat Roy II daftar dengan email yang sama + phone baru, step 1 lolos (karena phone baru, email tidak dicek). Step 2 OTP verify → INSERT ke customers → **unique constraint violation** `idx_customers_email` → non-AppError → **"Internal server error."**
+
+**Bug 3 — `pending_registrations.phone_number` masih NOT NULL**
+Bahkan setelah migration 030 diterapkan, kolom `phone_number` di `pending_registrations` tetap NOT NULL. Untuk email-only registration, `phone_number = null` → INSERT gagal dengan constraint violation → "Internal server error." di step 1.
+
+### Fix Applied
+
+**1. `backend/src/modules/auth/auth.service.js` — cek duplikat keduanya:**
+```javascript
+if (phone_number) {
+  const exists = await query(`SELECT customer_id FROM customers WHERE phone_number = $1`, [phone_number]);
+  if (exists.rows.length > 0)
+    throw new AppError('Nomor telepon sudah terdaftar, silakan login.', 409);
+}
+if (email) {
+  const exists = await query(`SELECT customer_id FROM customers WHERE email = $1`, [email]);
+  if (exists.rows.length > 0)
+    throw new AppError('Email sudah terdaftar, silakan login.', 409);
+}
+```
+
+**2. `backend/src/modules/auth/auth.router.js` — `phone_number` opsional, custom validator:**
+```javascript
+body('phone_number').optional().trim().matches(/^(08|\+628)\d{8,11}$/).withMessage(...),
+body('email').optional().trim().isEmail().withMessage(...),
+body().custom((_, { req }) => {
+  if (!req.body.phone_number && !req.body.email)
+    throw new Error('Nomor HP atau email wajib diisi.');
+  return true;
+}),
+```
+
+**3. DB — `pending_registrations.phone_number` nullable:**
+```sql
+ALTER TABLE pending_registrations ALTER COLUMN phone_number DROP NOT NULL;
+```
+
+**4. `backend/src/app.js` — tambah ke Migration 030 schema guard:**
+```javascript
+`ALTER TABLE pending_registrations ALTER COLUMN phone_number DROP NOT NULL`,
+```
+
+---
+
+## BUG-073 — Login Customer via Phone Number Gagal ("Internal server error." / "Validation failed.") (2026-06-17)
+
+**Page:** `/masuk`
+**Reporter:** Customer tidak bisa login via nomor HP — muncul "Internal server error." Saat coba mode email, muncul "Validation failed."
+
+### Root Cause 1 — Migration 030 tidak terdaftar di schema runner (`app.js`)
+
+`auth.service.js` dan `customer_login_attempt.service.js` diperbarui untuk menggunakan kolom `identifier` di tabel `customer_login_attempts` (mendukung phone ATAU email sebagai lockout key). Namun migration 030 (`030_phone_email_flexible.sql`) **tidak pernah ditambahkan ke `runSchemaGuard` di `app.js`**.
+
+Akibatnya, kolom `identifier` tidak ada di DB saat runtime:
+```
+error: column "identifier" does not exist
+  at customer_login_attempt.service.js:10 (checkLockout)
+  at auth.service.js:393 (loginCustomer)
+```
+
+Karena error ini bukan `AppError` (tidak `isOperational`), error handler mengembalikan `"Internal server error."` ke client.
+
+### Root Cause 2 — Router `/login/customer` tidak mendukung mode email
+
+Route validator di `auth.router.js` hanya memvalidasi `phone_number` sebagai required:
+```javascript
+body('phone_number').trim().notEmpty().withMessage('Nomor telepon wajib diisi.')
+```
+
+Saat user pilih tab email dan kirim `{ email: "..." }` tanpa `phone_number`, validator `notEmpty()` gagal → `validate` middleware mengembalikan `"Validation failed."` (HTTP 422).
+
+Padahal `auth.service.js` **sudah mendukung kedua mode** (phone OR email) sejak migration 030.
+
+### Fix Applied
+
+**1. DB — migration 030 diterapkan langsung:**
+```sql
+ALTER TABLE customer_login_attempts ADD COLUMN IF NOT EXISTS identifier VARCHAR(255);
+UPDATE customer_login_attempts SET identifier = phone_number WHERE identifier IS NULL;
+ALTER TABLE customer_login_attempts ALTER COLUMN phone_number TYPE VARCHAR(255);
+DROP INDEX IF EXISTS idx_customer_login_attempts_phone;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_login_attempts_identifier
+  ON customer_login_attempts (identifier);
+-- (plus customers dan pending_registrations changes)
+```
+
+**2. `backend/src/app.js` — tambah schema guard Migration 030:**
+```javascript
+await runSchemaGuard('Migration 030 — Phone/Email flexible auth', [
+  `ALTER TABLE customers ALTER COLUMN phone_number DROP NOT NULL`,
+  // ... check constraint, email index, pending_registrations, customer_login_attempts
+]);
+```
+
+**3. `backend/src/modules/auth/auth.router.js` — update `/login/customer` validator:**
+```javascript
+body('phone_number').optional().trim(),
+body('email').optional().trim().isEmail().withMessage('Format email tidak valid.'),
+body().custom((_, { req }) => {
+  if (!req.body.phone_number && !req.body.email)
+    throw new Error('Nomor HP atau email wajib diisi.');
+  return true;
+}),
+body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
+```
+
+### Lesson Learned → STD-037
+
+Setiap kali membuat file SQL di `backend/migrations/`, WAJIB langsung mendaftarkan SQL-nya ke `runSchemaGuard` di `app.js`. File migration SQL yang tidak terdaftar di schema runner tidak akan pernah dieksekusi pada deployment baru maupun restart.
+
+---
+
+## BUG-072 — Total Group Payment Anomali (String Concatenation) + CASHIER_EDITABLE di GroupPaymentPage (2026-06-17)
+
+**Reporter:** `/cashier/group-bayar` — setelah kasir tambah produk via product browser, total berubah menjadi nilai absurd (Rp 29.840.000.234.144 yang seharusnya Rp 30.074.144).
+
+### Root Cause BUG 1 — String Concatenation pada `extraAmount`
+
+PostgreSQL kolom `NUMERIC`/`DECIMAL` dikirim sebagai **string** oleh `node-postgres` (default behavior). `normalizeProduct()` di `GroupPaymentPage.jsx` menyalin `price: p.price` tanpa konversi.
+
+Saat kasir klik "+ Tambah":
+```
+setExtraAmount(prev => prev + product.price)
+= 0 + "234144"           // number + string = string concatenation!
+= "234144"               // extraAmount menjadi string
+```
+
+Lalu saat menghitung grandTotal:
+```
+grandTotal = baseTotal + extraAmount
+= 29840000 + "234144"    // number + string = string concatenation!
+= "29840000234144"       // = Rp 29.840.000.234.144 ❌
+```
+
+`formatRupiah(extraAmount)` masih tampil benar karena `Intl.NumberFormat.format()` menerima string numerik.
+
+### Root Cause BUG 2 — CASHIER_EDITABLE tidak diterapkan di GroupPaymentPage
+
+Product browser di `GroupPaymentPage` tidak memiliki status guard, tidak konsisten dengan `PaymentPage` (BUG-069/BUG-070 pattern).
+
+### Fix
+
+**`frontend/src/pages/cashier/GroupPaymentPage.jsx`:**
+- `normalizeProduct`: `price: p.price` → `price: parseFloat(p.price) || 0`
+- `handleAddProduct`: `setExtraAmount(prev => prev + product.price)` → `+ parseFloat(product.price)` (defense-in-depth)
+- Tambah `const CASHIER_EDITABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT']`
+- Tambah `const isEditable = CASHIER_EDITABLE.includes(selectedTrx[0]?.status)`
+- Wrap panel product browser kanan dengan `{isEditable && ...}`
+
+**`frontend/src/pages/cashier/PaymentPage.jsx`:**
+- `normalizeProduct`: sama — `price: parseFloat(p.price) || 0` (bug yang sama, dipatch sekalian)
+
+### Standarisasi
+
+Ditambahkan **STD-036** — `price` dari API wajib di-cast `parseFloat()` sebelum dipakai dalam aritmatika.
+
+---
+
+## BUG-070 — Backend Menolak Add Item & Voucher untuk Transaksi RESERVED (2026-06-17)
+
+**Reporter:** Kasir — setelah BUG-069 fix (frontend menampilkan fitur untuk RESERVED), backend tetap menolak dengan 422: "Hanya transaksi PENDING yang dapat diubah" (add item) dan "Voucher hanya dapat diterapkan pada transaksi PENDING" (voucher).
+
+### Root Cause
+
+Dua fungsi backend hardcode `status !== 'PENDING'` sebagai guard:
+- `addItemToTransaction()` — `orders.service.js` line 737
+- `applyVoucherToTransaction()` — `orders.service.js` line 842
+
+Keduanya tidak mengenal status RESERVED yang dipakai oleh HELPER_INPUT flow. Frontend (BUG-069) sudah diperluas ke `isEditable` tapi backend belum mengikuti.
+
+**Pattern masalah:** Frontend dan backend menggunakan definisi "transaksi yang bisa diubah kasir" yang tidak konsisten. Frontend: `['PENDING', 'RESERVED', 'WAITING_PAYMENT']`. Backend: `['PENDING']` saja.
+
+### Fix
+
+**`backend/src/modules/orders/orders.service.js`:**
+- `addItemToTransaction`: ganti `status !== 'PENDING'` → `!CASHIER_EDITABLE.includes(status)` di mana `CASHIER_EDITABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT']`
+- `applyVoucherToTransaction`: sama — ganti dengan `CASHIER_EDITABLE` check
+- Pesan error diperbarui untuk menyebutkan semua status yang diizinkan
+
+**`frontend/src/pages/cashier/PaymentPage.jsx`:**
+- Guard voucher dikembalikan ke `isEditable` (sebelumnya sempat di-revert ke `isPending` saat investigasi BUG-069)
+
+### Standarisasi
+
+Ditambahkan **STD-035** — Status Guard Kasir: Gunakan `CASHIER_EDITABLE`, bukan hardcode `'PENDING'`. Berlaku untuk semua fungsi kasir baru yang ditambahkan di masa depan.
+
+---
+
+## BUG-069 — Fitur Kasir di /cashier/bayar/:id Hilang saat Status RESERVED (2026-06-17)
+
+**Reporter:** Kasir — di halaman `/cashier/bayar/:id`, tiga fitur tidak tampil: (1) product browser + kategori di panel kanan, (2) tombol hapus item 🗑️, (3) input voucher.
+
+### Root Cause
+
+`PaymentPage.jsx` menggunakan variabel `isPending` (`txn?.status === 'PENDING'`) sebagai gate untuk ketiga fitur tersebut. Transaksi HELPER_INPUT flow masuk dengan status `RESERVED` (bukan `PENDING`), sehingga semua fitur tersembunyi.
+
+### Fix
+
+**`frontend/src/pages/cashier/PaymentPage.jsx`:**
+- Tambah variabel `isEditable = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'].includes(txn?.status)`
+- Ganti guard dengan `{isEditable && ...}` untuk dua fitur:
+  - Tombol hapus item (🗑️) per baris item
+  - Panel kanan product browser + search + kategori
+- Voucher **tetap** `{isPending && ...}` — backend `applyVoucherToTransaction` menolak status non-PENDING dengan 422 (`status !== 'PENDING'`). Menampilkan voucher input untuk RESERVED akan selalu error.
+
+---
+
 ## BUG-051-03 — Pre-Order PENDING Tidak Muncul di /admin/preorder (2026-06-17)
 
 **Reporter:** TXN-20260616-00167 (status `PENDING`) tidak ditemukan di halaman `/admin/preorder` tab manapun.

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getTopProducts } from '../../api/leader';
 import { getTenants } from '../../api/tenants';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -66,6 +67,29 @@ export default function TopProductsPage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Top_Produk_${dateFrom}_${dateTo}`, [{
+              name: 'Top Produk',
+              rows: data.map((r) => ({
+                'Rank': r.rank,
+                'Produk': r.productName,
+                'Tenant': r.tenantName,
+                'Kategori': r.category ?? '-',
+                'Harga': r.price,
+                'Qty Terjual': r.qtySold,
+                'Revenue': r.revenue,
+                '% dari Total': totalRevenue > 0 ? Math.round((r.revenue / totalRevenue) * 100) : 0,
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : data.length === 0 ? (
         <EmptyState icon="🏷️" title="Tidak ada data produk" description="Ubah filter untuk melihat data lain" />

@@ -10,6 +10,7 @@ const logger                     = require('../../config/logger');
 
 /**
  * Get cashier's daily session recap.
+ * Includes payment breakdown, voucher summary, group vs single split, and expired count.
  */
 async function getDailyRecap(cashierId, date) {
   const shiftDate = date || new Date().toISOString().slice(0, 10);
@@ -34,7 +35,41 @@ async function getDailyRecap(cashierId, date) {
     parseFloat(session.total_edc  || 0) +
     parseFloat(session.total_transfer || 0);
 
-  return { ...session, grand_total: grandTotal };
+  // Voucher summary + group/single split + expired count
+  const statsResult = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE voucher_code IS NOT NULL)::int             AS txn_with_voucher,
+       COALESCE(SUM(discount_amount) FILTER (WHERE voucher_code IS NOT NULL), 0) AS total_discount,
+       COUNT(*) FILTER (WHERE group_id IS NULL)::int                     AS txn_single_count,
+       COUNT(*) FILTER (WHERE group_id IS NOT NULL)::int                 AS txn_group_count
+     FROM transactions
+     WHERE cashier_id = $1
+       AND DATE(paid_at AT TIME ZONE 'Asia/Jakarta') = $2
+       AND status = 'PAID'`,
+    [cashierId, shiftDate]
+  );
+
+  const expiredResult = await query(
+    `SELECT COUNT(*)::int AS txn_expired_count
+     FROM transactions
+     WHERE cashier_id = $1
+       AND DATE(created_at AT TIME ZONE 'Asia/Jakarta') = $2
+       AND status = 'EXPIRED'`,
+    [cashierId, shiftDate]
+  );
+
+  const stats   = statsResult.rows[0]   || {};
+  const expired = expiredResult.rows[0] || {};
+
+  return {
+    ...session,
+    grand_total:      grandTotal,
+    txn_with_voucher: stats.txn_with_voucher  ?? 0,
+    total_discount:   parseFloat(stats.total_discount ?? 0),
+    txn_single_count: stats.txn_single_count  ?? 0,
+    txn_group_count:  stats.txn_group_count   ?? 0,
+    txn_expired_count: expired.txn_expired_count ?? 0,
+  };
 }
 
 /**
@@ -48,7 +83,9 @@ async function getCashierTransactions(cashierId, date) {
     ? (() => { params.push(cashierId); return `AND t.cashier_id = $${params.length}`; })()
     : '';
   const result = await query(
-    `SELECT t.transaction_id, t.status, t.total_amount, t.payment_method, t.paid_at,
+    `SELECT t.transaction_id, t.status, t.total_amount, t.payment_method,
+            t.payment_reference, t.voucher_code, t.discount_amount,
+            t.group_id, t.paid_at,
             c.full_name AS customer_name, u.display_name AS cashier_name
      FROM transactions t
      JOIN customers c ON c.customer_id = t.customer_id
@@ -503,6 +540,80 @@ async function listGroups() {
   return res.rows;
 }
 
+/**
+ * List all EDC transactions for a cashier on a given day.
+ * Used for reconciliation against physical EDC machine / bank statement.
+ */
+async function getEdcLog(cashierId, date) {
+  const shiftDate = date || new Date().toISOString().slice(0, 10);
+  const params = [shiftDate];
+  const cashierFilter = cashierId
+    ? (() => { params.push(cashierId); return `AND t.cashier_id = $${params.length}`; })()
+    : '';
+
+  const result = await query(
+    `SELECT
+       t.transaction_id, t.total_amount, t.payment_reference,
+       t.paid_at, t.group_id,
+       c.full_name AS customer_name,
+       u.display_name AS cashier_name,
+       tg.group_code
+     FROM transactions t
+     JOIN customers c ON c.customer_id = t.customer_id
+     LEFT JOIN users u ON u.user_id = t.cashier_id
+     LEFT JOIN transaction_groups tg ON tg.group_id = t.group_id
+     WHERE t.payment_method = 'EDC'
+       AND t.status = 'PAID'
+       AND DATE(t.paid_at AT TIME ZONE 'Asia/Jakarta') = $1
+       ${cashierFilter}
+     ORDER BY t.paid_at DESC`,
+    params
+  );
+  return result.rows;
+}
+
+/**
+ * Generate a comprehensive shift handover report for a cashier on a given day.
+ * Combines recap summary + EDC log + voucher usage detail — designed for printing.
+ */
+async function getShiftReport(cashierId, date) {
+  const shiftDate = date || new Date().toISOString().slice(0, 10);
+
+  const [recap, transactions, edcLog] = await Promise.all([
+    getDailyRecap(cashierId, shiftDate),
+    getCashierTransactions(cashierId, shiftDate),
+    getEdcLog(cashierId, shiftDate),
+  ]);
+
+  const voucherTxns = transactions.filter(t => t.voucher_code);
+
+  return {
+    cashier_id:   cashierId,
+    shift_date:   shiftDate,
+    cashier_name: recap.cashier_name,
+    summary:      recap,
+    transactions,
+    edc_log:      edcLog,
+    voucher_txns: voucherTxns,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * CR-060: Lookup customer by phone number untuk preview info di kasir POS.
+ * Returns { customer_id, full_name, phone_number, email } atau null jika tidak ditemukan.
+ */
+async function lookupCustomerByPhone(phone) {
+  const { rows } = await query(
+    `SELECT customer_id, full_name, phone_number, email
+     FROM customers
+     WHERE phone_number = $1
+     LIMIT 1`,
+    [phone.trim()],
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   getDailyRecap,
   getCashierTransactions,
@@ -511,9 +622,13 @@ module.exports = {
   getPreorderPaymentQueue,   // CR-053
   createDeleteRequest,
   getPendingDeleteRequests,
+  getEdcLog,
+  getShiftReport,
   // Group checkout
   getCustomerActiveTrx,
   groupCheckout,
   getGroupDetail,
   listGroups,
+  // CR-060
+  lookupCustomerByPhone,
 };

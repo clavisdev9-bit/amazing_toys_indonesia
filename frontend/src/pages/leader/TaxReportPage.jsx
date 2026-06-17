@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getTaxReport } from '../../api/leader';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -47,6 +48,45 @@ export default function TaxReportPage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Laporan_Pajak_${dateFrom}_${dateTo}`, [
+              {
+                name: 'Ringkasan',
+                rows: [
+                  { 'Keterangan': 'DPP (Subtotal)', 'Nominal': data.totals.subtotal },
+                  { 'Keterangan': 'Total Pajak', 'Nominal': data.totals.taxAmount },
+                  { 'Keterangan': 'Total Keseluruhan', 'Nominal': data.totals.totalAmount },
+                ],
+              },
+              {
+                name: 'Per Rate Pajak',
+                rows: data.byRate.map((r) => ({
+                  'Rate (%)': r.taxRate,
+                  'Jumlah Transaksi': r.txnCount,
+                  'DPP': r.subtotal,
+                  'Pajak': r.taxAmount,
+                  'Total': r.totalAmount,
+                })),
+              },
+              {
+                name: 'Rincian Harian',
+                rows: data.daily.map((r) => ({
+                  'Tanggal': r.date,
+                  'DPP': r.subtotal,
+                  'Pajak': r.taxAmount,
+                  'Total': r.totalAmount,
+                })),
+              },
+            ])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : !data ? null : (
         <div className="space-y-4">

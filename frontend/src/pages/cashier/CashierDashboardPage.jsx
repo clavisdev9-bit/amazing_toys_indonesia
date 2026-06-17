@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import client from '../../api/client';
 import { getTransactions, getExpiredTransactions, getPreorderPaymentQueue, getCustomerActiveTrx, listGroups, getGroupDetail } from '../../api/cashier';
 import { lookupPayment } from '../../api/payments';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useLang } from '../../context/LangContext';
+import { useWebSocket } from '../../hooks/useWebSocket';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -27,6 +28,8 @@ function buildBoothBreakdown(groupDetail) {
 export default function CashierDashboardPage() {
   const navigate = useNavigate();
   const { t } = useLang();
+  const { subscribe } = useWebSocket();
+  const pollRef = useRef(null);
   const [txnId, setTxnId]             = useState('');
   const [voucherCode, setVoucherCode] = useState('');
   const [looking, setLooking]         = useState(false);
@@ -85,7 +88,23 @@ export default function CashierDashboardPage() {
       const items = r.data.data?.items ?? r.data.data ?? [];
       setRecent(items);
     }).catch(() => {});
+
+    // BUG-076: auto-poll setiap 60s sebagai fallback jika WebSocket tidak tersambung
+    pollRef.current = setInterval(() => {
+      loadQueue();
+      loadExpired();
+    }, 60_000);
+
+    return () => clearInterval(pollRef.current);
   }, [loadQueue, loadPreorderQueue, loadExpired]);
+
+  // BUG-076: subscribe txn:expired — expiry sweep backend broadcast event ini
+  useEffect(() => {
+    return subscribe('txn:expired', () => {
+      loadQueue();
+      loadExpired();
+    });
+  }, [subscribe, loadQueue, loadExpired]);
 
   async function handleLookup(e) {
     e.preventDefault();

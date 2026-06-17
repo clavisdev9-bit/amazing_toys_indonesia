@@ -1,5 +1,283 @@
 # Change Request Log
 
+## CR-062 — Auto-fill Shipping Form dari Customer Lookup di Helper Order (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Frontend → Helper → HelperPage (`/helper`) — MembuatOrderPanel
+- **Status**: RESOLVED
+- **Related**: CR-061
+
+### Deskripsi
+Setelah CR-061 (lookup customer by phone), data customer (nama, HP) sudah tersedia di `customerInfo`. Request: auto-fill form "Alamat Pengiriman (Pre-Order)" saat customer ditemukan.
+
+**Mapping field:**
+| Field Form | Sumber |
+|---|---|
+| Nama Penerima | `customerInfo.full_name` dari lookup |
+| No. HP Penerima | `customerInfo.phone_number` dari lookup |
+| Alamat Lengkap | Hardcoded: `"Amazing Toy Show Indonesia"` |
+| Kota / Kabupaten | Tidak di-fill |
+| Provinsi | Tidak di-fill |
+
+### Perubahan
+
+**`frontend/src/pages/helper/HelperPage.jsx`**:
+- Tambah `useEffect` yang watch `customerInfo`
+- Saat `customerInfo.found === true`: auto-fill `shipName`, `shipPhone`, `shipAddress`
+- Field kota dan provinsi tidak di-fill (tetap manual)
+- User masih bisa edit manual setelah auto-fill
+
+### Catatan
+- Auto-fill HANYA terjadi saat lookup berhasil (found = true)
+- Tidak auto-clear saat phone dihapus — user memutuskan sendiri
+- `createHelperOrder` flow tidak berubah
+
+---
+
+## CR-061 — Customer Phone Lookup di Helper Order Panel (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Frontend → Helper → HelperPage (`/helper`) + Backend → Cashier router
+- **Status**: RESOLVED
+
+### Deskripsi
+Halaman `/helper` menu "Order" (MembuatOrderPanel) sudah memiliki field "No. HP Customer (opsional)" namun tidak memberikan konfirmasi apakah nomor terdaftar. Gunakan pola CR-060 (debounced lookup) untuk menampilkan nama dan email customer saat helper mengisi nomor HP.
+
+**Flow:**
+1. Helper input no. HP
+2. Setelah berhenti mengetik (debounce 600ms), sistem lookup customer
+3. Jika ditemukan: tampilkan nama + email (border hijau)
+4. Jika tidak ditemukan: tampilkan "Customer belum terdaftar — akan dicatat sebagai Walk-in" (border amber)
+5. Flow `createHelperOrder` tidak berubah
+
+### Perubahan
+
+**`backend/src/modules/cashier/cashier.router.js`**:
+- Tambah `'HELPER'` ke `authorize()` pada route `GET /cashier/customer-lookup`
+- Sebelumnya: `authorize('CASHIER', 'LEADER', 'ADMIN')`
+- Sesudah: `authorize('CASHIER', 'LEADER', 'ADMIN', 'HELPER')`
+
+**`frontend/src/pages/helper/HelperPage.jsx`**:
+- Import `useRef` dari React
+- Import `lookupCustomerByPhone` dari `../../api/cashier`
+- State baru: `customerInfo`, `lookupLoading`, `lookupTimerRef`
+- Fungsi `handlePhoneChange(val)`: debounce 600ms, panggil lookup, set customerInfo
+- Reset `customerInfo` dan timer saat order sukses dibuat
+- Phone input: border dinamis, spinner, clear button, panel info di bawah
+
+### Catatan
+- Endpoint `GET /cashier/customer-lookup` di-share antara kasir (CR-060) dan helper (CR-061)
+- Tidak ada migrasi DB — query hanya baca tabel `customers`
+- Standar: lihat STD-038
+
+---
+
+## CR-060 — Verifikasi Customer di Kasir POS sebelum Checkout (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Frontend → Cashier → CashierPOSPage (`/cashier/pos`) + Backend → Cashier
+- **Status**: RESOLVED
+
+### Deskripsi
+Kasir yang mengisi "No. HP Customer" di POS tidak mendapat konfirmasi apakah nomor tersebut terdaftar di sistem. Permintaan: tambahkan verifikasi nama, nomor HP, dan email customer saat kasir mengisi nomor HP sebelum proses pembayaran dimulai.
+
+**Flow yang diminta:**
+1. Kasir input no. HP di field "No. HP Customer (opsional)"
+2. Setelah berhenti mengetik (debounce 600ms), sistem otomatis lookup customer
+3. Jika ditemukan: tampilkan nama dan email customer di bawah field (border hijau)
+4. Jika tidak ditemukan: tampilkan peringatan "Customer belum terdaftar — akan dicatat sebagai Walk-in" (border amber)
+5. Proses bayar tetap berjalan seperti biasa (tidak ada gate blocking)
+
+### Perubahan
+
+**`backend/src/modules/cashier/cashier.service.js`**:
+- Tambah fungsi `lookupCustomerByPhone(phone)` — query `customers` by `phone_number`, return `{ customer_id, full_name, phone_number, email }` atau `null`
+
+**`backend/src/modules/cashier/cashier.router.js`**:
+- Tambah `GET /api/v1/cashier/customer-lookup?phone=xxx` — auth: CASHIER/LEADER/ADMIN, 200 + data jika ditemukan, 404 jika tidak
+
+**`frontend/src/api/cashier.js`**:
+- Tambah `lookupCustomerByPhone(phone)` → `GET /cashier/customer-lookup`
+
+**`frontend/src/pages/cashier/CashierPOSPage.jsx`**:
+- Import `lookupCustomerByPhone` dari api
+- State baru: `customerInfo` (null | { found: true, ...data } | { found: false }), `lookupLoading`, `lookupTimerRef`
+- Fungsi `handlePhoneChange`: debounce 600ms, panggil lookup, set customerInfo
+- Fungsi `handlePhoneClear`: reset phone + customerInfo sekaligus
+- Customer phone card: border warna dinamis (hijau/amber/abu), spinner saat lookup, panel info di bawah
+- Cart panel header: tampilkan nama customer jika ditemukan
+
+### Catatan
+- Walk-in flow (phone kosong) tidak terpengaruh
+- `handleBayar()` dan `createCashierOrder` tidak diubah — phone tetap dikirim as-is
+- Tidak ada migrasi DB
+
+---
+
+## CR-059 — Push Notifikasi Order Masuk di Kasir POS Pad (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Medium
+- **Module**: Frontend → Cashier → CashierPOSPage (`/cashier/pos`)
+- **Status**: RESOLVED
+
+### Deskripsi
+Kasir di halaman `/cashier/pos` tidak mendapat notifikasi real-time saat helper membuat order baru. `broadcastToCashier` sudah ada di `websocket.js` dan event `ORDER_RESERVED` sudah di-broadcast ke ALL di `helper.service.js:260`, namun frontend kasir belum subscribe dan tidak menampilkan notifikasi apapun.
+
+### Perubahan
+
+**`frontend/src/hooks/useOrderNotifications.js`** *(baru)*:
+- Hook singleton (module-level state, sama persis pola `usePaymentNotifications`)
+- Subscribe ke event `ORDER_RESERVED` via `useWebSocket`
+- Payload: `{ transactionId, boothId }` dari backend
+- Menyimpan history notifikasi (`notifs`), state toast aktif (`toast`), unread count
+- Memainkan chime 3-nada descending (C6→A5→E5) — berbeda dari chime ascending `usePaymentNotifications`
+- Toast auto-dismiss setelah 6 detik
+- Expose: `notifs`, `toast`, `unreadCount`, `markRead`, `markAll`, `dismissToast`
+
+**`frontend/src/pages/cashier/CashierPOSPage.jsx`**:
+- Import `useOrderNotifications`
+- Tambah komponen `OrderNotifToast` — floating toast biru di atas halaman, muncul saat order baru masuk, dismiss manual atau auto-dismiss 6s
+- Tambah komponen `OrderNotifBell` — bell icon dengan badge merah (unread count), klik buka dropdown list notifikasi terakhir, baca otomatis saat dropdown dibuka
+- Bell ditempatkan sebagai elemen ke-3 di baris top (sejajar phone + barcode scanner)
+- Dropdown menutup saat klik di luar (click-outside handler)
+
+### Behavior Setelah Fix
+1. Helper buat order → `ORDER_RESERVED` broadcast ke ALL
+2. Kasir di `/cashier/pos` menerima event → chime berbunyi + toast muncul di atas halaman
+3. Toast menampilkan nomor transaksi + ID booth, bisa di-dismiss manual atau hilang sendiri dalam 6 detik
+4. Bell icon di top-bar menampilkan badge merah dengan jumlah unread
+5. Klik bell → dropdown list semua notifikasi sesi ini, status baca/belum baca
+6. Buka dropdown → semua notif otomatis ditandai dibaca (badge hilang)
+
+---
+
+## CR-058 — Navigasi & UX /helper/order-success (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Frontend → Helper → HelperOrderSuccessPage (`/helper/order-success`)
+- **Status**: RESOLVED
+
+### Deskripsi
+Halaman `/helper/order-success` tidak memiliki tombol navigasi "Kembali". Satu-satunya CTA adalah "Buat Order Berikutnya" di bawah. Label teknikal "Layer 3 — QR di Layar Helper" tidak user-friendly.
+
+### Perubahan
+
+**`frontend/src/pages/helper/HelperOrderSuccessPage.jsx`:**
+- Tambah tombol **← Kembali ke Helper** di atas (di bawah back button, sebelum header sukses) — navigasi ke `/helper`
+- Label card QR: "Layer 3 — QR di Layar Helper" → **"QR untuk Pembayaran Kasir"**
+- Label status chip "Layer 2": "Push notifikasi dikirim" → **"Notifikasi dikirim ke customer"** + sub-text yang lebih jelas
+- Label status chip "Layer 3": "QR aktif di layar ini" → **"QR tersedia di layar ini"** + sub-text kontekstual
+- Section label: "Status Pengiriman QR" → **"Status Notifikasi"**
+- CTA bawah: dari 1 tombol full-width menjadi **2 tombol sejajar** — `← Kembali` (secondary) + `Buat Order Berikutnya` (primary)
+
+### Behavior Setelah Fix
+1. Helper menekan "← Kembali ke Helper" di atas → kembali ke `/helper`
+2. Atau tekan tombol "← Kembali" di CTA bawah → sama
+3. Label lebih mudah dipahami staff non-teknikal
+
+---
+
+## CR-057 — Badge & Info Box Pre-Order di Halaman /product_cart/:id (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Frontend → Customer → ProductCartPage (`/product_cart/:id`)
+- **Status**: RESOLVED
+
+### Deskripsi
+Halaman `/product_cart/:id` tidak menampilkan indikasi visual bahwa produk adalah pre-order. Halaman `/product/:id` (`MockProductDetailPage`) sudah memiliki implementasi lengkap.
+
+### Perubahan
+
+**`frontend/src/pages/customer/ProductCartPage.jsx`:**
+- Tambah derived values `isPreorder` + `preorderNote` dari data produk
+- Tambah **overlay badge** "PRE-ORDER" oranye di sudut kiri bawah hero image (sama persis dengan `MockProductDetailPage`)
+- Ganti status badge di header row: tampilkan badge "Pre-Order" oranye saat `isPreorder`, fallback ke stock badge seperti sebelumnya
+- Tambah **Pre-Order info box** (gradient oranye, ikon 🔖) setelah blok harga, menampilkan `preorderNote` jika ada
+
+### Behavior Setelah Fix
+1. Scan QR produk pre-order → `/product_cart/:id` menampilkan badge "PRE-ORDER" di foto
+2. Header row menampilkan badge "Pre-Order" (oranye) alih-alih badge stok
+3. Info box menjelaskan alur pre-order dan catatan produk (jika ada)
+4. Produk reguler tidak terpengaruh
+
+---
+
+## CR-056 — Mixed Cart Defense (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: High
+- **Module**: Backend Orders/Helper + Frontend ApprovalQueueTab
+- **Status**: RESOLVED
+
+### Deskripsi
+Tidak ada validasi server-side yang mencegah order berisi campuran item pre-order dan reguler. Backend `createOrder()` hanya memblokir pre-order di SELF_ORDER mode, bukan mixed cart universal. `approveOrder()` tidak mendeteksi anomali mixed cart. Frontend tidak memberi indikasi visual per tipe item.
+
+### Perubahan
+
+**`backend/src/modules/orders/orders.service.js`:**
+- Pindahkan validasi mixed cart ke luar blok `isHelperApproveMode` → berlaku untuk **semua mode**
+- HTTP status → 400 (dari 422)
+- Variabel `preorderItemsAll` shared antara mixed-cart check dan SELF_ORDER check
+
+**`backend/src/modules/helper/helper.service.js`:**
+- Ganti single EXISTS query dengan COUNT query yang menghitung `preorder_count` + `regular_count`
+- Mixed cart (keduanya > 0) → `logger.error` + throw AppError 400
+- All-preorder tapi `order_type=REGULAR` → `logger.warn` + auto-koreksi ke PREORDER (behavior BUG-050-02 dipertahankan)
+
+**`frontend/src/components/helper/ApprovalQueueTab.jsx`:**
+- `ItemRow`: Badge per item — 🔖 PRE-ORDER (oranye) / REGULER (hijau)
+- `ApprovalCard`: Tambah state `mixedChecked`, computed `hasMixedCart`
+- Banner warning merah muncul jika `hasMixedCart`
+- Modal "Approve All": Tambah checkbox "Saya sudah periksa tipe barang" saat `hasMixedCart`
+- Tombol "Ya, Setujui" disabled saat `hasMixedCart && !mixedChecked`
+- `mixedChecked` di-reset saat modal ditutup (onClose & Batal & onClick)
+
+### Behavior Setelah Fix
+1. `createOrder()` menolak HTTP 400 untuk cart campuran di semua mode order
+2. `approveOrder()` mendeteksi anomali mixed cart → log error + HTTP 400
+3. Helper melihat badge tipe per item di ApprovalCard
+4. Banner merah muncul otomatis jika order anomali mixed cart
+5. Helper harus centang konfirmasi sebelum tombol Approve aktif
+6. Semua state checkbox di-reset saat modal ditutup
+
+---
+
+## CR-055 — Tambah Kategori Inline di Field "Kategori *" (2026-06-17)
+- **Date**: 2026-06-17
+- **Reporter**: Admin
+- **Severity**: Low
+- **Module**: Admin → Master Data → Form Produk & Bulk Category Modal
+- **Status**: RESOLVED
+
+### Deskripsi
+Field "Kategori *" di modal **Set Kategori Semua Produk** (Bulk Category Modal) tidak memiliki affordance "Tambah Kategori Baru". User harus menutup modal, membuat produk dummy dengan kategori baru, lalu kembali — tidak efisien.
+
+Form Create/Edit produk individual sudah compliant (STD-009). Bulk Category Modal belum.
+
+### Perubahan
+**`frontend/src/pages/admin/tabs/MasterDataTab.jsx`:**
+- Tambah `onAddNew={handleAddCategory}` pada `CategoryCombobox` di Bulk Category Modal
+- `handleAddCategory` sudah ada dan ter-share — tidak perlu fungsi baru
+
+**`backend/src/app.js`:**
+- Tambah idempotent schema guard untuk tabel `product_categories` (STD-010)
+- `CREATE TABLE IF NOT EXISTS product_categories (...)` + index pada kolom `name`
+
+### Behavior Setelah Fix
+1. User buka modal "Set Kategori Semua Produk"
+2. Ketik nama kategori baru di field "Kategori *"
+3. Dropdown tampilkan opsi "➕ Tambahkan '{nama}'"
+4. Klik → kategori disimpan ke tabel `product_categories`, list ter-refresh
+5. Kategori baru langsung tersedia sebagai pilihan
+
+---
+
 ## CR-054 — Konfirmasi Sebelum Proses Pembayaran di Halaman Kasir (2026-06-17)
 - **Date**: 2026-06-17
 - **Reporter**: Admin

@@ -26,3 +26,11 @@ export const getCustomerActiveTrx = ({ phone, name } = {}) =>
 export const groupCheckout = (data) => client.post('/cashier/group-checkout', data);
 export const listGroups    = ()         => client.get('/cashier/groups');
 export const getGroupDetail = (groupId) => client.get(`/cashier/groups/${groupId}`);
+
+// CR-060: lookup customer info by phone sebelum checkout
+export const lookupCustomerByPhone = (phone) =>
+  client.get('/cashier/customer-lookup', { params: { phone } });
+
+// Reports
+export const getEdcLog     = (params) => client.get('/cashier/edc-log', { params });
+export const getShiftReport = (params) => client.get('/cashier/shift-report', { params });

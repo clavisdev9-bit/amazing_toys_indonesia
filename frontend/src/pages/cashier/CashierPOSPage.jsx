@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProducts, getCategories, getProductByBarcode } from '../../api/products';
-import { createCashierOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
+import { createCashierOrder, createDeleteRequest, getPendingDeleteRequests, lookupCustomerByPhone } from '../../api/cashier';
 import { formatRupiah } from '../../utils/format';
 import { canAddToCart, getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
 import Button from '../../components/ui/Button';
@@ -10,6 +10,7 @@ import VoucherInput from '../../components/cart/VoucherInput';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { useToast } from '../../hooks/useToast';
 import ToastContainer from '../../components/ui/Toast';
+import { useOrderNotifications } from '../../hooks/useOrderNotifications';
 
 function normalizeProduct(p) {
   return {
@@ -66,14 +67,101 @@ function ProductCard({ product, onAdd }) {
   );
 }
 
+// ─── Order notification bell ──────────────────────────────────────────────────
+function OrderNotifToast({ toast, onDismiss }) {
+  if (!toast) return null;
+  return (
+    <div
+      className="absolute top-0 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-blue-700 text-white px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium animate-slide-down"
+      style={{ minWidth: 280 }}
+    >
+      <span className="text-lg shrink-0">🔔</span>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold leading-tight">Order masuk dari Helper!</p>
+        <p className="text-blue-200 text-xs truncate">{toast.txn}{toast.booth ? ` · Booth ${toast.booth}` : ''}</p>
+      </div>
+      <button onClick={onDismiss} className="text-blue-200 hover:text-white ml-1 text-base leading-none shrink-0">✕</button>
+    </div>
+  );
+}
+
+function OrderNotifBell({ unreadCount, notifs, onMarkAll, onMarkRead }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  function fmt(ts) {
+    const d = ts instanceof Date ? ts : new Date(ts);
+    return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={() => { setOpen(v => !v); if (!open && unreadCount > 0) onMarkAll(); }}
+        className="relative flex items-center justify-center w-10 h-10 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+        title="Notifikasi order masuk"
+      >
+        <span className="text-lg">🔔</span>
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center leading-none">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-12 w-72 bg-white border border-gray-200 rounded-xl shadow-xl z-40 overflow-hidden">
+          <div className="px-3 py-2 border-b bg-gray-50 flex items-center justify-between">
+            <span className="text-xs font-semibold text-gray-700">Order Masuk dari Helper</span>
+            {notifs.length > 0 && (
+              <button onClick={onMarkAll} className="text-[10px] text-blue-600 hover:underline">Tandai semua dibaca</button>
+            )}
+          </div>
+          <div className="max-h-64 overflow-y-auto divide-y">
+            {notifs.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-6">Belum ada notifikasi.</p>
+            ) : (
+              notifs.map(n => (
+                <div
+                  key={n.id}
+                  onClick={() => onMarkRead(n.id)}
+                  className={`px-3 py-2.5 flex items-start gap-2 cursor-default transition-colors ${n.read ? 'bg-white' : 'bg-blue-50'}`}
+                >
+                  <span className="text-base shrink-0 mt-0.5">{n.read ? '🔔' : '🔵'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-800 truncate">{n.txn}</p>
+                    {n.booth && <p className="text-[10px] text-gray-500 truncate">Booth: {n.booth}</p>}
+                    <p className="text-[10px] text-gray-400 mt-0.5">{fmt(n.ts)}</p>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CashierPOSPage() {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
   const { subscribe } = useWebSocket();
   const { toasts, addToast, removeToast } = useToast();
+  const { notifs, toast: orderToast, unreadCount, markRead, markAll, dismissToast } = useOrderNotifications();
 
   // Customer
   const [customerPhone, setCustomerPhone] = useState('');
+  const [customerInfo, setCustomerInfo]   = useState(null); // null | { found: true, ...data } | { found: false }
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const lookupTimerRef = useRef(null);
 
   // Barcode scanner
   const [barcodeInput, setBarcodeInput]     = useState('');
@@ -147,6 +235,34 @@ export default function CashierPOSPage() {
     }
     return list;
   }, [products, activeCategory, search]);
+
+  // ── Customer phone lookup (CR-060) ───────────────────────────────────────
+  function handlePhoneChange(e) {
+    const val = e.target.value;
+    setCustomerPhone(val);
+    setCustomerInfo(null);
+    clearTimeout(lookupTimerRef.current);
+    const trimmed = val.trim();
+    if (!trimmed) { setLookupLoading(false); return; }
+    setLookupLoading(true);
+    lookupTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await lookupCustomerByPhone(trimmed);
+        setCustomerInfo({ found: true, ...res.data.data });
+      } catch (err) {
+        if (err.response?.status === 404) setCustomerInfo({ found: false });
+      } finally {
+        setLookupLoading(false);
+      }
+    }, 600);
+  }
+
+  function handlePhoneClear() {
+    setCustomerPhone('');
+    setCustomerInfo(null);
+    setLookupLoading(false);
+    clearTimeout(lookupTimerRef.current);
+  }
 
   // ── Barcode scan ──────────────────────────────────────────────────────────
   async function handleBarcodeScan(e) {
@@ -249,25 +365,50 @@ export default function CashierPOSPage() {
   return (
     <div className="flex flex-col gap-3 h-[calc(100vh-8rem)] relative">
       <ToastContainer toasts={toasts} removeToast={removeToast} />
+      <OrderNotifToast toast={orderToast} onDismiss={dismissToast} />
 
       {/* ── Top: Phone + Barcode row ───────────────────────────────────────── */}
       <div className="flex gap-3 shrink-0">
 
         {/* Customer phone */}
-        <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex-1 min-w-0">
-          <span className="text-base shrink-0">📱</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-gray-400 mb-0.5">No. HP Customer (opsional)</p>
-            <input
-              type="tel"
-              placeholder="08xxxxxxxxxx — kosongkan untuk Walk-in"
-              value={customerPhone}
-              onChange={e => setCustomerPhone(e.target.value)}
-              className="w-full text-sm font-medium text-gray-800 focus:outline-none bg-transparent placeholder:text-gray-300"
-            />
+        <div className={`flex flex-col bg-white border rounded-xl px-4 py-2.5 flex-1 min-w-0 transition-colors ${
+          customerInfo?.found === true  ? 'border-green-300' :
+          customerInfo?.found === false ? 'border-amber-300' :
+          'border-gray-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            <span className="text-base shrink-0">📱</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-gray-400 mb-0.5">No. HP Customer (opsional)</p>
+              <input
+                type="tel"
+                placeholder="08xxxxxxxxxx — kosongkan untuk Walk-in"
+                value={customerPhone}
+                onChange={handlePhoneChange}
+                className="w-full text-sm font-medium text-gray-800 focus:outline-none bg-transparent placeholder:text-gray-300"
+              />
+            </div>
+            {lookupLoading && <Spinner className="w-4 h-4 shrink-0" />}
+            {!lookupLoading && customerPhone && (
+              <button onClick={handlePhoneClear} className="text-gray-400 hover:text-gray-600 text-xs shrink-0">✕</button>
+            )}
           </div>
-          {customerPhone && (
-            <button onClick={() => setCustomerPhone('')} className="text-gray-400 hover:text-gray-600 text-xs shrink-0">✕</button>
+          {customerInfo?.found === true && (
+            <div className="mt-1.5 pt-1.5 border-t border-green-100 flex items-center gap-2">
+              <span className="text-green-500 text-xs shrink-0">✓</span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-green-700 truncate">{customerInfo.full_name}</p>
+                {customerInfo.email && (
+                  <p className="text-[10px] text-green-600 truncate">{customerInfo.email}</p>
+                )}
+              </div>
+            </div>
+          )}
+          {customerInfo?.found === false && (
+            <div className="mt-1.5 pt-1.5 border-t border-amber-100 flex items-center gap-1.5">
+              <span className="text-amber-400 text-xs shrink-0">⚠</span>
+              <p className="text-[10px] text-amber-600">Customer belum terdaftar — akan dicatat sebagai Walk-in</p>
+            </div>
           )}
         </div>
 
@@ -290,6 +431,14 @@ export default function CashierPOSPage() {
             : <button type="submit" className="shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-2.5 py-1 rounded-lg transition-colors">Cari</button>
           }
         </form>
+
+        {/* Order notification bell */}
+        <OrderNotifBell
+          unreadCount={unreadCount}
+          notifs={notifs}
+          onMarkAll={markAll}
+          onMarkRead={markRead}
+        />
       </div>
 
       {/* Barcode error */}
@@ -359,7 +508,9 @@ export default function CashierPOSPage() {
               )}
             </h2>
             {customerPhone && (
-              <p className="text-[10px] text-blue-600 mt-0.5 font-medium">📱 {customerPhone}</p>
+              <p className="text-[10px] text-blue-600 mt-0.5 font-medium">
+                📱 {customerInfo?.found === true ? `${customerInfo.full_name} · ${customerPhone}` : customerPhone}
+              </p>
             )}
           </div>
 

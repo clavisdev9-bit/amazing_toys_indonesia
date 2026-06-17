@@ -1931,3 +1931,280 @@ const statusMap = {
 BUG-051-02 — PAID pre-orders tidak muncul di /admin/preorder.  
 STD-033 — Pre-Order stepper step key invariants.  
 CR-050 — Status flow pre-order lengkap.
+
+---
+
+## STD-035 — Status Guard Kasir: Gunakan CASHIER_EDITABLE, Bukan Hardcode 'PENDING'
+
+**Berlaku untuk:** Semua fungsi backend yang mengizinkan kasir memodifikasi transaksi aktif, dan semua guard UI di `PaymentPage.jsx` (atau halaman kasir setara).
+
+**Latar Belakang:** BUG-069 + BUG-070 — Frontend menampilkan fitur kasir (product browser, voucher, hapus item) hanya untuk status `PENDING`. Transaksi HELPER_INPUT flow masuk dengan status `RESERVED`. Akibatnya fitur tidak tampil (BUG-069). Saat frontend diperluas ke `isEditable`, backend masih hardcode `status !== 'PENDING'` sehingga API selalu 422 (BUG-070).
+
+### Aturan
+
+**A. Set status "kasir bisa edit" wajib konsisten antara frontend dan backend:**
+
+```javascript
+// ✅ BENAR — gunakan set yang sama di kedua sisi
+const CASHIER_EDITABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'];
+
+// Backend guard (orders.service.js)
+if (!CASHIER_EDITABLE.includes(txn.status))
+  throw new AppError(`Hanya transaksi aktif (${CASHIER_EDITABLE.join('/')}) yang dapat diubah.`, 422);
+
+// Frontend gate (PaymentPage.jsx)
+const isEditable = CASHIER_EDITABLE.includes(txn?.status);
+{isEditable && <ProductBrowser />}
+{isEditable && !txn.voucher_code && <VoucherInput />}
+{isEditable && <DeleteButton />}
+```
+
+```javascript
+// ❌ SALAH — hardcode hanya PENDING
+if (txn.status !== 'PENDING') throw new AppError('Hanya transaksi PENDING...');
+const isPending = txn?.status === 'PENDING';
+{isPending && <ProductBrowser />}  // tidak muncul untuk RESERVED
+```
+
+**B. Mapping status → siapa yang bisa modifikasi:**
+
+| Status | Flow Asal | Kasir bisa edit? |
+|---|---|---|
+| `PENDING` | SELF_ORDER, pasca-approval Helper | ✅ Ya |
+| `RESERVED` | HELPER_INPUT (order dari Helper) | ✅ Ya |
+| `WAITING_PAYMENT` | Transisi intermediary | ✅ Ya |
+| `PENDING_APPROVAL` | HELPER_APPROVE sebelum disetujui | ❌ Tidak |
+| `PAID`, `CANCELLED`, `EXPIRED`, `COMPLETED` | Terminal | ❌ Tidak |
+
+**C. Fungsi backend yang terdampak CASHIER_EDITABLE:**
+
+| Fungsi | File | Guard |
+|---|---|---|
+| `addItemToTransaction()` | `orders.service.js` | `CASHIER_EDITABLE.includes(status)` |
+| `applyVoucherToTransaction()` | `orders.service.js` | `CASHIER_EDITABLE.includes(status)` |
+| `createDeleteRequest()` | `cashier.service.js` | Tidak ada status guard (aman — leader yang approve) |
+
+**D. Checklist saat menambah operasi kasir baru:**
+
+- [ ] Backend: gunakan `CASHIER_EDITABLE` bukan `status !== 'PENDING'`
+- [ ] Frontend: gunakan `isEditable` bukan `isPending` sebagai gate UI
+- [ ] Pesan error backend menyebutkan status yang diizinkan (bukan hanya "PENDING")
+- [ ] Test: coba fitur dengan transaksi berstatus RESERVED — harus berfungsi
+
+### Referensi
+
+BUG-069 — Frontend gate terlalu ketat (`isPending` saja).  
+BUG-070 — Backend hardcode `status !== 'PENDING'`, menolak RESERVED.
+
+---
+
+## STD-036 — Harga dari API Wajib di-cast `parseFloat()` Sebelum Aritmatika
+
+**Berlaku untuk:** Semua komponen frontend yang menerima nilai harga/jumlah dari API dan menggunakannya dalam operasi aritmatika (`+`, `-`, `*`, `/`).
+
+**Latar Belakang:** BUG-072 — `GroupPaymentPage` dan `PaymentPage` menyalin `price: p.price` dari API response tanpa konversi. PostgreSQL `NUMERIC`/`DECIMAL` kolom dikirim sebagai **string** oleh `node-postgres`. Operasi `number + string` di JavaScript menghasilkan string concatenation bukan penjumlahan numerik, menyebabkan total berubah jadi nilai absurd.
+
+### Masalah
+
+```javascript
+// API mengirim: { price: "234144", stock_quantity: 5, ... }
+
+// SALAH ❌ — price adalah string
+function normalizeProduct(p) {
+  return { price: p.price, ... };  // "234144" (string)
+}
+
+setExtraAmount(prev => prev + product.price);
+// 0 + "234144" = "234144"  ← string concatenation!
+
+grandTotal = baseTotal + extraAmount;
+// 29840000 + "234144" = "29840000234144" ← Rp 29.840.000.234.144 ❌
+```
+
+### Aturan
+
+**A. Selalu cast nilai numerik dari API:**
+
+```javascript
+// BENAR ✅ — cast di satu tempat: normalizeProduct / normalization layer
+function normalizeProduct(p) {
+  return {
+    price:  parseFloat(p.price)          || 0,
+    stock:  parseInt(p.stock_quantity, 10) ?? 0,
+    // ...
+  };
+}
+```
+
+**B. Defense-in-depth — cast juga di titik kalkulasi:**
+
+```javascript
+// BENAR ✅ — meskipun normalizeProduct sudah cast, tetap guard di penggunaan
+setExtraAmount(prev => prev + parseFloat(product.price));
+const baseTotal = txns.reduce((s, t) => s + parseFloat(t.total_amount), 0);
+```
+
+**C. Kolom PostgreSQL yang umumnya dikirim sebagai string:**
+
+| Tipe PostgreSQL | Contoh nilai JSON | Perlu cast? |
+|---|---|---|
+| `NUMERIC`, `DECIMAL` | `"234144.00"` | ✅ `parseFloat()` |
+| `BIGINT` | `"29840000"` | ✅ `parseInt()` |
+| `INTEGER`, `INT4` | `5` (number) | ✗ Sudah number |
+| `FLOAT`, `DOUBLE` | `234144.5` (number) | ✗ Sudah number |
+| `TIMESTAMPTZ` | `"2026-06-17T..."` | ✗ Bukan aritmatika |
+
+**D. `formatRupiah()` tidak mendeteksi bug ini:**
+
+`Intl.NumberFormat.format("234144")` = "Rp 234.144" — display tampil benar meski datanya string. Bug baru muncul saat string dipakai dalam `+` dengan nilai lain.
+
+### Checklist Saat Menulis Komponen yang Menampilkan Harga
+
+- [ ] Semua field harga/amount di `normalizeProduct` / data transform menggunakan `parseFloat()` atau `parseInt()`
+- [ ] Semua `reduce()` dan `setAmount(prev => prev + x)` menggunakan nilai yang sudah pasti number
+- [ ] Tidak ada `price: p.price` (tanpa cast) jika dipakai dalam kalkulasi
+
+### Referensi
+
+BUG-072 — `GroupPaymentPage` total Rp 29.840.000.234.144 karena `price: p.price` (string) + number = string concat.
+
+---
+
+## STD-037 — Setiap File Migration SQL WAJIB Didaftarkan ke Schema Runner (`app.js`)
+
+**Berlaku untuk:** Semua perubahan schema DB. Setiap developer yang membuat file di `backend/migrations/`.
+
+### Aturan
+
+Setiap kali membuat file SQL baru di `backend/migrations/`, file tersebut **WAJIB** langsung didaftarkan ke `runSchemaGuard` di `backend/src/app.js` pada PR yang sama.
+
+| ❌ Salah | ✅ Benar |
+|---|---|
+| Buat `030_feature.sql`, tidak tambah ke `app.js` | Buat `030_feature.sql` + tambah `runSchemaGuard('Migration 030 — ...', [...])` di `app.js` |
+| Bergantung pada migration file untuk diterapkan secara terpisah | Semua migration dijalankan otomatis saat server start via schema runner |
+
+### Kenapa Ini Penting
+
+Sistem tidak punya migration runner terpisah (Flyway, Liquibase, dll). Satu-satunya cara schema baru diterapkan ke DB adalah via `runSchemaGuard` di `app.js` yang dipanggil saat server start.
+
+File SQL di `backend/migrations/` hanya berfungsi sebagai:
+- Dokumentasi/referensi SQL yang dijalankan
+- Seed data untuk container PostgreSQL saat init (`docker-entrypoint-initdb.d/`)
+
+File SQL tersebut TIDAK otomatis dieksekusi oleh backend.
+
+### Pattern Schema Guard
+
+```javascript
+// Di app.js, setelah runSchemaGuard terakhir:
+await runSchemaGuard('Migration 030 — Deskripsi singkat', [
+  `ALTER TABLE foo ADD COLUMN IF NOT EXISTS bar VARCHAR(255)`,
+  `CREATE INDEX IF NOT EXISTS idx_foo_bar ON foo (bar)`,
+  // Gunakan IF NOT EXISTS / DO $$ ... EXCEPTION ... END $$ untuk idempotency
+]);
+```
+
+### Idempotency Rules
+
+Semua SQL dalam `runSchemaGuard` harus **idempotent** (aman dijalankan berkali-kali):
+
+| Operasi | Pattern Idempotent |
+|---|---|
+| Tambah kolom | `ADD COLUMN IF NOT EXISTS` |
+| Buat index | `CREATE INDEX IF NOT EXISTS` |
+| Tambah constraint | `DO $$ BEGIN ALTER TABLE ... ADD CONSTRAINT ...; EXCEPTION WHEN duplicate_object THEN NULL; END $$` |
+| Ubah tipe kolom | `ALTER COLUMN ... TYPE ...` (safe jika compatible) |
+| Drop index | `DROP INDEX IF EXISTS` |
+| Backfill data | `UPDATE ... WHERE column IS NULL` |
+
+### Checklist Setiap PR yang Mengubah Schema
+
+- [ ] File SQL baru di `backend/migrations/` sudah ada
+- [ ] SQL yang sama sudah ditambahkan ke `runSchemaGuard` di `app.js`
+- [ ] Semua SQL di schema guard menggunakan pattern idempotent
+- [ ] Label `runSchemaGuard` sesuai nomor migration (e.g., `'Migration 030 — ...'`)
+
+### Referensi
+
+BUG-073 — Login customer gagal dengan "Internal server error." karena migration 030 tidak terdaftar di `app.js`, sehingga kolom `identifier` di `customer_login_attempts` tidak pernah dibuat.
+
+---
+
+## STD-038 — Customer Phone Lookup: Pola Debounced Lookup di Setiap Input HP Customer
+
+**Berlaku untuk:** Semua form/page yang memiliki field "No. HP Customer (opsional)" yang diisi oleh staff (kasir, helper, atau role lain).
+
+### Aturan
+
+Setiap field input nomor HP customer yang diisi oleh staff **WAJIB** menggunakan pola debounced lookup berikut:
+
+1. **Debounce 600ms** — lookup hanya dipanggil 600ms setelah user berhenti mengetik
+2. **Tampilkan spinner** saat lookup berlangsung
+3. **Jika ditemukan**: border hijau + tampilkan nama dan email customer di bawah field
+4. **Jika tidak ditemukan**: border amber + pesan "Customer belum terdaftar — akan dicatat sebagai Walk-in"
+5. **Clear button**: tombol ✕ untuk reset phone + customerInfo sekaligus
+6. **Reset** `customerInfo` dan timer saat form di-submit atau di-reset
+
+### Backend Endpoint
+
+```
+GET /api/v1/cashier/customer-lookup?phone=08xxxxxxxxxx
+Authorization: CASHIER | LEADER | ADMIN | HELPER
+Response 200: { success: true, data: { customer_id, full_name, phone_number, email } }
+Response 404: { success: false, message: 'Customer tidak ditemukan.' }
+```
+
+Endpoint ini di-share oleh semua role yang butuh lookup. Tambahkan role ke `authorize()` jika ada role baru yang membutuhkan.
+
+### State yang Dibutuhkan (React)
+
+```javascript
+const [customerInfo, setCustomerInfo]   = useState(null); // null | { found: true, ...data } | { found: false }
+const [lookupLoading, setLookupLoading] = useState(false);
+const lookupTimerRef = useRef(null);
+```
+
+### Handler Lookup
+
+```javascript
+function handlePhoneChange(val) {
+  setPhone(val);
+  setCustomerInfo(null);
+  clearTimeout(lookupTimerRef.current);
+  const trimmed = val.trim();
+  if (!trimmed) { setLookupLoading(false); return; }
+  setLookupLoading(true);
+  lookupTimerRef.current = setTimeout(async () => {
+    try {
+      const res = await lookupCustomerByPhone(trimmed);
+      setCustomerInfo({ found: true, ...res.data.data });
+    } catch (err) {
+      if (err.response?.status === 404) setCustomerInfo({ found: false });
+    } finally {
+      setLookupLoading(false);
+    }
+  }, 600);
+}
+```
+
+### Reset setelah Submit
+
+```javascript
+setPhone('');
+setCustomerInfo(null);
+clearTimeout(lookupTimerRef.current);
+```
+
+### Yang TIDAK Boleh Dilakukan
+
+| ❌ Salah | ✅ Benar |
+|---|---|
+| Lookup on every keystroke tanpa debounce | Debounce 600ms |
+| Gate checkout — block submit jika customer tidak ditemukan | Preview only — tidak blocking |
+| Ubah `customerPhone` yang dikirim ke backend berdasarkan lookup | Kirim phone apa adanya — backend yang handle |
+| Buat endpoint lookup baru per role | Gunakan `GET /cashier/customer-lookup` yang sudah ada, tambah role ke `authorize()` |
+
+### Referensi Implementasi
+
+- CR-060: `frontend/src/pages/cashier/CashierPOSPage.jsx` — implementasi pertama (Tailwind CSS)
+- CR-061: `frontend/src/pages/helper/HelperPage.jsx` — implementasi kedua (inline styles)

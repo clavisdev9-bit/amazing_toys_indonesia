@@ -136,6 +136,17 @@ export default function HelperOrderSuccessPage() {
 
   return (
     <div className="p-4 max-w-lg mx-auto">
+      {/* Back button */}
+      <button
+        onClick={() => navigate('/helper')}
+        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-blue-600 mb-4 transition-colors"
+      >
+        <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+        </svg>
+        Kembali ke Helper
+      </button>
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-xl">✓</div>
@@ -145,10 +156,10 @@ export default function HelperOrderSuccessPage() {
         </div>
       </div>
 
-      {/* Layer 3 — QR (selalu tampil) */}
+      {/* QR Code card */}
       <div className="bg-white rounded-2xl border p-5 mb-4 text-center">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Layer 3 — QR di Layar Helper
+          QR untuk Pembayaran Kasir
         </p>
 
         <div className="flex justify-center mb-4">
@@ -193,11 +204,11 @@ export default function HelperOrderSuccessPage() {
         </div>
       )}
 
-      {/* Layer status chips */}
+      {/* Delivery status chips */}
       <div className="space-y-2 mb-5">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Status Pengiriman QR</p>
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Status Notifikasi</p>
 
-        {/* Layer 1 — WA (hidden while still sending; shown once outcome is known) */}
+        {/* WhatsApp */}
         {waChipStatus !== 'pending' && (
           <LayerChip
             icon={waChipStatus === 'ok' ? '✅' : waChipStatus === 'error' ? '❌' : '➖'}
@@ -207,21 +218,21 @@ export default function HelperOrderSuccessPage() {
           />
         )}
 
-        {/* Layer 2 — WS (hanya tampil jika ada customerId, kita tidak tracking dari sini) */}
+        {/* Push notification (hanya tampil jika ada customerId) */}
         {orderData.customerId && (
           <LayerChip
             icon="📡"
-            label="Push notifikasi dikirim"
-            sub="Customer terdaftar (jika online)"
+            label="Notifikasi dikirim ke customer"
+            sub="Customer akan menerima notifikasi jika online"
             status="info"
           />
         )}
 
-        {/* Layer 3 */}
+        {/* QR selalu tersedia */}
         <LayerChip
           icon="📱"
-          label="QR aktif di layar ini"
-          sub="Jaring pengaman — selalu tersedia"
+          label="QR tersedia di layar ini"
+          sub="Tunjukkan ke kasir jika customer belum terima WA"
           status="ok"
         />
       </div>
@@ -274,9 +285,22 @@ export default function HelperOrderSuccessPage() {
       </div>
 
       {/* CTA */}
-      <Button onClick={() => navigate('/helper')} className="w-full" variant="primary">
-        Buat Order Berikutnya
-      </Button>
+      <div className="flex gap-3">
+        <Button
+          onClick={() => navigate('/helper')}
+          className="flex-1"
+          variant="secondary"
+        >
+          ← Kembali
+        </Button>
+        <Button
+          onClick={() => navigate('/helper')}
+          className="flex-1"
+          variant="primary"
+        >
+          Buat Order Berikutnya
+        </Button>
+      </div>
     </div>
   );
 }

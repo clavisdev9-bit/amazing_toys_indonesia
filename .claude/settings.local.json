@@ -103,7 +103,17 @@
       "Bash(npm root *)",
       "Bash(node -e \"require\\('docx'\\)\" --require \"$\\(npm root -g\\)/docx\")",
       "Bash(node -e \"require\\('C:/Users/arist/AppData/Roaming/npm/node_modules/docx'\\); console.log\\('ok'\\)\")",
-      "Bash(Select-Object Name, Length)"
+      "Bash(Select-Object Name, Length)",
+      "Bash(xargs grep -l \"pending_registrations\\\\|customer_login_attempts\")",
+      "Bash(xargs grep -l \"pending_registrations\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(Select-String -Pattern \"xlsx|exceljs|file-saver|papaparse\")",
+      "Bash(Get-ChildItem \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\migrations\\\\\" -Force)",
+      "Bash(xargs grep -l \"router\\\\|Router\\\\|Route\\\\|navigation\\\\|Layout\")",
+      "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"*.jsx\" | head -5)",
+      "Bash(grep -B 5 \"WHERE t.transaction_id = \\\\$1\" backend/src/modules/helper/helper.service.js)",
+      "Bash(awk '/^async function getBoothOrder\\\\\\(transactionId, helperTenantId\\\\\\)/,/^async function/ {print NR\": \"$0}' backend/src/modules/helper/helper.service.js)"
     ]
   }
 }

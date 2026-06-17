@@ -2,15 +2,16 @@
 
 const { query } = require('../../config/database');
 
-const MAX_ATTEMPTS   = parseInt(process.env.LOGIN_MAX_ATTEMPTS   || '5',  10);
+const MAX_ATTEMPTS    = parseInt(process.env.LOGIN_MAX_ATTEMPTS   || '5',  10);
 const LOCKOUT_MINUTES = parseInt(process.env.LOGIN_LOCKOUT_MINUTES || '5', 10);
 
-async function checkLockout(phone_number) {
+// identifier = phone_number atau email tergantung metode login customer
+async function checkLockout(identifier) {
   const result = await query(
     `SELECT attempt_count, locked_until
      FROM customer_login_attempts
-     WHERE phone_number = $1`,
-    [phone_number]
+     WHERE identifier = $1`,
+    [identifier]
   );
   if (!result.rows[0]) return { locked: false, remainingSeconds: 0 };
 
@@ -24,13 +25,11 @@ async function checkLockout(phone_number) {
   return { locked: false, remainingSeconds: 0 };
 }
 
-// Dipanggil saat login gagal (nomor tidak ditemukan atau OTP salah)
-// Mengembalikan { locked, remainingSeconds, shouldSendNotif }
-async function recordFailedAttempt(phone_number) {
+async function recordFailedAttempt(identifier) {
   const result = await query(
-    `INSERT INTO customer_login_attempts (phone_number, attempt_count, last_attempt)
-     VALUES ($1, 1, NOW())
-     ON CONFLICT (phone_number) DO UPDATE
+    `INSERT INTO customer_login_attempts (identifier, phone_number, attempt_count, last_attempt)
+     VALUES ($1, $1, 1, NOW())
+     ON CONFLICT (identifier) DO UPDATE
        SET attempt_count = CASE
              WHEN customer_login_attempts.locked_until IS NOT NULL
                AND customer_login_attempts.locked_until <= NOW()
@@ -59,7 +58,7 @@ async function recordFailedAttempt(phone_number) {
            END,
            last_attempt = NOW()
      RETURNING attempt_count, locked_until, notif_sent`,
-    [phone_number, MAX_ATTEMPTS, String(LOCKOUT_MINUTES)]
+    [identifier, MAX_ATTEMPTS, String(LOCKOUT_MINUTES)]
   );
 
   const row = result.rows[0];
@@ -75,17 +74,17 @@ async function recordFailedAttempt(phone_number) {
   };
 }
 
-async function markNotifSent(phone_number) {
+async function markNotifSent(identifier) {
   await query(
-    `UPDATE customer_login_attempts SET notif_sent = TRUE WHERE phone_number = $1`,
-    [phone_number]
+    `UPDATE customer_login_attempts SET notif_sent = TRUE WHERE identifier = $1`,
+    [identifier]
   );
 }
 
-async function resetAttempts(phone_number) {
+async function resetAttempts(identifier) {
   await query(
-    `DELETE FROM customer_login_attempts WHERE phone_number = $1`,
-    [phone_number]
+    `DELETE FROM customer_login_attempts WHERE identifier = $1`,
+    [identifier]
   );
 }
 

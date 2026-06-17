@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getConversionRate } from '../../api/leader';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -57,6 +58,36 @@ export default function ConversionPage() {
           Tampilkan
         </button>
       </div>
+
+      {!loading && data && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Conversion_Rate_${dateFrom}_${dateTo}`, [
+              {
+                name: 'Ringkasan',
+                rows: [{
+                  'Total Pengunjung': data.overall.visitors,
+                  'Yang Membeli': data.overall.buyers,
+                  'Conversion Rate (%)': data.overall.conversionRate,
+                }],
+              },
+              {
+                name: 'Data Harian',
+                rows: data.rows.map((r) => ({
+                  'Tanggal': r.date,
+                  'Pengunjung': r.visitors,
+                  'Pembeli': r.buyers,
+                  'Transaksi': r.paidTxn,
+                  'Conv. Rate (%)': r.conversionRate,
+                })),
+              },
+            ])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : !data ? null : (
         <div className="space-y-4">

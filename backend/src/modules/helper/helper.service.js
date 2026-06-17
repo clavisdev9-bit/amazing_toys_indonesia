@@ -157,10 +157,11 @@ async function createHelperOrder({
     const taxAmount   = Math.round(subtotal * TAX_RATE / 100);
     const totalAmount = subtotal + taxAmount;
 
-    // 6. CR-036: Resolve customerId + effective phone.
-    //    Step A — if only phone given, reverse-lookup to find a registered customer.
-    //    Step B — if customerId known, prefer their registered phone over walk-in input.
+    // 6. CR-036: Resolve customerId + effective phone/email.
+    //    Step A — reverse-lookup by phone atau email untuk temukan registered customer.
+    //    Step B — jika customerId diketahui, ambil contact info dari DB.
     let effectivePhone = customerPhone || null;
+    let effectiveEmail = null;
 
     if (!customerId && effectivePhone) {
       try {
@@ -174,7 +175,6 @@ async function createHelperOrder({
       } catch { /* walk-in — no registered account found */ }
     }
 
-    let effectiveEmail = null;
     if (customerId) {
       try {
         const custRow = await client.query(
@@ -882,25 +882,35 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
 
     let isPreorderTxn = txn.order_type === 'PREORDER';
 
-    // BUG-050-02: legacy transactions may have order_type='REGULAR' despite containing
-    // pre-order items (created during non-atomic CR-050 deployment window — see STD-031 Rule D).
-    // Detect from items and auto-correct to prevent silently skipping shipping validation.
-    if (!isPreorderTxn) {
-      const preorderCheck = await client.query(
-        `SELECT EXISTS(
-           SELECT 1 FROM transaction_items ti
-           JOIN products p ON p.product_id = ti.product_id
-           WHERE ti.transaction_id = $1 AND p.is_preorder = TRUE
-         ) AS has_preorder`,
+    // CR-056: Cross-check order_type vs actual item pre-order flags.
+    // Detects mixed cart anomaly and inconsistent order_type in one query.
+    const mixedCheckRes = await client.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE p.is_preorder = TRUE)  AS preorder_count,
+         COUNT(*) FILTER (WHERE p.is_preorder = FALSE) AS regular_count
+       FROM transaction_items ti
+       JOIN products p ON p.product_id = ti.product_id
+       WHERE ti.transaction_id = $1`,
+      [transactionId],
+    );
+    const preorderCount = parseInt(mixedCheckRes.rows[0].preorder_count, 10);
+    const regularCount  = parseInt(mixedCheckRes.rows[0].regular_count,  10);
+    if (preorderCount > 0 && regularCount > 0) {
+      logger.error('[approveOrder] Anomali: mixed cart terdeteksi', { transactionId, preorderCount, regularCount });
+      throw new AppError(
+        'Anomali: order mengandung campuran item pre-order dan reguler. Laporkan ke admin.',
+        400,
+      );
+    }
+    // BUG-050-02: auto-correct order_type for legacy transactions where all items are
+    // pre-order but order_type was incorrectly recorded as 'REGULAR'.
+    if (!isPreorderTxn && preorderCount > 0) {
+      isPreorderTxn = true;
+      logger.warn('[approveOrder] Auto-koreksi order_type → PREORDER', { transactionId });
+      await client.query(
+        `UPDATE transactions SET order_type = 'PREORDER' WHERE transaction_id = $1`,
         [transactionId],
       );
-      if (preorderCheck.rows[0].has_preorder) {
-        isPreorderTxn = true;
-        await client.query(
-          `UPDATE transactions SET order_type = 'PREORDER' WHERE transaction_id = $1`,
-          [transactionId],
-        );
-      }
     }
 
     // CR-050: For pre-order, validate shipping fields (helper fills at approval time for Sub-feature B)

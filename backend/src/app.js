@@ -307,6 +307,45 @@ server.listen(PORT, async () => {
        WHERE order_type = 'PREORDER'`,
   ]);
 
+  await runSchemaGuard('Migration 030 — Phone/Email flexible auth', [
+    // customers: phone_number nullable (phone OR email required)
+    `ALTER TABLE customers ALTER COLUMN phone_number DROP NOT NULL`,
+    `DO $$ BEGIN
+       ALTER TABLE customers ADD CONSTRAINT chk_customers_contact
+         CHECK (phone_number IS NOT NULL OR email IS NOT NULL);
+     EXCEPTION WHEN duplicate_object THEN NULL;
+     END $$`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_email
+       ON customers (email) WHERE email IS NOT NULL`,
+    // pending_registrations: identifier as conflict key
+    `ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS identifier VARCHAR(255)`,
+    `ALTER TABLE pending_registrations ADD COLUMN IF NOT EXISTS identifier_type VARCHAR(10) DEFAULT 'phone'`,
+    `ALTER TABLE pending_registrations ALTER COLUMN phone_number TYPE VARCHAR(255)`,
+    `ALTER TABLE pending_registrations ALTER COLUMN phone_number DROP NOT NULL`,
+    `UPDATE pending_registrations
+       SET identifier = phone_number, identifier_type = 'phone'
+       WHERE identifier IS NULL AND phone_number IS NOT NULL`,
+    `DROP INDEX IF EXISTS idx_pending_registrations_phone`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_registrations_identifier
+       ON pending_registrations (identifier)`,
+    // customer_login_attempts: identifier as conflict key (supports phone OR email)
+    `ALTER TABLE customer_login_attempts ADD COLUMN IF NOT EXISTS identifier VARCHAR(255)`,
+    `UPDATE customer_login_attempts SET identifier = phone_number WHERE identifier IS NULL`,
+    `ALTER TABLE customer_login_attempts ALTER COLUMN phone_number TYPE VARCHAR(255)`,
+    `DROP INDEX IF EXISTS idx_customer_login_attempts_phone`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_login_attempts_identifier
+       ON customer_login_attempts (identifier)`,
+  ]);
+
+  await runSchemaGuard('Migration 007 — product_categories table', [
+    `CREATE TABLE IF NOT EXISTS product_categories (
+       category_id SERIAL      PRIMARY KEY,
+       name        VARCHAR(80) NOT NULL UNIQUE,
+       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_product_categories_name ON product_categories(name)`,
+  ]);
+
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
 

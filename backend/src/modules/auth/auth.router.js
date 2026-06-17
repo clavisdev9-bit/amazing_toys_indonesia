@@ -17,18 +17,25 @@ const router = express.Router();
 router.post('/register',
   [
     body('full_name').trim().notEmpty().withMessage('Nama lengkap wajib diisi.'),
-    body('phone_number')
-      .trim().notEmpty()
+    body('phone_number').optional().trim()
       .matches(/^(08|\+628)\d{8,11}$/).withMessage('Format nomor telepon tidak valid.'),
+    body('email').optional().trim().isEmail().withMessage('Format email tidak valid.'),
+    body().custom((_, { req }) => {
+      if (!req.body.phone_number && !req.body.email)
+        throw new Error('Nomor HP atau email wajib diisi.');
+      return true;
+    }),
     body('gender').isIn(['MALE', 'FEMALE', 'PREFER_NOT_TO_SAY']).withMessage('Gender tidak valid.'),
-    body('email').optional().isEmail().withMessage('Format email tidak valid.'),
     body('birth_date').optional({ checkFalsy: true }).isDate({ format: 'YYYY-MM-DD' }).withMessage('Format tanggal lahir tidak valid.'),
   ],
   validate,
   async (req, res, next) => {
     try {
       const data = await authService.registerCustomer(req.body);
-      res.status(202).json({ success: true, message: 'Kode OTP dikirim ke WhatsApp Anda.', data });
+      const message = data.identifierType === 'email'
+        ? 'Kode OTP dikirim ke email Anda.'
+        : 'Kode OTP dikirim ke WhatsApp Anda.';
+      res.status(202).json({ success: true, message, data });
     } catch (err) { next(err); }
   }
 );
@@ -55,27 +62,36 @@ router.post('/register/verify-otp',
 
 /**
  * POST /api/v1/auth/login/customer
- * Step 1: masukkan nomor telepon → kirim OTP via WA (atau langsung token bila trusted device)
- * Body: { phone_number, deviceId? }
+ * Step 1: masukkan nomor telepon ATAU email → kirim OTP via WA/Email (atau langsung token bila trusted device)
+ * Body: { phone_number?, email?, deviceId? }  — phone_number ATAU email wajib ada
  * Response A — trusted device: { requiresOtp: false, token, customer }
- * Response B — OTP dikirim:    { requiresOtp: true, tempToken, maskedPhone }
+ * Response B — OTP dikirim:    { requiresOtp: true, tempToken, maskedIdentifier, identifierType }
  */
 router.post('/login/customer',
   [
-    body('phone_number').trim().notEmpty().withMessage('Nomor telepon wajib diisi.'),
+    body('phone_number').optional().trim(),
+    body('email').optional().trim().isEmail().withMessage('Format email tidak valid.'),
+    body().custom((_, { req }) => {
+      if (!req.body.phone_number && !req.body.email)
+        throw new Error('Nomor HP atau email wajib diisi.');
+      return true;
+    }),
     body('deviceId').optional().isUUID().withMessage('deviceId harus berformat UUID.'),
   ],
   validate,
   async (req, res, next) => {
     try {
-      const { phone_number, deviceId, deviceInfo } = req.body;
+      const { phone_number, email, deviceId, deviceInfo } = req.body;
       const ipAddress = req.ip || req.headers['x-forwarded-for'] || null;
       const data = await authService.loginCustomer({
-        phone_number,
-        deviceId:   deviceId || null,
-        deviceInfo: { ...(deviceInfo || {}), ipAddress },
+        phone_number: phone_number || null,
+        email:        email        || null,
+        deviceId:     deviceId    || null,
+        deviceInfo:   { ...(deviceInfo || {}), ipAddress },
       });
-      const message = data.requiresOtp ? 'OTP dikirim ke WhatsApp Anda.' : 'Login berhasil.';
+      const message = data.requiresOtp
+        ? (data.identifierType === 'email' ? 'OTP dikirim ke email Anda.' : 'OTP dikirim ke WhatsApp Anda.')
+        : 'Login berhasil.';
       res.json({ success: true, message, data });
     } catch (err) { next(err); }
   }

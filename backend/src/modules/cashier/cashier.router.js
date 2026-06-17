@@ -23,6 +23,23 @@ function _getOrderMode() {
 
 const router = express.Router();
 
+// GET /api/v1/cashier/customer-lookup?phone=08xx — CR-060/CR-061: preview info customer by phone
+// HELPER juga diizinkan (CR-061: digunakan di /helper order panel)
+router.get('/customer-lookup',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN', 'HELPER'),
+  [qv('phone').notEmpty().withMessage('phone wajib diisi.')],
+  validate,
+  async (req, res, next) => {
+    try {
+      const customer = await cashierSvc.lookupCustomerByPhone(req.query.phone);
+      if (!customer) {
+        return res.status(404).json({ success: false, message: 'Customer tidak ditemukan.' });
+      }
+      res.json({ success: true, data: customer });
+    } catch (err) { next(err); }
+  }
+);
+
 // GET /api/v1/cashier/recap — cashier's own daily recap
 router.get('/recap',
   authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
@@ -265,6 +282,38 @@ router.get('/groups/:groupId',
       res.json({ success: true, data });
     } catch (err) { next(err); }
   },
+);
+
+// GET /api/v1/cashier/edc-log — list EDC transactions for reconciliation
+router.get('/edc-log',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [qv('date').optional().isDate(), qv('cashier_id').optional().isUUID()],
+  validate,
+  async (req, res, next) => {
+    try {
+      const cashierId = req.user.role === 'CASHIER'
+        ? req.user.userId
+        : (req.query.cashier_id || null);
+      const data = await cashierSvc.getEdcLog(cashierId, req.query.date);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// GET /api/v1/cashier/shift-report — comprehensive printable shift handover report
+router.get('/shift-report',
+  authenticate, authorize('CASHIER', 'LEADER', 'ADMIN'),
+  [qv('date').optional().isDate(), qv('cashier_id').optional().isUUID()],
+  validate,
+  async (req, res, next) => {
+    try {
+      const cashierId = req.user.role === 'CASHIER'
+        ? req.user.userId
+        : (req.query.cashier_id || null);
+      const data = await cashierSvc.getShiftReport(cashierId, req.query.date);
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
 );
 
 // GET /api/v1/cashier/delete-requests/pending — list this cashier's pending delete requests

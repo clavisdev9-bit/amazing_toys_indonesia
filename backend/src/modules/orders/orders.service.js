@@ -103,29 +103,26 @@ async function createOrder(customerId, items, voucherCode = null) {
 
     const productMap = Object.fromEntries(productRows.rows.map(p => [p.product_id, p]));
 
-    // CR-050: In HELPER_APPROVE mode, mixed pre-order + regular carts are not allowed.
-    if (isHelperApproveMode) {
-      const preorderItems = items.filter(i => productMap[i.product_id]?.is_preorder);
-      if (preorderItems.length > 0 && preorderItems.length !== items.length) {
-        throw new AppError(
-          'Pre-Order tidak bisa digabung dengan produk reguler. Buat order terpisah.',
-          422,
-        );
-      }
+    // CR-056: Universal mixed cart defense — applies to ALL order modes.
+    const preorderItemsAll = items.filter(i => productMap[i.product_id]?.is_preorder);
+    if (preorderItemsAll.length > 0 && preorderItemsAll.length !== items.length) {
+      throw new AppError(
+        'Pre-Order tidak bisa digabung dengan produk reguler. Buat order terpisah.',
+        400,
+      );
     }
 
     // CR-038 + CR-050: In SELF_ORDER mode, reject on-hold AND pre-order items.
     // Pre-order requires Helper to collect shipping info — cannot be self-ordered.
     // Frontend filters these, but this is the safety net for race conditions.
     if (!isHelperApproveMode) {
-      const preorderItems = items.filter(i => productMap[i.product_id]?.is_preorder);
-      if (preorderItems.length > 0) {
-        const names = preorderItems.map(i => productMap[i.product_id].product_name).join(', ');
+      if (preorderItemsAll.length > 0) {
+        const names = preorderItemsAll.map(i => productMap[i.product_id].product_name).join(', ');
         throw new AppError(
           `Produk pre-order tidak bisa dipesan mandiri: ${names}. ` +
           `Silakan minta bantuan Helper untuk memproses order pre-order.`,
           422,
-          { preorderProductIds: preorderItems.map(i => i.product_id) },
+          { preorderProductIds: preorderItemsAll.map(i => i.product_id) },
         );
       }
 
@@ -737,7 +734,8 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
     );
     const txn = txResult.rows[0];
     if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
-    if (txn.status !== 'PENDING') throw new AppError('Hanya transaksi PENDING yang dapat diubah.');
+    const CASHIER_EDITABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'];
+    if (!CASHIER_EDITABLE.includes(txn.status)) throw new AppError(`Hanya transaksi aktif (${CASHIER_EDITABLE.join('/')}) yang dapat diubah. Status saat ini: ${txn.status}.`, 422);
 
     // Lock product
     const productResult = await client.query(
@@ -842,7 +840,8 @@ async function applyVoucherToTransaction(transactionId, cashierId, voucherCode) 
     );
     if (txResult.rows.length === 0) throw new AppError('Transaksi tidak ditemukan.', 404);
     const txn = txResult.rows[0];
-    if (txn.status !== 'PENDING') throw new AppError('Voucher hanya dapat diterapkan pada transaksi PENDING.', 422);
+    const CASHIER_EDITABLE_V = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'];
+    if (!CASHIER_EDITABLE_V.includes(txn.status)) throw new AppError(`Voucher hanya dapat diterapkan pada transaksi aktif (${CASHIER_EDITABLE_V.join('/')}). Status saat ini: ${txn.status}.`, 422);
     if (txn.voucher_code) throw new AppError('Transaksi sudah memiliki voucher yang diterapkan.', 409);
 
     // 2. Get items for tenant-scoped validation

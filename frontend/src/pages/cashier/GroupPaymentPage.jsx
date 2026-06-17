@@ -23,7 +23,7 @@ const PAYMENT_METHODS = [
 
 function normalizeProduct(p) {
   return {
-    id: p.product_id, name: p.product_name, price: p.price,
+    id: p.product_id, name: p.product_name, price: parseFloat(p.price) || 0,
     category: p.category, stock: p.stock_quantity,
     image_url: p.image_url || null, tenant_name: p.tenant_name,
   };
@@ -113,6 +113,9 @@ export default function GroupPaymentPage() {
     return list;
   }, [products, activeCategory, search]);
 
+  const CASHIER_EDITABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'];
+  const isEditable = CASHIER_EDITABLE.includes(selectedTrx[0]?.status);
+
   const baseTotal = selectedTrx.reduce((s, t) => s + parseFloat(t.total_amount), 0);
   const grandTotal = baseTotal + extraAmount;
 
@@ -141,7 +144,7 @@ export default function GroupPaymentPage() {
     setAddingProduct(product.id);
     try {
       await addItemToTransaction(selectedTrx[0].transaction_id, product.id, 1);
-      setExtraAmount(prev => prev + product.price);
+      setExtraAmount(prev => prev + parseFloat(product.price));
       addToast(`${product.name} ditambahkan`, 'success');
     } catch (err) {
       addToast(err.response?.data?.message ?? 'Gagal menambahkan produk', 'error');
@@ -410,8 +413,8 @@ export default function GroupPaymentPage() {
           </form>
         </div>
 
-        {/* RIGHT — product browser */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* RIGHT — product browser (hanya saat transaksi masih bisa diubah) */}
+        {isEditable && <div className="flex-1 flex flex-col min-w-0">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Tambah Produk</p>
 
           <div className="relative mb-2">
@@ -462,7 +465,7 @@ export default function GroupPaymentPage() {
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </div>
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />

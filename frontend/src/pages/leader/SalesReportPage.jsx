@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { getSalesReport } from '../../api/leader';
 import { getTenants } from '../../api/tenants';
 import { formatRupiah, formatDate } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
@@ -62,6 +63,27 @@ export default function SalesReportPage() {
         </div>
         <Button onClick={fetchSales} loading={loading}>Tampilkan</Button>
       </div>
+
+      {!loading && sales.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Laporan_Penjualan_${startDate}_${endDate}`, [{
+              name: 'Penjualan',
+              rows: sales.map((r) => ({
+                'ID Transaksi': r.transaction_id,
+                'Tanggal': formatDate(r.created_at),
+                'Pelanggan': r.customer_name,
+                'Total': r.total_amount,
+                'Metode': r.payment_method ?? '-',
+                'Status': r.status,
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
+        </div>
+      )}
 
       {loading ? <Spinner /> : sales.length === 0 ? (
         <EmptyState icon="📊" title="Tidak ada data" description="Ubah filter untuk melihat data lain" />

@@ -30,7 +30,7 @@ function normalizeProduct(p) {
   return {
     id: p.product_id,
     name: p.product_name,
-    price: p.price,
+    price: parseFloat(p.price) || 0,
     category: p.category,
     stock: p.stock_quantity,
     image_url: p.image_url || null,
@@ -308,7 +308,8 @@ export default function PaymentPage() {
     ? { name: txn.customer_name, email: txn.customer_email ?? '', phone: txn.customer_phone }
     : null;
 
-  const isPending = txn?.status === 'PENDING';
+  const isPending  = txn?.status === 'PENDING';
+  const isEditable = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'].includes(txn?.status);
 
   if (loading) return <Spinner />;
 
@@ -432,7 +433,7 @@ export default function PaymentPage() {
                           )}
                         </div>
                         <span className="font-medium shrink-0">{formatRupiah(item.subtotal)}</span>
-                        {isPending && (
+                        {isEditable && (
                           isPendingDelete ? (
                             <span className="text-amber-500 text-xs shrink-0" title="Menunggu persetujuan leader">⏳</span>
                           ) : isDeletePending ? (
@@ -485,8 +486,8 @@ export default function PaymentPage() {
                 })()}
               </div>
 
-              {/* Voucher — hanya saat PENDING dan belum ada voucher */}
-              {isPending && !txn.voucher_code && (
+              {/* Voucher — saat transaksi masih editable dan belum ada voucher */}
+              {isEditable && !txn.voucher_code && (
                 <div className="bg-white rounded-xl border p-4">
                   <h2 className="font-semibold text-gray-700 mb-3 text-sm">🏷️ Voucher</h2>
                   <VoucherInput
@@ -578,8 +579,8 @@ export default function PaymentPage() {
           )}
         </div>
 
-        {/* ── Kanan: product browser (hanya saat transaksi PENDING) ──── */}
-        {isPending && (
+        {/* ── Kanan: product browser (hanya saat transaksi masih bisa diubah) ──── */}
+        {isEditable && (
           <div className="flex-1 flex flex-col min-w-0">
 
             {/* Header label */}

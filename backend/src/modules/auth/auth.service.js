@@ -226,66 +226,109 @@ const customerDeviceSvc  = require('./customer_device.service');
 const loginAttemptSvc    = require('./customer_login_attempt.service');
 const { sendOTP, sendGreeting, sendLockoutNotif } = require('../wa/wa.service');
 
-// Step 1 registrasi: simpan pending data ke tempToken, kirim OTP WA
+// Step 1 registrasi: simpan pending data ke tempToken, kirim OTP via WA atau Email
+// Mendukung dua mode:
+//   - mode phone: phone_number wajib, OTP primer via WA
+//   - mode email: email wajib, phone_number opsional, OTP primer via email
 async function registerCustomer({ full_name, phone_number, email, gender, birth_date }) {
-  const exists = await query(
-    `SELECT customer_id FROM customers WHERE phone_number = $1`,
-    [phone_number]
-  );
-  if (exists.rows.length > 0) {
-    throw new AppError('Nomor telepon sudah terdaftar, silakan login.', 409);
+  const isEmailMode = !phone_number && !!email;
+  const identifier  = phone_number || email;
+
+  if (!identifier) {
+    throw new AppError('Nomor HP atau email wajib diisi.', 422);
+  }
+
+  if (phone_number) {
+    const exists = await query(
+      `SELECT customer_id FROM customers WHERE phone_number = $1`,
+      [phone_number]
+    );
+    if (exists.rows.length > 0)
+      throw new AppError('Nomor telepon sudah terdaftar, silakan login.', 409);
+  }
+  if (email) {
+    const exists = await query(
+      `SELECT customer_id FROM customers WHERE email = $1`,
+      [email]
+    );
+    if (exists.rows.length > 0)
+      throw new AppError('Email sudah terdaftar, silakan login.', 409);
   }
 
   const otpPlain = customerOtpSvc.generateOTP();
   const otpHash  = await customerOtpSvc.hashOTP(otpPlain);
 
   // STD-018: simpan pending_registrations DULU sebelum kirim OTP.
-  // Jika DB gagal setelah OTP terkirim, customer terima OTP tapi tidak bisa verifikasi.
   await query(
     `INSERT INTO pending_registrations
-       (phone_number, full_name, email, gender, birth_date, otp_hash, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW() + interval '5 minutes')
-     ON CONFLICT (phone_number) DO UPDATE SET
-       full_name  = EXCLUDED.full_name,
-       email      = EXCLUDED.email,
-       gender     = EXCLUDED.gender,
-       birth_date = EXCLUDED.birth_date,
-       otp_hash   = EXCLUDED.otp_hash,
-       expires_at = EXCLUDED.expires_at,
-       attempt_count = 0,
-       created_at = NOW()`,
-    [phone_number, full_name, email || null, gender, birth_date || null, otpHash]
+       (identifier, identifier_type, phone_number, full_name, email, gender, birth_date, otp_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + interval '5 minutes')
+     ON CONFLICT (identifier) DO UPDATE SET
+       full_name      = EXCLUDED.full_name,
+       email          = EXCLUDED.email,
+       phone_number   = EXCLUDED.phone_number,
+       gender         = EXCLUDED.gender,
+       birth_date     = EXCLUDED.birth_date,
+       otp_hash       = EXCLUDED.otp_hash,
+       expires_at     = EXCLUDED.expires_at,
+       attempt_count  = 0,
+       created_at     = NOW()`,
+    [
+      identifier,
+      isEmailMode ? 'email' : 'phone',
+      phone_number || null,
+      full_name,
+      email || null,
+      gender,
+      birth_date || null,
+      otpHash,
+    ]
   );
 
-  const waResult = await sendOTP(phone_number, otpPlain, full_name);
-  if (waResult.status === 'FAILED') {
-    throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
+  if (!isEmailMode) {
+    const waResult = await sendOTP(phone_number, otpPlain, full_name);
+    if (waResult.status === 'FAILED') {
+      throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
+    }
+    // Supplemental email OTP jika email tersedia
+    if (email) {
+      sendCustomerOTPEmail(email, otpPlain, full_name).catch(() => {});
+    }
+  } else {
+    // Email mode: OTP via email adalah primer
+    try {
+      await sendCustomerOTPEmail(email, otpPlain, full_name);
+    } catch {
+      throw new AppError('Gagal mengirim OTP via email. Periksa alamat email dan coba lagi.', 503);
+    }
   }
 
-  // Kirim OTP via email juga jika email tersedia (supplemental, fire-and-forget)
-  if (email) {
-    sendCustomerOTPEmail(email, otpPlain, full_name).catch(() => {});
-  }
+  const tempToken = signTempToken({ _regIdentifier: identifier, _regType: isEmailMode ? 'email' : 'phone' });
 
-  const tempToken = signTempToken({ _regPhone: phone_number });
+  const maskedIdentifier = isEmailMode
+    ? maskEmail(email)
+    : phone_number.slice(0, 4) + '****' + phone_number.slice(-3);
 
   return {
-    requiresOtp:  true,
+    requiresOtp:      true,
     tempToken,
-    maskedPhone: phone_number.slice(0, 4) + '****' + phone_number.slice(-3),
+    maskedIdentifier,
+    identifierType:   isEmailMode ? 'email' : 'phone',
+    // backward-compat field agar frontend lama tidak crash
+    maskedPhone:      isEmailMode ? null : (phone_number.slice(0, 4) + '****' + phone_number.slice(-3)),
   };
 }
 
 // Step 2 registrasi: verifikasi OTP → buat akun → issue token
 async function verifyRegisterOtp({ tempToken, otpCode }) {
-  const decoded = verifyTempToken(tempToken);
-  const phone_number = decoded._regPhone;
-  if (!phone_number) throw new AppError('Token registrasi tidak valid.', 401);
+  const decoded    = verifyTempToken(tempToken);
+  const identifier = decoded._regIdentifier || decoded._regPhone; // backward-compat _regPhone
+  if (!identifier) throw new AppError('Token registrasi tidak valid.', 401);
 
   const result = await query(
-    `SELECT full_name, email, gender, birth_date, otp_hash, expires_at, attempt_count
-     FROM pending_registrations WHERE phone_number = $1`,
-    [phone_number]
+    `SELECT full_name, email, phone_number, gender, birth_date, otp_hash, expires_at, attempt_count
+     FROM pending_registrations WHERE identifier = $1`,
+    [identifier]
   );
   const pending = result.rows[0];
   if (!pending) throw new AppError('Sesi registrasi tidak ditemukan. Silakan daftar ulang.', 404);
@@ -293,43 +336,43 @@ async function verifyRegisterOtp({ tempToken, otpCode }) {
     throw new AppError('Kode OTP sudah kedaluwarsa. Silakan daftar ulang.', 410);
   }
 
-  // Increment attempt
   const updated = await query(
     `UPDATE pending_registrations
      SET attempt_count = attempt_count + 1
-     WHERE phone_number = $1 RETURNING attempt_count`,
-    [phone_number]
+     WHERE identifier = $1 RETURNING attempt_count`,
+    [identifier]
   );
   if (updated.rows[0].attempt_count > 3) {
-    await query(`DELETE FROM pending_registrations WHERE phone_number = $1`, [phone_number]);
+    await query(`DELETE FROM pending_registrations WHERE identifier = $1`, [identifier]);
     throw new AppError('Terlalu banyak percobaan OTP. Silakan daftar ulang.', 429);
   }
 
   const valid = await bcrypt.compare(otpCode, pending.otp_hash);
   if (!valid) throw new AppError('Kode OTP salah.', 401);
 
-  // OTP valid — buat akun
   const inserted = await query(
     `INSERT INTO customers (full_name, phone_number, email, gender, birth_date)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING customer_id, full_name, phone_number, email, gender, birth_date, registered_at`,
-    [pending.full_name, phone_number, pending.email, pending.gender, pending.birth_date || null]
+    [pending.full_name, pending.phone_number || null, pending.email, pending.gender, pending.birth_date || null]
   );
   const customer = inserted.rows[0];
 
-  await query(`DELETE FROM pending_registrations WHERE phone_number = $1`, [phone_number]);
+  await query(`DELETE FROM pending_registrations WHERE identifier = $1`, [identifier]);
 
   const token = issueCustomerToken(customer);
 
   fireWebhook('/webhook/customer-registered', {
     customer_id:  customer.customer_id,
     full_name:    customer.full_name,
-    phone_number: customer.phone_number,
+    phone_number: customer.phone_number || null,
     email:        customer.email || null,
     gender:       customer.gender || null,
   });
 
-  sendGreeting(phone_number, customer.full_name).catch(() => {});
+  if (customer.phone_number) {
+    sendGreeting(customer.phone_number, customer.full_name).catch(() => {});
+  }
   if (customer.email) {
     sendCustomerGreetingEmail(customer.email, customer.full_name).catch(() => {});
   }
@@ -337,30 +380,39 @@ async function verifyRegisterOtp({ tempToken, otpCode }) {
   return { token, customer };
 }
 
-async function loginCustomer({ phone_number, deviceId = null, deviceInfo = {} }) {
-  // Cek lockout sebelum proses apapun
-  const lockout = await loginAttemptSvc.checkLockout(phone_number);
-  if (lockout.locked) {
-    const menit = Math.ceil(lockout.remainingSeconds / 60);
-    throw new AppError(
-      `Akun terkunci sementara. Coba lagi dalam ${menit} menit.`,
-      429
-    );
+// Mendukung login via phone (OTP WA) atau email (OTP Email)
+async function loginCustomer({ phone_number, email, deviceId = null, deviceInfo = {} }) {
+  const isEmailMode = !phone_number && !!email;
+  const identifier  = phone_number || email;
+
+  if (!identifier) {
+    throw new AppError('Nomor HP atau email wajib diisi.', 422);
   }
 
-  const result = await query(
-    `SELECT customer_id, full_name, phone_number, email, gender, registered_at
-     FROM customers WHERE phone_number = $1 AND is_active = TRUE`,
-    [phone_number]
-  );
+  const lockout = await loginAttemptSvc.checkLockout(identifier);
+  if (lockout.locked) {
+    const menit = Math.ceil(lockout.remainingSeconds / 60);
+    throw new AppError(`Akun terkunci sementara. Coba lagi dalam ${menit} menit.`, 429);
+  }
+
+  const result = isEmailMode
+    ? await query(
+        `SELECT customer_id, full_name, phone_number, email, gender, registered_at
+         FROM customers WHERE email = $1 AND is_active = TRUE`,
+        [email]
+      )
+    : await query(
+        `SELECT customer_id, full_name, phone_number, email, gender, registered_at
+         FROM customers WHERE phone_number = $1 AND is_active = TRUE`,
+        [phone_number]
+      );
+
   const customer = result.rows[0];
   if (!customer) {
-    // Catat attempt meski nomor tidak ditemukan (mencegah enumeration tidak menghindari rate limit)
-    await loginAttemptSvc.recordFailedAttempt(phone_number);
+    await loginAttemptSvc.recordFailedAttempt(identifier);
     throw new AppError('Akun tidak ditemukan. Silakan daftar terlebih dahulu.', 404);
   }
 
-  // Cek trusted device — skip OTP bila device masih terpercaya dan belum logout
   if (deviceId) {
     const trusted = await customerDeviceSvc.checkTrustedDevice(customer.customer_id, deviceId);
     if (trusted) {
@@ -369,23 +421,30 @@ async function loginCustomer({ phone_number, deviceId = null, deviceInfo = {} })
     }
   }
 
-  // Generate dan kirim OTP via WA
   const otpPlain = customerOtpSvc.generateOTP();
   const otpHash  = await customerOtpSvc.hashOTP(otpPlain);
-  await customerOtpSvc.storeOTP(
-    customer.customer_id,
-    otpHash,
-    deviceInfo.ipAddress || null
-  );
+  await customerOtpSvc.storeOTP(customer.customer_id, otpHash, deviceInfo.ipAddress || null);
 
-  const waResult = await sendOTP(phone_number, otpPlain, customer.full_name);
-  if (waResult.status === 'FAILED') {
-    throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
-  }
-
-  // Kirim OTP via email juga jika tersedia (supplemental, fire-and-forget)
-  if (customer.email) {
-    sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name).catch(() => {});
+  if (!isEmailMode) {
+    const waResult = await sendOTP(customer.phone_number, otpPlain, customer.full_name);
+    if (waResult.status === 'FAILED') {
+      throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
+    }
+    // Supplemental email jika tersedia
+    if (customer.email) {
+      sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name).catch(() => {});
+    }
+  } else {
+    // Email mode: OTP via email adalah primer
+    try {
+      await sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name);
+    } catch {
+      throw new AppError('Gagal mengirim OTP via email. Periksa koneksi dan coba lagi.', 503);
+    }
+    // Supplemental WA jika customer punya nomor HP
+    if (customer.phone_number) {
+      sendOTP(customer.phone_number, otpPlain, customer.full_name).catch(() => {});
+    }
   }
 
   const tempToken = signTempToken({
@@ -393,10 +452,16 @@ async function loginCustomer({ phone_number, deviceId = null, deviceInfo = {} })
     deviceId:   deviceId || null,
   });
 
+  const maskedIdentifier = isEmailMode
+    ? maskEmail(customer.email)
+    : customer.phone_number.slice(0, 4) + '****' + customer.phone_number.slice(-3);
+
   return {
-    requiresOtp: true,
+    requiresOtp:      true,
     tempToken,
-    maskedPhone: phone_number.slice(0, 4) + '****' + phone_number.slice(-3),
+    maskedIdentifier,
+    identifierType:   isEmailMode ? 'email' : 'phone',
+    maskedPhone:      isEmailMode ? null : maskedIdentifier,
   };
 }
 
@@ -415,17 +480,22 @@ async function verifyCustomerOtp({ tempToken, otpCode, deviceId, deviceInfo = {}
   const customer = result.rows[0];
   if (!customer) throw new AppError('Akun tidak ditemukan.', 404);
 
+  // identifier untuk lockout: phone_number atau email
+  const lockoutIdentifier = customer.phone_number || customer.email;
+
   try {
     const valid = await customerOtpSvc.verifyOTP(customerId, otpCode);
     if (!valid) {
-      const attempt = await loginAttemptSvc.recordFailedAttempt(customer.phone_number);
+      const attempt = await loginAttemptSvc.recordFailedAttempt(lockoutIdentifier);
       if (attempt.shouldSendNotif) {
         const lockoutMinutes = parseInt(process.env.LOGIN_LOCKOUT_MINUTES || '5', 10);
-        sendLockoutNotif(customer.phone_number, lockoutMinutes).catch(() => {});
+        if (customer.phone_number) {
+          sendLockoutNotif(customer.phone_number, lockoutMinutes).catch(() => {});
+        }
         if (customer.email) {
           sendCustomerLockoutEmail(customer.email, customer.full_name, lockoutMinutes).catch(() => {});
         }
-        await loginAttemptSvc.markNotifSent(customer.phone_number);
+        await loginAttemptSvc.markNotifSent(lockoutIdentifier);
       }
       throw new AppError('Kode OTP salah.', 401);
     }
@@ -439,8 +509,7 @@ async function verifyCustomerOtp({ tempToken, otpCode, deviceId, deviceInfo = {}
     throw new AppError(msgMap[e.message] || 'Verifikasi OTP gagal.', 401);
   }
 
-  // Reset login attempts setelah OTP berhasil
-  await loginAttemptSvc.resetAttempts(customer.phone_number);
+  await loginAttemptSvc.resetAttempts(lockoutIdentifier);
 
   // Daftarkan device sebagai trusted setelah OTP berhasil
   if (finalDeviceId) {
@@ -466,8 +535,9 @@ function issueCustomerToken(customer, deviceId) {
     {
       customerId: customer.customer_id,
       role:       'CUSTOMER',
-      phone:      customer.phone_number,
-      ...(deviceId && { deviceId }),
+      ...(customer.phone_number && { phone: customer.phone_number }),
+      ...(customer.email        && { email: customer.email }),
+      ...(deviceId              && { deviceId }),
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.CUSTOMER_TOKEN_EXPIRES_IN || '24h' }

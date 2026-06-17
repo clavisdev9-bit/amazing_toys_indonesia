@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getVisitors } from '../../api/leader';
 import { formatDateOnly } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Spinner from '../../components/ui/Spinner';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -47,6 +48,26 @@ export default function VisitorStatsPage() {
         <div className="bg-blue-50 rounded-xl border border-blue-100 p-4 mb-4 text-center">
           <p className="text-xs text-blue-600 mb-1">Total Pengunjung</p>
           <p className="text-3xl font-bold text-blue-700">{total}</p>
+        </div>
+      )}
+
+      {!loading && data.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={() => exportToExcel(`Statistik_Pengunjung_${startDate}_${endDate}`, [{
+              name: 'Pengunjung',
+              rows: data.map((r) => ({
+                'Tanggal': r.date,
+                'Total': r.total ?? 0,
+                'Laki-laki': r.male ?? 0,
+                'Perempuan': r.female ?? 0,
+                'Lainnya': r.other ?? 0,
+              })),
+            }])}
+            className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+          >
+            ⬇ Export Excel
+          </button>
         </div>
       )}
 

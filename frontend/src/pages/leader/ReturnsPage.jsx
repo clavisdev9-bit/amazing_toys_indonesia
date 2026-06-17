@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getReturns, updateReturn, createReturn } from '../../api/leader';
 import { formatDate } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -73,7 +74,27 @@ export default function ReturnsPage() {
       <div className="max-w-3xl">
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-xl font-bold text-gray-900">Retur & Pembatalan</h1>
-          <Button size="sm" onClick={() => setCreateModal(true)}>+ Buat Retur</Button>
+          <div className="flex gap-2">
+            {returns.length > 0 && (
+              <button
+                onClick={() => exportToExcel(`Retur_${tab}`, [{
+                  name: `Retur ${tab}`,
+                  rows: returns.map((r) => ({
+                    'ID Request': r.request_id,
+                    'ID Transaksi': r.transaction_id,
+                    'Tanggal': formatDate(r.created_at),
+                    'Alasan': r.reason,
+                    'Status': r.status,
+                    'Catatan Penolakan': r.rejection_note ?? '-',
+                  })),
+                }])}
+                className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 flex items-center gap-1"
+              >
+                ⬇ Export Excel
+              </button>
+            )}
+            <Button size="sm" onClick={() => setCreateModal(true)}>+ Buat Retur</Button>
+          </div>
         </div>
 
         {/* Tabs */}

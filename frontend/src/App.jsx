@@ -49,6 +49,8 @@ import CashierDashboardPage from './pages/cashier/CashierDashboardPage';
 import CashierPOSPage from './pages/cashier/CashierPOSPage';
 import PaymentPage from './pages/cashier/PaymentPage';
 import RecapPage from './pages/cashier/RecapPage';
+import EDCLogPage from './pages/cashier/EDCLogPage';
+import ShiftReportPage from './pages/cashier/ShiftReportPage';
 import GroupMergePage from './pages/cashier/GroupMergePage';
 import GroupPaymentPage from './pages/cashier/GroupPaymentPage';
 
@@ -86,6 +88,8 @@ const CASHIER_NAV = [
   { to: '/cashier', icon: '💳', label: 'Pembayaran' },
   { to: '/cashier/pos', icon: '🛒', label: 'POS Langsung' },
   { to: '/cashier/rekap', icon: '📋', label: 'Rekap Harian' },
+  { to: '/cashier/edc-log', icon: '🖨️', label: 'Log EDC' },
+  { to: '/cashier/shift-report', icon: '📄', label: 'Laporan Shift' },
 ];
 
 const TENANT_NAV = [
@@ -239,6 +243,8 @@ function AppRoutes() {
               <Route path="/cashier/pos" element={<CashierPOSPage />} />
               <Route path="/cashier/bayar/:transactionId" element={<PaymentPage />} />
               <Route path="/cashier/rekap" element={<RecapPage />} />
+              <Route path="/cashier/edc-log" element={<EDCLogPage />} />
+              <Route path="/cashier/shift-report" element={<ShiftReportPage />} />
               <Route path="/cashier/group-merge" element={<GroupMergePage />} />
               <Route path="/cashier/group-bayar" element={<GroupPaymentPage />} />
             </Route>
