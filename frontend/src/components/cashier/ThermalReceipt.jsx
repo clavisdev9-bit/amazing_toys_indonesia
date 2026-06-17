@@ -17,12 +17,12 @@ function formatEventDateRange(start, end) {
 }
 
 const MONO = "'Courier New', Courier, monospace";
-const SANS = "Arial, Helvetica, sans-serif";
 
 const S = {
   root: {
     width: '100%',
     fontFamily: MONO,
+    fontWeight: 'bold',
     fontSize: '12px',
     color: '#000',
     lineHeight: '1.5',
@@ -41,7 +41,7 @@ const S = {
     margin: '0 auto 7px',
   },
   eventName: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '25px',
     fontWeight: '900',
     letterSpacing: '0.3px',
@@ -51,7 +51,7 @@ const S = {
     textTransform: 'uppercase',
   },
   eventSub: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '12.5px',
     fontWeight: '800',
     color: '#000',
@@ -71,7 +71,7 @@ const S = {
   ruleDashed: { border: 'none', borderTop: '2px dashed #000', margin: '9px 0' },
   ruleHair:   { border: 'none', borderTop: '1px solid #9a9a9a', margin: '9px 0' },
   sectionTitle: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '15px',
     fontWeight: '900',
     letterSpacing: '0.09em',
@@ -80,7 +80,7 @@ const S = {
     marginBottom: '7px',
   },
   pickupTitle: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '10px',
     fontWeight: '900',
     letterSpacing: '0.09em',
@@ -98,7 +98,7 @@ const S = {
   },
   itemName:  { flex: 1, lineHeight: '1.3', fontWeight: '800', fontSize: '13px' },
   itemPrice: { whiteSpace: 'nowrap', fontWeight: '800', fontSize: '13px' },
-  itemSub:   { fontSize: '11.5px', color: '#555', fontWeight: '600', marginTop: '2px' },
+  itemSub:   { fontSize: '11.5px', color: '#555', fontWeight: 'bold', marginTop: '2px' },
   totalRow: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -106,14 +106,14 @@ const S = {
     fontSize: '11px',
     color: '#000',
     marginBottom: '3px',
-    fontWeight: '400',
+    fontWeight: 'bold',
   },
   grandTotal: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'baseline',
     gap: '10px',
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '21px',
     fontWeight: '900',
     color: '#000',
@@ -123,7 +123,7 @@ const S = {
     display: 'inline-block',
     background: '#000',
     color: '#fff',
-    fontFamily: SANS,
+    fontFamily: MONO,
     padding: '4px 13px',
     fontSize: '11.5px',
     fontWeight: '800',
@@ -141,9 +141,9 @@ const S = {
   },
   qrText: { fontSize: '11.5px', color: '#000', lineHeight: '1.45', flex: 1 },
   footer:       { textAlign: 'center', marginTop: '11px' },
-  footerStrong: { fontFamily: SANS, fontSize: '13px', fontWeight: '900', color: '#000' },
-  footerLine:   { fontFamily: SANS, fontSize: '11px', color: '#555', fontWeight: '600', lineHeight: '1.6' },
-  footerMail:   { fontFamily: SANS, fontSize: '10.5px', color: '#555', fontWeight: '700', lineHeight: '1.6', marginTop: '6px' },
+  footerStrong: { fontFamily: MONO, fontSize: '13px', fontWeight: '900', color: '#000' },
+  footerLine:   { fontFamily: MONO, fontSize: '11px', color: '#555', fontWeight: 'bold', lineHeight: '1.6' },
+  footerMail:   { fontFamily: MONO, fontSize: '10.5px', color: '#555', fontWeight: 'bold', lineHeight: '1.6', marginTop: '6px' },
 };
 
 
@@ -212,31 +212,25 @@ export default function ThermalReceipt({
           <span style={S.metaVal}>{customer.name}</span>
         </div>
       )}
-      {customer?.phone && (
-        <div style={S.metaRow}>
-          <span style={S.metaKey}>Phone</span>
-          <span style={S.metaVal}>{customer.phone}</span>
-        </div>
-      )}
 
       <hr style={S.ruleDashed} />
 
       {/* CR-05X: PRE-ORDER warning box */}
       {isPreorder && (
         <div style={{ border: '1px solid #000', padding: '6px 8px', marginBottom: '8px', textAlign: 'center' }}>
-          <div style={{ fontFamily: SANS, fontSize: '11px', fontWeight: '600', letterSpacing: '1px', color: '#000' }}>
+          <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 'bold', letterSpacing: '1px', color: '#000' }}>
             *** PRE-ORDER TRANSACTION ***
           </div>
-          <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '2px' }}>
+          <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 'bold', color: '#555', marginTop: '2px' }}>
             Barang akan dikirim — tidak diambil di booth.
           </div>
           {txn?.shipping_name && (
-            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#000', marginTop: '4px', fontWeight: '600' }}>
+            <div style={{ fontFamily: MONO, fontSize: '10px', color: '#000', marginTop: '4px', fontWeight: 'bold' }}>
               Dikirim ke: {txn.shipping_name}{txn.shipping_city ? `, ${txn.shipping_city}` : ''}
             </div>
           )}
           {txn?.shipping_address && (
-            <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '1px' }}>
+            <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 'bold', color: '#555', marginTop: '1px' }}>
               {txn.shipping_address}
             </div>
           )}
@@ -301,16 +295,16 @@ export default function ThermalReceipt({
           <div style={{ textAlign: 'center' }}>
             {tenantGroups.map((g, i) => (
               <div key={i} style={{ marginBottom: '6px' }}>
-                <div style={{ fontFamily: SANS, fontWeight: '900', fontSize: '10px', lineHeight: '1.2', color: '#000' }}>
+                <div style={{ fontFamily: MONO, fontWeight: 'bold', fontSize: '10px', lineHeight: '1.2', color: '#000' }}>
                   {g.tenantName}
                 </div>
-                <div style={{ fontFamily: SANS, fontWeight: '900', fontSize: '10px', lineHeight: '1.2', marginTop: '2px', color: '#000' }}>
+                <div style={{ fontFamily: MONO, fontWeight: 'bold', fontSize: '10px', lineHeight: '1.2', marginTop: '2px', color: '#000' }}>
                   {g.boothLocation || '-'}
                 </div>
               </div>
             ))}
           </div>
-          <div style={{ fontFamily: SANS, fontSize: '11px', color: '#555', marginTop: '6px', fontWeight: '600', textAlign: 'center' }}>
+          <div style={{ fontFamily: MONO, fontSize: '11px', color: '#555', marginTop: '6px', fontWeight: 'bold', textAlign: 'center' }}>
             Show your pickup slip at each booth.
           </div>
           <hr style={S.ruleHair} />
@@ -328,9 +322,9 @@ export default function ThermalReceipt({
           bgColor="#ffffff"
         />
         <div style={S.qrText}>
-          <span style={{ fontWeight: '800' }}>Scan for your<br />digital receipt</span>
+          <span style={{ fontWeight: 'bold' }}>Scan for your<br />digital receipt</span>
           <div style={{ height: '8px' }} />
-          <span style={{ fontWeight: '600', fontSize: '10px', wordBreak: 'break-all' }}>{txnId}</span>
+          <span style={{ fontWeight: 'bold', fontSize: '10px', wordBreak: 'break-all' }}>{txnId}</span>
         </div>
       </div>
 

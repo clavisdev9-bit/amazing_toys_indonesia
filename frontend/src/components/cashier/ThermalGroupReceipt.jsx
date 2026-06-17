@@ -17,12 +17,12 @@ function formatEventDateRange(start, end) {
 }
 
 const MONO = "'Courier New', Courier, monospace";
-const SANS = "Arial, Helvetica, sans-serif";
 
 const S = {
   root: {
     width: '100%',
     fontFamily: MONO,
+    fontWeight: 'bold',
     fontSize: '12px',
     color: '#000',
     lineHeight: '1.55',
@@ -37,7 +37,7 @@ const S = {
     marginBottom: '10px',
   },
   eventName: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '14px',
     fontWeight: '700',
     letterSpacing: '0.5px',
@@ -46,9 +46,9 @@ const S = {
     color: '#000',
   },
   eventSub: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '10px',
-    fontWeight: '400',
+    fontWeight: 'bold',
     color: '#555',
     marginTop: '2px',
   },
@@ -59,24 +59,24 @@ const S = {
     color: '#000',
     marginBottom: '3px',
   },
-  metaKey: { color: '#555', fontWeight: '400' },
-  metaVal: { fontWeight: '400', textAlign: 'right' },
+  metaKey: { color: '#555', fontWeight: 'bold' },
+  metaVal: { fontWeight: 'bold', textAlign: 'right' },
   ruleDashed: { border: 'none', borderTop: '1px dashed #888', margin: '8px 0' },
   ruleSolid:  { border: 'none', borderTop: '1px solid #000', margin: '8px 0' },
   ruleDouble: { border: 'none', borderTop: '2px solid #000', margin: '8px 0' },
   sectionTitle: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '10px',
-    fontWeight: '600',
+    fontWeight: 'bold',
     letterSpacing: '1.5px',
     textTransform: 'uppercase',
     color: '#000',
     marginBottom: '6px',
   },
   boothLabel: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '10px',
-    fontWeight: '600',
+    fontWeight: 'bold',
     letterSpacing: '0.5px',
     color: '#000',
     marginBottom: '3px',
@@ -88,25 +88,25 @@ const S = {
     justifyContent: 'space-between',
     alignItems: 'baseline',
     fontSize: '12px',
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#000',
   },
   itemName:  { flex: 1, paddingRight: '6px', lineHeight: '1.35' },
-  itemPrice: { whiteSpace: 'nowrap', fontWeight: '600' },
-  itemSub:   { fontSize: '10px', color: '#555', fontWeight: '400', marginTop: '1px', paddingLeft: '2px' },
+  itemPrice: { whiteSpace: 'nowrap', fontWeight: 'bold' },
+  itemSub:   { fontSize: '10px', color: '#555', fontWeight: 'bold', marginTop: '1px', paddingLeft: '2px' },
   totalRow: {
     display: 'flex',
     justifyContent: 'space-between',
     fontSize: '11px',
     color: '#000',
     marginBottom: '3px',
-    fontWeight: '400',
+    fontWeight: 'bold',
   },
   grandTotal: {
     display: 'flex',
     justifyContent: 'space-between',
     fontSize: '12px',
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#000',
     marginTop: '5px',
     paddingTop: '5px',
@@ -117,7 +117,7 @@ const S = {
     border: '1px solid #000',
     padding: '2px 6px',
     fontSize: '10px',
-    fontWeight: '400',
+    fontWeight: 'bold',
     letterSpacing: '0.8px',
     textTransform: 'uppercase',
     color: '#000',
@@ -134,12 +134,12 @@ const S = {
   qrText: { fontSize: '10px', color: '#000', lineHeight: '1.5', flex: 1 },
   footer:       { textAlign: 'center', marginTop: '10px' },
   footerStrong: {
-    fontFamily: SANS,
+    fontFamily: MONO,
     fontSize: '12px',
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#000',
   },
-  footerLine: { fontFamily: SANS, fontSize: '10px', color: '#555', fontWeight: '400', lineHeight: '1.6' },
+  footerLine: { fontFamily: MONO, fontSize: '10px', color: '#555', fontWeight: 'bold', lineHeight: '1.6' },
 };
 
 
@@ -195,12 +195,6 @@ export default function ThermalGroupReceipt({
         <div style={S.metaRow}>
           <span style={S.metaKey}>Customer</span>
           <span style={S.metaVal}>{customer.name}</span>
-        </div>
-      )}
-      {customer?.phone && (
-        <div style={S.metaRow}>
-          <span style={S.metaKey}>Phone</span>
-          <span style={S.metaVal}>{customer.phone}</span>
         </div>
       )}
 
@@ -265,7 +259,7 @@ export default function ThermalGroupReceipt({
               <span>· {booth}</span>
             </div>
           ))}
-          <div style={{ fontFamily: SANS, fontSize: '10px', color: '#555', marginTop: '4px' }}>
+          <div style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 'bold', color: '#555', marginTop: '4px' }}>
             Tunjukkan Group Invoice ini di setiap booth.
           </div>
           <hr style={S.ruleDashed} />
@@ -283,8 +277,8 @@ export default function ThermalGroupReceipt({
           bgColor="#ffffff"
         />
         <div style={S.qrText}>
-          <span style={{ fontWeight: '600' }}>Scan untuk</span><br />
-          <span style={{ fontWeight: '600' }}>invoice digital</span><br /><br />
+          <span style={{ fontWeight: 'bold' }}>Scan untuk</span><br />
+          <span style={{ fontWeight: 'bold' }}>invoice digital</span><br /><br />
           {groupCode}
         </div>
       </div>
@@ -294,7 +288,7 @@ export default function ThermalGroupReceipt({
         <>
           <hr style={S.ruleDashed} />
           <div style={{ fontSize: '9px', color: '#555', lineHeight: '1.7' }}>
-            <span style={{ fontFamily: SANS, fontWeight: '600', fontSize: '9px', color: '#000' }}>
+            <span style={{ fontFamily: MONO, fontWeight: 'bold', fontSize: '9px', color: '#000' }}>
               Transaksi:
             </span>
             {transactionIds.map((id, i) => (
