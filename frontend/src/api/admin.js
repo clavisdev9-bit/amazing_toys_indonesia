@@ -15,6 +15,10 @@ export const adminDeleteProduct      = (id)         => client.delete(`/admin/pro
 export const adminBulkDeleteProducts = (productIds) => client.delete('/admin/products/bulk', { data: { product_ids: productIds } });
 export const uploadProductImage  = (data)      => client.post('/admin/products/upload-image', data);
 
+// ── Export ─────────────────────────────────────────────────────────────────
+export const exportMasterDataExcel = () =>
+  client.get('/admin/export/master-data', { responseType: 'blob' });
+
 // ── Audit Log ──────────────────────────────────────────────────────────────
 export const getAuditLog = (params) => client.get('/admin/audit-log', { params });
 
@@ -36,6 +40,7 @@ export const adminBulkUploadTenants = (tenants) => client.post('/admin/tenants/b
 export const getIntegration     = ()             => client.get('/admin/integration');
 export const saveIntegration    = (data)         => client.put('/admin/integration', data);
 export const syncOdooProducts   = (force = false) => client.post('/admin/products/sync-odoo', { force });
+export const pullOdooProducts   = ()               => client.post('/admin/products/pull-odoo');
 
 // ── Odoo connection wizard ──────────────────────────────────────────────────
 export const verifyOdooConnection = (data)       => client.post('/admin/odoo/verify', data);
@@ -46,6 +51,10 @@ export const getOdooCategories     = ()                => client.get('/admin/odo
 
 // ── Bulk Upload ────────────────────────────────────────────────────────────
 export const bulkUploadProducts      = (products)  => client.post('/admin/products/bulk-upload', { products });
+export const bulkUploadMinimal       = (products)  => client.post('/admin/products/bulk-upload-minimal', { products });
+export const bulkUploadImages        = (formData)  => client.post('/admin/products/bulk-upload-images', formData, {
+  headers: { 'Content-Type': 'multipart/form-data' },
+});
 export const adminBulkUpdateCategory    = (category)     => client.patch('/admin/products/bulk-category', { category });
 export const adminBulkUpdateOdooCategory    = (odoo_categ_id, odoo_categ_name) => client.patch('/admin/products/bulk-odoo-category', { odoo_categ_id, odoo_categ_name });
 export const adminBulkUpdateDescription    = (description)                    => client.patch('/admin/products/bulk-description', { description });
@@ -67,6 +76,11 @@ export const getOdooTaxes    = ()     => client.get('/admin/odoo/taxes');
 export const getWaGatewayConfig  = ()        => client.get('/admin/wa-gateway');
 export const saveWaGatewayConfig = (data)    => client.put('/admin/wa-gateway', data);
 export const testWaSend          = (phone)   => client.post('/admin/wa-gateway/test', { phone });
+
+// ── Email / SMTP Config ────────────────────────────────────────────────────────
+export const getEmailConfig  = ()       => client.get('/admin/email-config');
+export const saveEmailConfig = (data)   => client.put('/admin/email-config', data);
+export const testEmailSend   = (to)     => client.post('/admin/email-config/test', { to });
 // WAHA session management (proxied through backend)
 export const getWahaStatus       = ()        => client.get('/admin/wa-gateway/waha/status');
 export const startWahaSession    = ()        => client.post('/admin/wa-gateway/waha/start');

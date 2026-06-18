@@ -12,6 +12,7 @@
     "@fingerprintjs/fingerprintjs": "^5.2.0",
     "axios": "^1.7.2",
     "jsqr": "^1.4.0",
+    "jszip": "^3.10.1",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
     "react-barcode": "^1.6.1",

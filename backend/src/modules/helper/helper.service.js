@@ -716,7 +716,7 @@ async function getBoothOrder(transactionId, helperTenantId) {
             ti.unit_price, ti.subtotal, ti.pickup_status, ti.tenant_id
      FROM transaction_items ti
      JOIN products p ON p.product_id = ti.product_id
-     WHERE ti.transaction_id = $1 AND ti.tenant_id = $2`,
+     WHERE ti.transaction_id = $1 AND ti.tenant_id = $2 AND ti.approval_status != 'REJECTED'`,
     [transactionId, helperTenantId],
   );
 
@@ -754,7 +754,7 @@ async function _getGroupOrderForBooth(groupCode, helperTenantId) {
      FROM transactions t
      JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
      JOIN products p ON p.product_id = ti.product_id
-     WHERE t.group_id = $1 AND ti.tenant_id = $2`,
+     WHERE t.group_id = $1 AND ti.tenant_id = $2 AND ti.approval_status != 'REJECTED'`,
     [group.group_id, helperTenantId],
   );
 
@@ -838,7 +838,7 @@ async function getApprovalQueue(helperTenantId) {
               ti.subtotal, ti.approval_status, ti.approved_quantity, ti.rejection_reason
        FROM transaction_items ti
        JOIN products p ON p.product_id = ti.product_id
-       WHERE ti.transaction_id = $1 AND ti.tenant_id = $2`,
+       WHERE ti.transaction_id = $1 AND ti.tenant_id = $2 AND ti.approval_status = 'PENDING'`,
       [txn.transaction_id, helperTenantId],
     );
     txn.items = itemsRes.rows;

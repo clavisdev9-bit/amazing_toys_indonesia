@@ -1,5 +1,229 @@
 # Resolution Log
 
+## BUG-083 — Admin Master-Data: Buat/Edit Produk Selalu Gagal "Kategori Odoo wajib dipilih" (2026-06-18)
+
+**Page:** `/admin?tab=master-data` — form Buat Produk & Edit Produk
+**Reporter:** User — selalu gagal saat simpan produk
+
+### Root Cause
+
+`handleCreate()` dan `handleEdit()` di `MasterDataTab.jsx` memiliki validasi hard:
+```js
+if (!form.odoo_categ_id) { setFormError('Kategori Odoo wajib dipilih.'); return; }
+```
+
+Kategori Odoo diambil dari `getOdooProductCategories()` yang membutuhkan koneksi aktif ke Odoo. Jika Odoo tidak terkoneksi (server down, credentials belum diset), `useOdooProductCategories` hook mengembalikan `categories = []` dan user tidak bisa memilih kategori apapun — sehingga form **selalu gagal** tanpa bisa diselesaikan.
+
+Field `odoo_categ_id` seharusnya opsional (untuk keperluan sinkronisasi Odoo), bukan syarat wajib untuk membuat/mengedit produk.
+
+### Fix
+
+Hapus validasi wajib `odoo_categ_id` dari `handleCreate` dan `handleEdit` di `MasterDataTab.jsx`. Field tetap tersedia di form untuk diisi jika Odoo tersambung.
+
+**File:** `frontend/src/pages/admin/tabs/MasterDataTab.jsx`
+
+### Pencegahan
+
+Field integrasi pihak ketiga (Odoo, WA, dsb.) tidak boleh dijadikan syarat wajib untuk operasi core. Jika integrasi tidak tersedia, operasi utama tetap harus bisa berjalan.
+
+---
+
+## BUG-082 — Role Helper: Item REJECTED Masih Tampil di Handover View (2026-06-18)
+
+**Page:** Role Helper — view handover order (scan TXN / GRP invoice)
+**Reporter:** User — TXN-20260618-00017: 1 item APPROVED + 1 item REJECTED, tapi 2 item tampil di handover view (seharusnya hanya 1 item APPROVED)
+
+### Root Cause
+
+`getBoothOrder()` dan `_getGroupOrderForBooth()` di `helper.service.js` mengambil **semua** item milik booth dari transaksi tanpa memfilter `approval_status`. Akibatnya item yang sudah REJECTED tetap tampil di tampilan handover, padahal item tersebut tidak perlu diserahkan ke customer (sudah ditolak oleh helper).
+
+```sql
+-- Before (buggy): mengambil semua item termasuk REJECTED
+WHERE ti.transaction_id = $1 AND ti.tenant_id = $2
+
+-- After (fixed): exclude item REJECTED
+WHERE ti.transaction_id = $1 AND ti.tenant_id = $2 AND ti.approval_status != 'REJECTED'
+```
+
+**Files:**
+- `backend/src/modules/helper/helper.service.js` — `getBoothOrder()` (single TXN)
+- `backend/src/modules/helper/helper.service.js` — `_getGroupOrderForBooth()` (GRP invoice)
+
+**Fix tambahan sebelumnya (masih valid):**
+- `getApprovalQueue()` — items sub-query juga ditambah filter `AND ti.approval_status = 'PENDING'` agar approval queue hanya menampilkan item yang belum diproses.
+
+### Pencegahan
+
+Item REJECTED tidak boleh tampil di handover view — customer tidak mendapat barang yang ditolak. Setiap query items untuk helper view wajib menyaring `approval_status != 'REJECTED'` (lihat STD-042).
+
+---
+
+## BUG-080 — OTP Email Customer: Register & Login Tidak Kirim OTP (2026-06-18)
+
+**Page:** `/daftar` (Register) dan `/masuk` (Login Customer) — mode Email
+**Reporter:** User — daftar/login via email langsung masuk tanpa OTP
+
+### Root Cause
+
+OTP email untuk customer pernah diimplementasikan (CR history), namun suatu saat `registerCustomer()` dan `loginCustomer()` di `auth.service.js` dimodifikasi menjadi langsung INSERT/issue token tanpa OTP — mengabaikan flow `pending_registrations` dan `customerOtpSvc` yang sudah ada. Frontend (`RegisterPage.jsx`, `LoginCustomerPage.jsx`) juga tidak memiliki step OTP karena response yang diterima langsung berisi token.
+
+Semua infrastruktur OTP tetap utuh:
+- `verifyRegisterOtp()` — masih ada di `auth.service.js`
+- `verifyCustomerOtp()` — masih ada di `auth.service.js`
+- `customerOtpSvc.storeOTP/verifyOTP` — masih berfungsi
+- `sendCustomerOTPEmail()` — masih ada di `email.service.js`
+- Route `/register/verify-otp` dan `/verify-otp/customer` — masih terdaftar di `auth.router.js`
+
+Hanya titik masuknya yang di-bypass.
+
+### Fix
+
+**`backend/src/modules/auth/auth.service.js`**:
+
+1. `registerCustomer()` — jika `email` tersedia:
+   - Generate OTP via `customerOtpSvc.generateOTP()`
+   - Hash via `customerOtpSvc.hashOTP()`
+   - INSERT ke `pending_registrations` dengan `ON CONFLICT DO UPDATE`
+   - Kirim via `sendCustomerOTPEmail()`
+   - Return `{ requiresOtp: true, tempToken, maskedEmail }`
+   - Jika phone-only (tanpa email) → direct register (tidak berubah)
+
+2. `loginCustomer()` — jika `isEmailMode` (hanya email, tanpa phone):
+   - Generate & hash OTP
+   - `customerOtpSvc.storeOTP(customer_id, otpHash)`
+   - Kirim via `sendCustomerOTPEmail()`
+   - Return `{ requiresOtp: true, tempToken, maskedEmail }`
+   - Jika phone mode → direct login (tidak berubah)
+
+**`frontend/src/pages/customer/RegisterPage.jsx`**:
+- Import `verifyRegisterOtp`
+- Tambah state: `otpStep`, `tempToken`, `maskedEmail`, `otpCode`, `otpLoading`
+- `handleSubmit`: jika `data.requiresOtp` → masuk OTP step, tampilkan form input kode
+- `handleOtpSubmit`: panggil `verifyRegisterOtp({ tempToken, otpCode })` → login → navigate
+
+**`frontend/src/pages/customer/LoginCustomerPage.jsx`**:
+- Import `verifyCustomerOtp`
+- Tambah state: `otpStep`, `tempToken`, `maskedEmail`, `otpCode`, `otpLoading`
+- `handleSubmit`: jika `data.requiresOtp` → masuk OTP step
+- `handleOtpSubmit`: panggil `verifyCustomerOtp({ tempToken, otpCode })` → login → navigate
+
+### Perilaku Setelah Fix
+
+| Cara Daftar/Login | OTP? | Channel |
+|---|---|---|
+| Register via Email | Ya | Email |
+| Register via HP (phone-only) | Tidak | — (langsung daftar) |
+| Login via Email | Ya | Email |
+| Login via HP | Tidak | — (langsung login) |
+
+### Prevention
+
+`registerCustomer()` dan `loginCustomer()` harus selalu melalui OTP ketika email-only mode. Jangan menghilangkan OTP path saat refaktor — infrastruktur OTP customer (service, routes, tabel) adalah security requirement yang terdokumentasi di STD.
+
+---
+
+## BUG-081 — OTP Step Tidak Muncul di Browser Setelah Deploy (2026-06-18)
+
+**Page:** `/daftar` (Register) dan `/masuk` (Login Customer) — mode Email
+**Symptom:** Backend sudah mengembalikan `requiresOtp: true` tapi browser tidak menampilkan OTP step
+
+### Root Cause
+
+Dua masalah bersamaan:
+
+**1. Browser cache index.html** — Nginx tidak mempunyai `Cache-Control` untuk `index.html`. Browser menyimpan versi lama `index.html` yang masih merujuk ke JS build lama (sebelum OTP step ditambahkan). Vite menggunakan content-hash pada nama file JS (misal `index-Bocps9SR.js`), sehingga bila `index.html` tidak diperbarui karena cache browser, JS lama dimuat dan OTP step tidak ada dalam bundle.
+
+**2. `identifierType` tidak ada di response** — Backend mengembalikan `{ requiresOtp: true, tempToken, maskedEmail }` tanpa `identifierType`. Router mengecek `data.identifierType === 'email'` untuk menentukan pesan response; tanpa field ini, pesan berbunyi "OTP dikirim ke WhatsApp Anda." padahal OTP dikirim ke email.
+
+**3. Bug `if (email)` di `registerCustomer`** — Register dengan phone+email (phone mode, optional email) seharusnya langsung register tanpa OTP (email bukan primary identifier). Kondisi `if (email)` salah — harus `if (!phone_number && email)` agar konsisten dengan logika `isEmailMode` di `loginCustomer`.
+
+### Fix
+
+**`frontend/nginx.conf`** — Tambah block khusus untuk `index.html` dengan `Cache-Control: no-cache`:
+```nginx
+location = /index.html {
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header Pragma "no-cache";
+    add_header Expires "0";
+}
+```
+
+**`backend/src/modules/auth/auth.service.js`**:
+- `registerCustomer()`: ubah `if (email)` → `const isEmailMode = !phone_number && !!email; if (isEmailMode)`
+- `registerCustomer()` OTP response: tambah `identifierType: 'email'`
+- `loginCustomer()` OTP response: tambah `identifierType: 'email'`
+- `registerCustomer()` pending_registrations INSERT: tambah `identifier_type = 'email'`
+
+### Prevention
+
+1. Nginx SPA WAJIB mempunyai `Cache-Control: no-cache` untuk `index.html` (lihat STD-041)
+2. Response OTP customer HARUS menyertakan `identifierType` field
+3. `isEmailMode` logic di register HARUS sama dengan di login: `!phone_number && !!email`
+
+---
+
+## BUG-079 — "Proses N Baris" Bulk Update Stok+Tenant: Internal Server Error (2026-06-18)
+
+**Page:** Bulk Upload Produk → tombol "Proses N Baris"
+**Endpoint:** `POST /api/v1/admin/products/bulk-update-stock-tenant`
+
+### Root Cause
+
+`admin.router.js` menggunakan fungsi `query(...)` di line 75 untuk lookup tabel `tenants`, tapi `query` tidak pernah di-require di file tersebut:
+
+```js
+// Sebelum fix — query tidak ada di require list
+const express   = require('express');
+const ExcelJS   = require('exceljs');
+const { authenticate, authorize } = require('../../middlewares/auth.middleware');
+// ...
+// query digunakan di line 75 tapi tidak di-require → ReferenceError
+```
+
+Error: `ReferenceError: query is not defined at admin.router.js:75`
+
+Fungsi `query` tersedia di `../../config/database` (sudah dipakai di `admin.service.js` dan `bulkUpload.controller.js`), tapi lupa di-require saat endpoint baru ditambahkan langsung di router.
+
+### Fix
+
+**`backend/src/modules/admin/admin.router.js`** — tambah satu baris require:
+```js
+const { query } = require('../../config/database');
+```
+
+### Prevention
+
+Endpoint yang mengakses DB langsung di router (bukan via service) harus selalu import `query`. Lebih baik pindahkan logika DB ke `admin.service.js` agar import terpusat dan konsisten.
+
+---
+
+## BUG-078 — Tombol "Cetak" di Master Data Tidak Bisa Export Excel (2026-06-18)
+
+**Page:** `/admin?tab=master-data` → tombol "🖨️ Cetak" → halaman `/admin/print-products`
+**Reporter:** Admin — klik tombol Cetak, tidak ada opsi convert ke Excel
+
+### Root Cause
+
+`MasterDataPrintPage.jsx` hanya memiliki tombol "🖨️ Cetak / Simpan PDF" (`window.print()`). Tidak ada tombol export Excel sama sekali — fitur ini belum pernah diimplementasikan di halaman print, meskipun `exportToExcel` utility sudah tersedia di `frontend/src/utils/exportExcel.js` dan dipakai di halaman laporan lain (SalesReportPage, RecapPage, dll.).
+
+### Fix
+
+**`frontend/src/pages/admin/MasterDataPrintPage.jsx`:**
+1. Import `exportToExcel` dari `../../utils/exportExcel`
+2. Tambah fungsi `handleExportExcel()`:
+   - Jika `groupByBooth = true` dan ada lebih dari 1 grup: export multi-sheet (1 sheet per booth + 1 sheet "Summary")
+   - Jika tidak: export flat 1 sheet "Produk"
+   - Kolom: No, Nama Produk, Booth, Kategori, Barcode, Harga, Qty, Nilai Stok, Status, Pre-Order
+   - Filename: `MasterData_Produk_YYYY-MM-DD.xlsx`
+3. Tambah tombol **"📊 Export Excel"** (hijau) di toolbar, sebelum tombol "🖨️ Cetak / Simpan PDF"
+4. Tombol Excel terpengaruh oleh filter aktif (tenant, status aktif) — mengekspor data yang sama yang ditampilkan di layar
+
+### Prevention
+
+Setiap halaman print/laporan yang menampilkan tabel data HARUS menyertakan tombol Export Excel (STD-024 pattern). Gunakan `exportToExcel` dari `frontend/src/utils/exportExcel.js`.
+
+---
+
 ## BUG-077 — Produk Tidak Muncul di Kasir POS (2026-06-17)
 
 **Page:** `/cashier/pos` → area product browser

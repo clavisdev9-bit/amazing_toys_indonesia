@@ -4,53 +4,68 @@
  * bulkUpload.controller.js
  *
  * POST /api/v1/admin/products/bulk-upload
- * Accepts { products: ProductRow[] }, validates every row server-side,
- * then inserts the entire batch inside a single DB transaction.
- * Any validation failure returns 400 with all errors — no partial inserts.
+ * Body: { products: ProductRow[] }
+ *
+ * Field mapping (from Excel):
+ *   product_id      — opsional, auto-generate jika kosong
+ *   barcode         — WAJIB
+ *   product_name    — WAJIB
+ *   category        — WAJIB
+ *   price           — WAJIB (angka >= 0)
+ *   tenant          — WAJIB (Nama Booth / Tenant — di-resolve ke tenant_id)
+ *   stock_quantity  — opsional (default 0)
+ *   odoo_categ_name — opsional
+ *   description     — opsional
+ *
+ * Behavior: PARTIAL UPLOAD
+ *   - Baris valid   → diinsert ke DB
+ *   - Baris invalid → dikembalikan di response.failed (dengan alasan)
+ *   - Tidak pernah abort total karena sebagian baris bermasalah
  */
 
-const { withTransaction } = require('../../config/database');
+const { withTransaction, query } = require('../../config/database');
 
-const REQUIRED_FIELDS = ['product_name', 'category', 'price', 'tenant_id'];
-const URL_RE          = /^https?:\/\//i;
+const REQUIRED_FIELDS = ['barcode', 'product_name', 'category', 'price', 'tenant'];
 
-function validateRow(row, rowIndex) {
+function validateRow(row, rowNumber, tenantMap, barcodesInBatch) {
   const errors = [];
 
   for (const field of REQUIRED_FIELDS) {
     if (!row[field] || String(row[field]).trim() === '') {
-      errors.push({ row: rowIndex, field, message: `${field} wajib diisi` });
+      errors.push(`${field} wajib diisi`);
     }
   }
 
   if (row.price !== undefined && String(row.price).trim() !== '') {
     const p = parseFloat(row.price);
-    if (isNaN(p) || p < 0) {
-      errors.push({ row: rowIndex, field: 'price', message: 'price harus berupa angka >= 0' });
-    }
+    if (isNaN(p) || p < 0) errors.push('price harus berupa angka >= 0');
   }
 
-  if (row.image_url && String(row.image_url).trim() !== '') {
-    if (!URL_RE.test(String(row.image_url).trim())) {
-      errors.push({ row: rowIndex, field: 'image_url', message: 'image_url harus diawali https:// atau http://' });
-    }
+  // Resolve tenant name → tenant_id
+  const tenantKey = String(row.tenant || '').trim().toLowerCase();
+  const tenantId  = tenantMap.get(tenantKey);
+  if (row.tenant && tenantKey && !tenantId) {
+    errors.push(`Tenant "${row.tenant}" tidak ditemukan atau tidak aktif`);
   }
 
-  return errors;
+  // Duplicate barcode within batch (flag as invalid)
+  const bc = String(row.barcode || '').trim();
+  if (bc && barcodesInBatch.filter(b => b === bc).length > 1) {
+    errors.push(`Barcode "${bc}" duplikat dalam file`);
+  }
+
+  return { errors, tenantId: tenantId || null };
 }
 
-function resolveBoolean(val) {
+function resolveBoolean(val, defaultVal = true) {
   if (typeof val === 'boolean') return val;
-  if (val === undefined || val === null || val === '') return true;
+  if (val === undefined || val === null || val === '') return defaultVal;
   const s = String(val).trim().toLowerCase();
   return !['false', '0', 'no'].includes(s);
 }
 
 /**
  * POST /api/v1/admin/products/bulk-upload
- * @param {import('express').Request}  req
- * @param {import('express').Response} res
- * @param {import('express').NextFunction} next
  */
 async function bulkUploadProducts(req, res, next) {
   try {
@@ -70,82 +85,113 @@ async function bulkUploadProducts(req, res, next) {
       });
     }
 
-    // Server-side validation — collect ALL errors before aborting
-    const allErrors = [];
+    // ── Build tenant lookup map (name → tenant_id, case-insensitive) ──────────
+    const tenantRes = await query(
+      'SELECT tenant_id, tenant_name, booth_location FROM tenants WHERE is_active = TRUE'
+    );
+    const tenantMap = new Map();
+    for (const t of tenantRes.rows) {
+      tenantMap.set(t.tenant_name.trim().toLowerCase(),    t.tenant_id);
+      tenantMap.set(t.booth_location.trim().toLowerCase(), t.tenant_id);
+    }
+
+    // ── Validate each row individually ────────────────────────────────────────
+    const barcodesInBatch = products.map(p => String(p.barcode || '').trim());
+
+    // Also check barcodes already in DB
+    const uniqueBarcodes = [...new Set(barcodesInBatch.filter(Boolean))];
+    let existingBarcodes = new Set();
+    if (uniqueBarcodes.length > 0) {
+      const placeholders = uniqueBarcodes.map((_, i) => `$${i + 1}`).join(', ');
+      const dbRes = await query(
+        `SELECT barcode FROM products WHERE barcode IN (${placeholders})`,
+        uniqueBarcodes
+      );
+      existingBarcodes = new Set(dbRes.rows.map(r => r.barcode));
+    }
+
+    const validRows   = [];
+    const failedRows  = [];
+
     for (let i = 0; i < products.length; i++) {
-      const rowErrors = validateRow(products[i], i + 1);
-      allErrors.push(...rowErrors);
-    }
-    if (allErrors.length > 0) {
-      return res.status(400).json({ success: false, errors: allErrors });
-    }
+      const row    = products[i];
+      const rowNum = i + 1;
 
-    // Duplicate barcode check within the uploaded batch
-    const barcodes = products.map(p => (p.barcode || '').trim()).filter(Boolean);
-    if (new Set(barcodes).size !== barcodes.length) {
-      return res.status(400).json({
-        success: false,
-        message: 'Terdapat barcode duplikat dalam file upload.',
-      });
-    }
+      const { errors, tenantId } = validateRow(row, rowNum, tenantMap, barcodesInBatch);
 
-    // Single transactional bulk INSERT
-    await withTransaction(async (client) => {
-      for (let i = 0; i < products.length; i++) {
-        const p = products[i];
-
-        const productId = (p.product_id || '').trim()
-          || `PB${String(i + 1).padStart(4, '0')}-${String(p.tenant_id).trim()}`;
-
-        await client.query(
-          `INSERT INTO products
-             (product_id, product_name, category, price, tenant_id,
-              barcode, stock_quantity, image_url, description, odoo_categ_id, is_active,
-              is_on_hold, is_display_only, max_per_customer, is_preorder, preorder_note)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-          [
-            productId,
-            String(p.product_name).trim(),
-            String(p.category).trim(),
-            parseFloat(p.price),
-            String(p.tenant_id).trim(),
-            p.barcode?.trim()  || null,
-            parseInt(p.stock_quantity) || 0,
-            p.image_url?.trim() || null,
-            p.description?.trim() || null,
-            (p.odoo_categ_id !== undefined && p.odoo_categ_id !== null && p.odoo_categ_id !== '')
-              ? parseInt(p.odoo_categ_id) : null,
-            resolveBoolean(p.is_active),
-            resolveBoolean(p.is_on_hold      ?? false),
-            resolveBoolean(p.is_display_only ?? false),
-            (p.max_per_customer !== undefined && p.max_per_customer !== null && p.max_per_customer !== '')
-              ? parseInt(p.max_per_customer) : null,
-            resolveBoolean(p.is_preorder ?? false),
-            p.preorder_note?.trim() || null,
-          ]
-        );
+      // Extra check: barcode already exists in DB
+      const bc = String(row.barcode || '').trim();
+      if (bc && existingBarcodes.has(bc)) {
+        errors.push(`Barcode "${bc}" sudah ada di database`);
       }
-    });
 
-    res.json({ success: true, inserted: products.length });
+      if (errors.length > 0) {
+        failedRows.push({ row_number: rowNum, data: row, errors });
+      } else {
+        validRows.push({ ...row, _rowNum: rowNum, _tenantId: tenantId });
+      }
+    }
+
+    // ── Insert valid rows in one transaction ──────────────────────────────────
+    let inserted = 0;
+    const insertErrors = [];
+
+    if (validRows.length > 0) {
+      await withTransaction(async (client) => {
+        for (let i = 0; i < validRows.length; i++) {
+          const p = validRows[i];
+
+          const productId = (p.product_id || '').trim()
+            || `PB${String(p._rowNum).padStart(4, '0')}-${p._tenantId}`;
+
+          try {
+            await client.query(
+              `INSERT INTO products
+                 (product_id, product_name, category, price, tenant_id,
+                  barcode, stock_quantity, description, odoo_categ_name, is_active,
+                  is_on_hold, is_display_only, is_preorder)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+              [
+                productId,
+                String(p.product_name).trim(),
+                String(p.category).trim(),
+                parseFloat(p.price),
+                p._tenantId,
+                String(p.barcode).trim(),
+                parseInt(p.stock_quantity) || 0,
+                p.description?.trim()     || null,
+                p.odoo_categ_name?.trim() || null,
+                resolveBoolean(p.is_active, true),
+                false,
+                false,
+                false,
+              ]
+            );
+            inserted++;
+          } catch (rowErr) {
+            // Row-level DB error (e.g. duplicate product_id) — don't abort entire batch
+            let msg = rowErr.message;
+            if (rowErr.code === '23505') {
+              const m = (rowErr.detail || '').match(/\(([^)]+)\)=\(([^)]+)\)/);
+              msg = `Duplikat ${m?.[1] || 'kolom'}: "${m?.[2] || ''}" sudah ada`;
+            }
+            insertErrors.push({ row_number: p._rowNum, data: p, errors: [msg] });
+          }
+        }
+      });
+    }
+
+    const allFailed = [...failedRows, ...insertErrors];
+
+    res.json({
+      success:  true,
+      inserted,
+      failed:   allFailed.length,
+      details: {
+        failed: allFailed,
+      },
+    });
   } catch (err) {
-    // PostgreSQL unique-constraint violation → readable message
-    if (err.code === '23505') {
-      const match = (err.detail || '').match(/\(([^)]+)\)=\(([^)]+)\)/);
-      const field = match?.[1] || 'kolom';
-      const value = match?.[2] || '';
-      return res.status(409).json({
-        success: false,
-        message: `Duplikat nilai ${field}: "${value}" sudah ada di database.`,
-      });
-    }
-    // FK violation (e.g. tenant_id not found)
-    if (err.code === '23503') {
-      return res.status(400).json({
-        success: false,
-        message: `Data referensi tidak ditemukan: ${err.detail || err.message}`,
-      });
-    }
     next(err);
   }
 }

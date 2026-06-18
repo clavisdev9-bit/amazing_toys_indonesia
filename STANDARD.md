@@ -2208,3 +2208,290 @@ clearTimeout(lookupTimerRef.current);
 
 - CR-060: `frontend/src/pages/cashier/CashierPOSPage.jsx` — implementasi pertama (Tailwind CSS)
 - CR-061: `frontend/src/pages/helper/HelperPage.jsx` — implementasi kedua (inline styles)
+
+---
+
+## STD-039 — Halaman Print/Laporan Wajib Menyertakan Tombol "Export Excel"
+
+**Berlaku untuk:** Semua halaman yang menampilkan tabel data dan memiliki tombol print (`window.print()`) atau menjadi target tab cetak.
+
+### Aturan
+
+Setiap halaman print/laporan yang menampilkan tabel data **WAJIB** menyertakan tombol "📊 Export Excel" di samping tombol cetak.
+
+**A. Gunakan `exportToExcel` dari `../../utils/exportExcel.js`:**
+
+```javascript
+import { exportToExcel } from '../../utils/exportExcel';
+
+function handleExportExcel() {
+  const dateStr = new Date().toISOString().slice(0, 10);
+  exportToExcel(`NamaFile_${dateStr}`, [{
+    name: 'NamaSheet',
+    rows: data.map((row, i) => ({
+      'No': i + 1,
+      'Kolom A': row.field_a,
+      'Kolom B': row.field_b,
+      // ... sesuai konteks
+    })),
+  }]);
+}
+```
+
+**B. Multi-sheet untuk data yang dikelompokkan:**
+
+Jika data ditampilkan per-grup (contoh: per booth), export dengan satu sheet per grup + satu sheet "Summary":
+
+```javascript
+const sheets = groups.map(({ groupName, rows }) => ({
+  name: groupName.slice(0, 31),   // Excel limit: 31 karakter per sheet name
+  rows: rows.map((r, i) => ({ 'No': i + 1, ... })),
+}));
+sheets.push({ name: 'Summary', rows: summaryRows });
+exportToExcel(filename, sheets);
+```
+
+**C. Posisi tombol — Excel SEBELUM Print:**
+
+```jsx
+{/* Excel di kiri/atas Print */}
+<button onClick={handleExportExcel} className="... bg-emerald-600 ...">📊 Export Excel</button>
+<button onClick={() => window.print()} className="... bg-blue-600 ...">🖨️ Cetak / Simpan PDF</button>
+```
+
+**D. Tombol Excel adalah `no-print` — tidak ikut dicetak:**
+
+```jsx
+<div className="no-print sticky top-0 ...">
+  {/* Tombol Excel + Print ada di sini — class no-print mencegah mereka tercetak */}
+</div>
+```
+
+**E. Data yang diekspor HARUS sama dengan yang ditampilkan di layar:**
+
+Jika ada filter aktif (tenant, tanggal, status), Excel harus mengekspor data setelah filter — bukan raw data sebelum filter.
+
+### Nama Kolom Excel
+
+Gunakan nama kolom bahasa Indonesia yang deskriptif, bukan nama field teknis:
+
+| Field | ❌ Salah | ✅ Benar |
+|---|---|---|
+| `product_name` | `product_name` | `Nama Produk` |
+| `is_active` | `is_active` | `Status` |
+| `stock_quantity` | `stock_quantity` | `Qty` |
+| `price` | `price` | `Harga` |
+
+Nilai numerik (harga, qty) di-pass sebagai `Number(x)` — bukan string — agar Excel bisa menghitung.
+
+### Checklist
+
+- [ ] Import `exportToExcel` dari `../../utils/exportExcel`
+- [ ] Tombol "📊 Export Excel" ada di toolbar `no-print`
+- [ ] Data yang diekspor = data setelah filter aktif
+- [ ] Nilai numerik di-cast ke `Number()`
+- [ ] Sheet name ≤ 31 karakter (batas Excel)
+- [ ] Jika data dikelompokkan: multi-sheet dengan summary
+
+### Referensi
+
+BUG-078 — Tombol "Cetak" di Master Data tidak bisa Export Excel (`MasterDataPrintPage.jsx` tidak punya tombol Excel).  
+Contoh implementasi: `frontend/src/pages/admin/MasterDataPrintPage.jsx`  
+Contoh halaman laporan lain: `SalesReportPage.jsx`, `RecapPage.jsx`, `ShiftReportPage.jsx`
+
+---
+
+## STD-040 — Customer Auth via Email Wajib Melalui OTP
+
+**Berlaku untuk:** `registerCustomer()`, `loginCustomer()` di `auth.service.js`, halaman `RegisterPage.jsx` dan `LoginCustomerPage.jsx`.
+
+### Aturan
+
+Setiap kali customer melakukan register atau login dengan identifier **email**, wajib melalui step verifikasi OTP yang dikirim ke email. Login/register via nomor HP tidak memerlukan OTP.
+
+| Mode | OTP? | Channel |
+|---|---|---|
+| Register — email (primer) | **Ya** | Email |
+| Register — phone + email | **Ya** | Email |
+| Register — phone-only | Tidak | — |
+| Login — email | **Ya** | Email |
+| Login — phone | Tidak | — |
+
+### Implementasi Backend
+
+**A. `registerCustomer()` — jika `email` ada dalam payload:**
+
+```js
+// Email provided → OTP flow
+if (email) {
+  const otpCode = customerOtpSvc.generateOTP();
+  const otpHash = await customerOtpSvc.hashOTP(otpCode);
+  const otpTtl  = parseInt(process.env.OTP_TTL_MINUTES || '5', 10);
+
+  await query(
+    `INSERT INTO pending_registrations (...) VALUES (...)
+     ON CONFLICT (identifier) DO UPDATE SET ...`,
+    [email, full_name, phone_number || null, email, gender, birth_date || null, otpHash, otpTtl]
+  );
+  await sendCustomerOTPEmail(email, otpCode, full_name);
+  const tempToken = signTempToken({ _regIdentifier: email });
+  return { requiresOtp: true, tempToken, maskedEmail };
+}
+// Phone-only → direct register (tidak berubah)
+```
+
+**B. `loginCustomer()` — jika `isEmailMode`:**
+
+```js
+if (isEmailMode) {
+  const otpCode = customerOtpSvc.generateOTP();
+  const otpHash = await customerOtpSvc.hashOTP(otpCode);
+  await customerOtpSvc.storeOTP(customer.customer_id, otpHash);
+  await sendCustomerOTPEmail(customer.email, otpCode, customer.full_name);
+  const tempToken = signTempToken({ customerId: customer.customer_id, deviceId: deviceId || null });
+  return { requiresOtp: true, tempToken, maskedEmail };
+}
+// Phone mode → direct login (tidak berubah)
+```
+
+### Implementasi Frontend
+
+**C. Halaman Register & Login — OTP step:**
+
+```jsx
+// State tambahan
+const [otpStep, setOtpStep]       = useState(false);
+const [tempToken, setTempToken]   = useState('');
+const [maskedEmail, setMaskedEmail] = useState('');
+const [otpCode, setOtpCode]       = useState('');
+
+// Setelah submit register/login
+const data = res.data.data;
+if (data.requiresOtp) {
+  setTempToken(data.tempToken);
+  setMaskedEmail(data.maskedEmail);
+  setOtpStep(true);
+} else {
+  login(data.token, { ... });
+  navigate('/katalog');
+}
+
+// Submit OTP
+const res = await verifyRegisterOtp({ tempToken, otpCode });  // atau verifyCustomerOtp
+login(res.data.data.token, { ... });
+navigate('/katalog');
+```
+
+### Jangan Di-bypass
+
+Infrastruktur OTP customer berikut **tidak boleh dihilangkan atau di-bypass** saat refaktor:
+
+| Komponen | Lokasi |
+|---|---|
+| `verifyRegisterOtp()` | `auth.service.js` |
+| `verifyCustomerOtp()` | `auth.service.js` |
+| `customerOtpSvc` | `customer_otp.service.js` |
+| `sendCustomerOTPEmail()` | `email.service.js` |
+| Route `/register/verify-otp` | `auth.router.js` |
+| Route `/verify-otp/customer` | `auth.router.js` |
+| Tabel `pending_registrations` | DB migration |
+| Tabel `customer_otps` | DB migration |
+
+### Referensi
+
+BUG-080 — OTP email customer di-bypass setelah refaktor: `registerCustomer()` dan `loginCustomer()` langsung issue token tanpa OTP.  
+Implementasi: `auth.service.js`, `RegisterPage.jsx`, `LoginCustomerPage.jsx`
+
+---
+
+## STD-041 — Nginx SPA: `index.html` Wajib `Cache-Control: no-cache`
+
+**Berlaku untuk:** Semua deployment SPA (React/Vite) yang dihosting dengan Nginx.
+
+### Masalah
+
+Vite menggunakan content-hash pada nama file JS/CSS (`index-Bocps9SR.js`). Setiap kali build menghasilkan nama file baru. Jika `index.html` di-cache browser (tanpa `Cache-Control: no-cache`):
+- Browser tetap memuat `index.html` lama yang merujuk ke JS hash lama
+- JS hash lama tidak ada di server → 404 atau muat JS yang salah (sebelum perubahan)
+- User tidak melihat perubahan terbaru meskipun server sudah di-deploy ulang
+
+### Aturan
+
+**A. `index.html` HARUS no-cache:**
+
+```nginx
+location = /index.html {
+    try_files $uri =404;
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header Pragma "no-cache";
+    add_header Expires "0";
+}
+```
+
+**B. Static assets (JS/CSS/images dengan content hash) boleh long-cache:**
+
+```nginx
+location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+    try_files $uri =404;
+    add_header Cache-Control "public, max-age=31536000, immutable";
+}
+```
+
+**C. SPA catch-all tetap ada SETELAH dua block di atas:**
+
+```nginx
+location / {
+    try_files $uri $uri/ /index.html;
+}
+```
+
+Urutan penting — nginx memakai `location` yang paling spesifik, bukan urutan.
+
+### Checklist
+
+- [ ] `nginx.conf` mempunyai block `location = /index.html` dengan `no-cache`
+- [ ] Static assets mempunyai long-cache
+- [ ] `location /` sebagai SPA catch-all tetap ada
+- [ ] Test dengan `curl -I http://host/index.html` → header `Cache-Control: no-cache` muncul
+
+### Referensi
+
+BUG-081 — OTP step tidak muncul di browser karena `index.html` di-cache browser, build baru tidak dimuat.
+
+---
+
+## STD-042 — Approval Queue: Sub-Query Item Wajib Filter `approval_status = 'PENDING'`
+
+**Berlaku untuk:** Semua fitur yang menampilkan antrian persetujuan (helper, kasir, atau role lain) di mana item memiliki status yang bisa berubah (PENDING / APPROVED / REJECTED).
+
+### Masalah
+
+Ketika membangun "approval queue", ada dua langkah query yang umum:
+1. Ambil daftar transaksi yang masih butuh persetujuan (filter di level transaksi)
+2. Ambil daftar item dari transaksi tersebut (sub-query per transaksi)
+
+Bug terjadi ketika langkah (1) sudah memfilter dengan benar (`approval_status = 'PENDING'`), tapi langkah (2) tidak memfilter — sehingga item yang sudah diproses (APPROVED/REJECTED) ikut ditampilkan.
+
+### Aturan
+
+**A. Approval Queue (PENDING items):** outer query dan items sub-query keduanya wajib:
+```sql
+AND ti.approval_status = 'PENDING'
+```
+
+**B. Handover/Detail View (APPROVED items):** items yang ditampilkan untuk handover wajib menyaring REJECTED:
+```sql
+AND ti.approval_status != 'REJECTED'
+```
+
+**C. Tidak boleh mendelegasikan filter status ke frontend.** Frontend hanya boleh melakukan presentasi, bukan business logic filtering untuk status approval.
+
+### Checklist
+
+- [ ] Outer query memfilter `approval_status = 'PENDING'`
+- [ ] Items sub-query memfilter `approval_status = 'PENDING'` yang sama
+- [ ] Jika ada join ke tabel lain, pastikan filter diterapkan pada kolom yang benar (`transaction_items.approval_status`, bukan kolom tabel lain)
+
+### Referensi
+
+BUG-082 — Item yang sudah di-approve/reject masih tampil di antrian approval karena items sub-query tidak memfilter `approval_status`.

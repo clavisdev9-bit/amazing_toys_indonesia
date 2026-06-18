@@ -32,10 +32,7 @@ router.post('/register',
   async (req, res, next) => {
     try {
       const data = await authService.registerCustomer(req.body);
-      const message = data.identifierType === 'email'
-        ? 'Kode OTP dikirim ke email Anda.'
-        : 'Kode OTP dikirim ke WhatsApp Anda.';
-      res.status(202).json({ success: true, message, data });
+      res.status(201).json({ success: true, message: 'Registrasi berhasil. Selamat datang!', data });
     } catch (err) { next(err); }
   }
 );

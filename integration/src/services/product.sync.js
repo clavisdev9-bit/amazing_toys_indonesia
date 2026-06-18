@@ -35,13 +35,27 @@ async function syncProducts() {
   logger.info('Product sync: starting');
   const stats = { processed: 0, created: 0, updated: 0, skipped: 0, archived: 0, failed: 0 };
 
+  // ── Build booth→tenant map from integration_xref ─────────────────────────────
+  const boothToTenant = {};
+  try {
+    const tenantRows = await query(
+      `SELECT sos_id, odoo_id FROM integration_xref WHERE entity_type = 'tenant' AND status = 'ACTIVE'`
+    );
+    for (const row of tenantRows.rows) {
+      boothToTenant[String(row.odoo_id)] = row.sos_id;
+    }
+    logger.info('Product sync: loaded tenant xref map', { count: Object.keys(boothToTenant).length });
+  } catch (err) {
+    logger.warn('Product sync: could not load tenant xref map', { error: err.message });
+  }
+
   // ── Fetch all active, saleable products from Odoo ────────────────────────────
   let odooProducts;
   try {
     odooProducts = await odoo.searchRead(
       'product.product',
       [['active', '=', true], ['sale_ok', '=', true]],
-      ['id', 'name', 'barcode', 'list_price', 'categ_id', 'qty_available', 'default_code']
+      ['id', 'name', 'barcode', 'list_price', 'categ_id', 'qty_available', 'default_code', 'x_studio_booth']
     );
     cb.recordSuccess('odoo');
   } catch (err) {
@@ -74,7 +88,10 @@ async function syncProducts() {
     const stockQty = Math.max(0, Math.floor(op.qty_available));
     const stockStatus = deriveStockStatus(stockQty);
     const catName = Array.isArray(op.categ_id) ? op.categ_id[1] : (op.categ_id?.name || '');
-    const tenantId = resolveTenantId(catName);
+    // x_studio_booth is Many2one: [id, name] or false
+    const boothOdooId = Array.isArray(op.x_studio_booth) ? String(op.x_studio_booth[0]) : null;
+    const tenantIdFromBooth = boothOdooId ? (boothToTenant[boothOdooId] || null) : null;
+    const tenantId = tenantIdFromBooth || resolveTenantId(catName);
 
     try {
       let sosProduct;
@@ -103,7 +120,6 @@ async function syncProducts() {
           tenant_id: tenantId,
         });
         const sosId = (created.data || created).product_id;
-        // Store real Odoo product ID in odoo_id column (not null) for stock sync queries.
         await xref.upsertXref('product', String(op.id), op.id, {
           sos_product_id: sosId,
           barcode: op.barcode,
@@ -118,14 +134,19 @@ async function syncProducts() {
           status: 'SUCCESS',
         });
       } else {
-        // ── Update in SOS if price or stock changed ──
+        // ── Update price + stock_quantity + tenant from Odoo ──
         const p = sosProduct.data || sosProduct;
         const sosId = p.product_id;
-        const changed = Number(p.price) !== price;
+        const priceChanged = Number(p.price) !== price;
+        const stockChanged = Number(p.stock_quantity) !== stockQty;
+        const tenantChanged = tenantIdFromBooth && String(p.tenant_id) !== String(tenantIdFromBooth);
 
-        if (changed) {
-          // Only update price — SOS owns stock_quantity independently for event inventory.
-          await sos.patch(`/products/${sosId}`, { price });
+        if (priceChanged || stockChanged || tenantChanged) {
+          const patch = {};
+          if (priceChanged) patch.price = price;
+          if (stockChanged) { patch.stock_quantity = stockQty; patch.stock_status = stockStatus; }
+          if (tenantChanged) patch.tenant_id = tenantIdFromBooth;
+          await sos.patch(`/products/${sosId}`, patch);
           stats.updated++;
           audit.log({
             operation_type: 'PRODUCT_SYNC',
@@ -134,6 +155,7 @@ async function syncProducts() {
             odoo_entity_id: op.id,
             action: 'UPDATE',
             status: 'SUCCESS',
+            request_summary: `price=${priceChanged} stock=${stockChanged} tenant=${!!tenantChanged}`,
           });
         } else {
           stats.skipped++;

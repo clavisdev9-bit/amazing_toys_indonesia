@@ -1,6 +1,6 @@
 'use strict';
 
-const transporter    = require('../config/mailer');
+const mailer             = require('../config/mailer');
 const { getSystemConfig } = require('../modules/admin/admin.service');
 
 async function _getEventName() {
@@ -8,8 +8,18 @@ async function _getEventName() {
   return cfg.event_name || 'SOS';
 }
 
-function _smtpReady() {
-  return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+async function _smtpReady() {
+  return mailer.isReady();
+}
+
+async function _getFrom() {
+  const { from } = await mailer.getConfig();
+  return from || '';
+}
+
+async function _getNotifyTo() {
+  const { notifyTo } = await mailer.getConfig();
+  return notifyTo || '';
 }
 
 function _formatRupiah(amount) {
@@ -34,15 +44,17 @@ function _header(title, subtitle, eventName) {
 // ── Staff notifications ───────────────────────────────────────────────────────
 
 async function sendLoginAlert({ username, role, name, loginAt }) {
-  if (!_smtpReady()) return;
+  if (!await _smtpReady()) return;
 
   const roleLabel = { CASHIER: 'Kasir', TENANT: 'Tenant', LEADER: 'Leader', ADMIN: 'Admin' }[role] ?? role;
   const time = loginAt.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', hour12: false });
   const eventName = await _getEventName();
+  const notifyTo  = await _getNotifyTo();
+  if (!notifyTo) return;
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
-    to:      process.env.EMAIL_NOTIFY_TO,
+    to:      notifyTo,
     subject: `[SOS] Login: ${name} (${roleLabel})`,
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden">
@@ -64,12 +76,12 @@ async function sendLoginAlert({ username, role, name, loginAt }) {
 }
 
 async function sendOTPEmail(toEmail, otpCode, userName) {
-  if (!_smtpReady()) return;
+  if (!await _smtpReady()) return;
 
   const ttl = process.env.OTP_TTL_MINUTES || '5';
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Kode Verifikasi Login: ${otpCode}`,
@@ -100,7 +112,7 @@ async function sendOTPEmail(toEmail, otpCode, userName) {
 }
 
 async function sendNewDeviceAlert(toEmail, deviceInfo) {
-  if (!_smtpReady()) return;
+  if (!await _smtpReady()) return;
 
   const { browser = '-', ipAddress = '-', loginAt } = deviceInfo;
   const time = loginAt
@@ -108,7 +120,7 @@ async function sendNewDeviceAlert(toEmail, deviceInfo) {
     : '-';
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Login dari Perangkat Baru Terdeteksi`,
@@ -144,12 +156,12 @@ async function sendNewDeviceAlert(toEmail, deviceInfo) {
  * Fire-and-forget safe — caller harus .catch().
  */
 async function sendCustomerOTPEmail(toEmail, otpCode, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const ttl = process.env.OTP_TTL_MINUTES || '5';
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Kode OTP Anda: ${otpCode}`,
@@ -184,7 +196,7 @@ async function sendCustomerOTPEmail(toEmail, otpCode, customerName) {
  * Fire-and-forget safe.
  */
 async function sendCustomerGreetingEmail(toEmail, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
   const cfg = await getSystemConfig();
@@ -199,7 +211,7 @@ async function sendCustomerGreetingEmail(toEmail, customerName) {
     ? `<tr><td style="padding:6px 0;color:#6b7280">Lokasi</td><td style="padding:6px 0">${venue}</td></tr>`
     : '';
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Selamat Datang, ${customerName}! 🎉`,
@@ -228,11 +240,11 @@ async function sendCustomerGreetingEmail(toEmail, customerName) {
  * Fire-and-forget safe.
  */
 async function sendCustomerLockoutEmail(toEmail, customerName, lockoutMinutes = 5) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Peringatan: Akun Anda Terkunci Sementara`,
@@ -269,7 +281,7 @@ async function sendCustomerLockoutEmail(toEmail, customerName, lockoutMinutes = 
  * Fire-and-forget safe.
  */
 async function sendPreorderConfirmedEmail(toEmail, customerName, total, estimasiNote = '') {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
   const estHtml = estimasiNote
@@ -278,7 +290,7 @@ async function sendPreorderConfirmedEmail(toEmail, customerName, total, estimasi
        </div>`
     : '';
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Pembayaran Pre-Order Dikonfirmasi ✅`,
@@ -308,11 +320,11 @@ async function sendPreorderConfirmedEmail(toEmail, customerName, total, estimasi
  * Fire-and-forget safe.
  */
 async function sendPreorderShippedEmail(toEmail, customerName, courier, trackingNumber) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Barang Pre-Order Anda Dikirim 📦`,
@@ -339,11 +351,11 @@ async function sendPreorderShippedEmail(toEmail, customerName, courier, tracking
  * Fire-and-forget safe.
  */
 async function sendPreorderArrivedEmail(toEmail, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Barang Anda Sudah Sampai di Indonesia 📍`,
@@ -369,11 +381,11 @@ async function sendPreorderArrivedEmail(toEmail, customerName) {
  * Fire-and-forget safe.
  */
 async function sendPreorderCompletedEmail(toEmail, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Transaksi Pre-Order Selesai 🤝`,
@@ -401,11 +413,11 @@ async function sendPreorderCompletedEmail(toEmail, customerName) {
  * Fire-and-forget safe.
  */
 async function sendPreorderCancelledEmail(toEmail, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Pre-Order Dibatalkan ❌`,
@@ -433,11 +445,11 @@ async function sendPreorderCancelledEmail(toEmail, customerName) {
  * Fire-and-forget safe.
  */
 async function sendPreorderExpiredEmail(toEmail, customerName) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Pre-Order Kedaluwarsa ⏰`,
@@ -465,12 +477,12 @@ async function sendPreorderExpiredEmail(toEmail, customerName) {
  * Fire-and-forget safe.
  */
 async function sendCustomerOrderQREmail(toEmail, { boothName, itemSummary, totalAmount, orderLink, expiryMinutes }) {
-  if (!_smtpReady() || !toEmail) return;
+  if (!await _smtpReady() || !toEmail) return;
 
   const eventName = await _getEventName();
   const total = _formatRupiah(totalAmount);
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from:    process.env.EMAIL_FROM,
     to:      toEmail,
     subject: `[${eventName}] Pesanan Anda Siap — Tunjukkan QR ke Kasir`,

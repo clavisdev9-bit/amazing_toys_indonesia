@@ -226,15 +226,8 @@ const customerDeviceSvc  = require('./customer_device.service');
 const loginAttemptSvc    = require('./customer_login_attempt.service');
 const { sendOTP, sendGreeting, sendLockoutNotif } = require('../wa/wa.service');
 
-// Step 1 registrasi: simpan pending data ke tempToken, kirim OTP via WA atau Email
-// Mendukung dua mode:
-//   - mode phone: phone_number wajib, OTP primer via WA
-//   - mode email: email wajib, phone_number opsional, OTP primer via email
 async function registerCustomer({ full_name, phone_number, email, gender, birth_date }) {
-  const isEmailMode = !phone_number && !!email;
-  const identifier  = phone_number || email;
-
-  if (!identifier) {
+  if (!phone_number && !email) {
     throw new AppError('Nomor HP atau email wajib diisi.', 422);
   }
 
@@ -255,68 +248,63 @@ async function registerCustomer({ full_name, phone_number, email, gender, birth_
       throw new AppError('Email sudah terdaftar, silakan login.', 409);
   }
 
-  const otpPlain = customerOtpSvc.generateOTP();
-  const otpHash  = await customerOtpSvc.hashOTP(otpPlain);
+  // Email-only mode → OTP verification via email required
+  const isEmailMode = !phone_number && !!email;
+  if (isEmailMode) {
+    const otpCode = customerOtpSvc.generateOTP();
+    const otpHash = await customerOtpSvc.hashOTP(otpCode);
+    const otpTtl  = parseInt(process.env.OTP_TTL_MINUTES || '5', 10);
 
-  // STD-018: simpan pending_registrations DULU sebelum kirim OTP.
-  await query(
-    `INSERT INTO pending_registrations
-       (identifier, identifier_type, phone_number, full_name, email, gender, birth_date, otp_hash, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + interval '5 minutes')
-     ON CONFLICT (identifier) DO UPDATE SET
-       full_name      = EXCLUDED.full_name,
-       email          = EXCLUDED.email,
-       phone_number   = EXCLUDED.phone_number,
-       gender         = EXCLUDED.gender,
-       birth_date     = EXCLUDED.birth_date,
-       otp_hash       = EXCLUDED.otp_hash,
-       expires_at     = EXCLUDED.expires_at,
-       attempt_count  = 0,
-       created_at     = NOW()`,
-    [
-      identifier,
-      isEmailMode ? 'email' : 'phone',
-      phone_number || null,
-      full_name,
-      email || null,
-      gender,
-      birth_date || null,
-      otpHash,
-    ]
-  );
+    await query(
+      `INSERT INTO pending_registrations
+         (identifier, full_name, phone_number, email, gender, birth_date, otp_hash, expires_at, attempt_count, identifier_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + $8 * INTERVAL '1 minute', 0, 'email')
+       ON CONFLICT (identifier) DO UPDATE
+         SET full_name        = EXCLUDED.full_name,
+             phone_number     = EXCLUDED.phone_number,
+             gender           = EXCLUDED.gender,
+             birth_date       = EXCLUDED.birth_date,
+             otp_hash         = EXCLUDED.otp_hash,
+             expires_at       = EXCLUDED.expires_at,
+             attempt_count    = 0,
+             identifier_type  = 'email'`,
+      [email, full_name, null, email, gender, birth_date || null, otpHash, otpTtl]
+    );
 
-  if (!isEmailMode) {
-    const waResult = await sendOTP(phone_number, otpPlain, full_name);
-    if (waResult.status === 'FAILED') {
-      throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
-    }
-    // Supplemental email OTP jika email tersedia
-    if (email) {
-      sendCustomerOTPEmail(email, otpPlain, full_name).catch(() => {});
-    }
-  } else {
-    // Email mode: OTP via email adalah primer
-    try {
-      await sendCustomerOTPEmail(email, otpPlain, full_name);
-    } catch {
-      throw new AppError('Gagal mengirim OTP via email. Periksa alamat email dan coba lagi.', 503);
-    }
+    await sendCustomerOTPEmail(email, otpCode, full_name);
+
+    const tempToken   = signTempToken({ _regIdentifier: email });
+    const maskedEmail = email.replace(/(.{2}).+(@.+)/, '$1***$2');
+    return { requiresOtp: true, tempToken, maskedEmail, identifierType: 'email' };
   }
 
-  const tempToken = signTempToken({ _regIdentifier: identifier, _regType: isEmailMode ? 'email' : 'phone' });
+  // Phone (with or without email) → direct register (no OTP)
+  const inserted = await query(
+    `INSERT INTO customers (full_name, phone_number, email, gender, birth_date)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING customer_id, full_name, phone_number, email, gender, birth_date, registered_at`,
+    [full_name, phone_number, email || null, gender, birth_date || null]
+  );
+  const customer = inserted.rows[0];
 
-  const maskedIdentifier = isEmailMode
-    ? maskEmail(email)
-    : phone_number.slice(0, 4) + '****' + phone_number.slice(-3);
+  const token = issueCustomerToken(customer);
 
-  return {
-    requiresOtp:      true,
-    tempToken,
-    maskedIdentifier,
-    identifierType:   isEmailMode ? 'email' : 'phone',
-    // backward-compat field agar frontend lama tidak crash
-    maskedPhone:      isEmailMode ? null : (phone_number.slice(0, 4) + '****' + phone_number.slice(-3)),
-  };
+  fireWebhook('/webhook/customer-registered', {
+    customer_id:  customer.customer_id,
+    full_name:    customer.full_name,
+    phone_number: customer.phone_number || null,
+    email:        null,
+    gender:       customer.gender       || null,
+  });
+
+  if (customer.phone_number) {
+    sendGreeting(customer.phone_number, customer.full_name).catch(() => {});
+  }
+  if (customer.email) {
+    sendCustomerGreetingEmail(customer.email, customer.full_name).catch(() => {});
+  }
+
+  return { token, customer };
 }
 
 // Step 2 registrasi: verifikasi OTP → buat akun → issue token
@@ -380,19 +368,12 @@ async function verifyRegisterOtp({ tempToken, otpCode }) {
   return { token, customer };
 }
 
-// Mendukung login via phone (OTP WA) atau email (OTP Email)
-async function loginCustomer({ phone_number, email, deviceId = null, deviceInfo = {} }) {
+async function loginCustomer({ phone_number, email, deviceId = null }) {
   const isEmailMode = !phone_number && !!email;
   const identifier  = phone_number || email;
 
   if (!identifier) {
     throw new AppError('Nomor HP atau email wajib diisi.', 422);
-  }
-
-  const lockout = await loginAttemptSvc.checkLockout(identifier);
-  if (lockout.locked) {
-    const menit = Math.ceil(lockout.remainingSeconds / 60);
-    throw new AppError(`Akun terkunci sementara. Coba lagi dalam ${menit} menit.`, 429);
   }
 
   const result = isEmailMode
@@ -409,60 +390,24 @@ async function loginCustomer({ phone_number, email, deviceId = null, deviceInfo 
 
   const customer = result.rows[0];
   if (!customer) {
-    await loginAttemptSvc.recordFailedAttempt(identifier);
     throw new AppError('Akun tidak ditemukan. Silakan daftar terlebih dahulu.', 404);
   }
 
-  if (deviceId) {
-    const trusted = await customerDeviceSvc.checkTrustedDevice(customer.customer_id, deviceId);
-    if (trusted) {
-      const token = issueCustomerToken(customer, deviceId);
-      return { requiresOtp: false, token, customer };
-    }
+  // Email mode → OTP verification via email required
+  if (isEmailMode) {
+    const otpCode    = customerOtpSvc.generateOTP();
+    const otpHash    = await customerOtpSvc.hashOTP(otpCode);
+    await customerOtpSvc.storeOTP(customer.customer_id, otpHash);
+    await sendCustomerOTPEmail(customer.email, otpCode, customer.full_name);
+
+    const tempToken   = signTempToken({ customerId: customer.customer_id, deviceId: deviceId || null });
+    const maskedEmail = customer.email.replace(/(.{2}).+(@.+)/, '$1***$2');
+    return { requiresOtp: true, tempToken, maskedEmail, identifierType: 'email' };
   }
 
-  const otpPlain = customerOtpSvc.generateOTP();
-  const otpHash  = await customerOtpSvc.hashOTP(otpPlain);
-  await customerOtpSvc.storeOTP(customer.customer_id, otpHash, deviceInfo.ipAddress || null);
-
-  if (!isEmailMode) {
-    const waResult = await sendOTP(customer.phone_number, otpPlain, customer.full_name);
-    if (waResult.status === 'FAILED') {
-      throw new AppError('Gagal mengirim OTP via WhatsApp. Pastikan nomor aktif dan coba lagi.', 503);
-    }
-    // Supplemental email jika tersedia
-    if (customer.email) {
-      sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name).catch(() => {});
-    }
-  } else {
-    // Email mode: OTP via email adalah primer
-    try {
-      await sendCustomerOTPEmail(customer.email, otpPlain, customer.full_name);
-    } catch {
-      throw new AppError('Gagal mengirim OTP via email. Periksa koneksi dan coba lagi.', 503);
-    }
-    // Supplemental WA jika customer punya nomor HP
-    if (customer.phone_number) {
-      sendOTP(customer.phone_number, otpPlain, customer.full_name).catch(() => {});
-    }
-  }
-
-  const tempToken = signTempToken({
-    customerId: customer.customer_id,
-    deviceId:   deviceId || null,
-  });
-
-  const maskedIdentifier = isEmailMode
-    ? maskEmail(customer.email)
-    : customer.phone_number.slice(0, 4) + '****' + customer.phone_number.slice(-3);
-
-  return {
-    requiresOtp:      true,
-    tempToken,
-    maskedIdentifier,
-    identifierType:   isEmailMode ? 'email' : 'phone',
-    maskedPhone:      isEmailMode ? null : maskedIdentifier,
-  };
+  // Phone mode → direct login (no OTP)
+  const token = issueCustomerToken(customer, deviceId || null);
+  return { requiresOtp: false, token, customer };
 }
 
 async function verifyCustomerOtp({ tempToken, otpCode, deviceId, deviceInfo = {} }) {

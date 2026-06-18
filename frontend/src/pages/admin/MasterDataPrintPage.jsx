@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { getAdminProducts, getAdminTenants } from '../../api/admin';
 import { formatRupiah } from '../../utils/format';
+import { exportToExcel } from '../../utils/exportExcel';
 import { usePublicConfig } from '../../hooks/useAppLogo';
 import Spinner from '../../components/ui/Spinner';
 
@@ -61,6 +62,59 @@ export default function MasterDataPrintPage() {
   })();
 
   const grandTotal = filtered.reduce((s, p) => s + Number(p.price) * p.stock_quantity, 0);
+
+  function handleExportExcel() {
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `MasterData_Produk_${dateStr}`;
+
+    if (groupByBooth && groups.length > 1) {
+      // Satu sheet per booth + satu sheet summary
+      const sheets = groups.map(({ tenant, rows }) => ({
+        name: tenant ? `${tenant.tenant_id}` : 'Semua',
+        rows: rows.map((p, i) => ({
+          'No': i + 1,
+          'Nama Produk': p.product_name,
+          'Kategori': p.category || '',
+          'Barcode': p.barcode || '',
+          'Harga': Number(p.price),
+          'Qty': p.stock_quantity,
+          'Nilai Stok': Number(p.price) * p.stock_quantity,
+          'Status': p.is_active ? 'Aktif' : 'Nonaktif',
+          'Pre-Order': p.is_preorder ? 'Ya' : 'Tidak',
+          'Booth': tenant?.tenant_name || '',
+        })),
+      }));
+      // Summary sheet
+      sheets.push({
+        name: 'Summary',
+        rows: groups.map(({ tenant, rows: rs }) => ({
+          'Booth': tenant?.tenant_name || 'Semua',
+          'Booth ID': tenant?.tenant_id || '',
+          'Jumlah Produk': rs.length,
+          'Total Qty': rs.reduce((s, p) => s + p.stock_quantity, 0),
+          'Total Nilai Stok': rs.reduce((s, p) => s + Number(p.price) * p.stock_quantity, 0),
+        })),
+      });
+      exportToExcel(filename, sheets);
+    } else {
+      // Satu sheet flat
+      exportToExcel(filename, [{
+        name: 'Produk',
+        rows: filtered.map((p, i) => ({
+          'No': i + 1,
+          'Nama Produk': p.product_name,
+          'Booth': tenantMap[p.tenant_id]?.tenant_name || p.tenant_id || '',
+          'Kategori': p.category || '',
+          'Barcode': p.barcode || '',
+          'Harga': Number(p.price),
+          'Qty': p.stock_quantity,
+          'Nilai Stok': Number(p.price) * p.stock_quantity,
+          'Status': p.is_active ? 'Aktif' : 'Nonaktif',
+          'Pre-Order': p.is_preorder ? 'Ya' : 'Tidak',
+        })),
+      }]);
+    }
+  }
 
   // ── Render ──────────────────────────────────────────────────────────────────
   if (loading) return <div className="p-8"><Spinner /></div>;
@@ -127,6 +181,11 @@ export default function MasterDataPrintPage() {
           Kelompokkan per booth
         </label>
 
+        <button
+          onClick={handleExportExcel}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-colors">
+          📊 Export Excel
+        </button>
         <button
           onClick={() => window.print()}
           className="flex items-center gap-1.5 px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors">

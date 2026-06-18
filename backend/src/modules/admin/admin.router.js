@@ -1,9 +1,11 @@
 'use strict';
 
-const express = require('express');
+const express   = require('express');
+const ExcelJS   = require('exceljs');
 const { authenticate, authorize } = require('../../middlewares/auth.middleware');
 const { AppError } = require('../../middlewares/error.middleware');
 const adminSvc = require('./admin.service');
+const { query } = require('../../config/database');
 const { broadcastToAll } = require('../../ws/websocket');
 
 const router    = express.Router();
@@ -60,8 +62,108 @@ router.delete('/users/:userId', ...adminOnly, async (req, res, next) => {
 // ── Products — image upload and sync-odoo must be before /:productId ─────────
 
 // ── Bulk upload (must be before /:productId) ─────────────────────────────────
-const { bulkUploadProducts } = require('./bulkUpload.controller');
-router.post('/products/bulk-upload', ...adminOnly, bulkUploadProducts);
+const { bulkUploadProducts }       = require('./bulkUpload.controller');
+const { bulkUploadImages }         = require('./bulkImageUpload.controller');
+const { bulkUploadMinimal }        = require('./bulkUploadMinimal.controller');
+router.post('/products/bulk-upload',         ...adminOnly, bulkUploadProducts);
+router.post('/products/bulk-upload-images',  ...adminOnly, bulkUploadImages);
+router.post('/products/bulk-upload-minimal', ...adminOnly, bulkUploadMinimal);
+
+// ── Bulk update stok + tenant by barcode ──────────────────────────────────────
+router.post('/products/bulk-update-stock-tenant', ...adminOnly, async (req, res, next) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || rows.length === 0)
+    return res.status(400).json({ success: false, message: 'rows wajib diisi dan tidak boleh kosong.' });
+
+  try {
+    // Build tenant lookup map: booth_location and tenant_name → tenant_id (case-insensitive)
+    const tenantRes = await query('SELECT tenant_id, tenant_name, booth_location FROM tenants WHERE is_active = TRUE');
+    const tenantMap = new Map();
+    for (const t of tenantRes.rows) {
+      tenantMap.set(t.booth_location.trim().toLowerCase(), t.tenant_id);
+      tenantMap.set(t.tenant_name.trim().toLowerCase(), t.tenant_id);
+    }
+
+    const updated        = [];
+    const notFound       = [];
+    const tenantNotFound = [];
+    const errors         = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const { barcode, stock_quantity, tenant } = rows[i];
+      const rowNum = i + 2; // Excel row number (1=header)
+
+      if (!barcode || String(barcode).trim() === '') {
+        errors.push({ row: rowNum, message: 'barcode kosong, baris dilewati.' });
+        continue;
+      }
+
+      const bc    = String(barcode).trim();
+      const stock = parseInt(stock_quantity, 10);
+      if (isNaN(stock) || stock < 0) {
+        errors.push({ row: rowNum, barcode: bc, message: 'stock_quantity tidak valid.' });
+        continue;
+      }
+
+      // Resolve tenant_id
+      const tenantKey  = tenant ? String(tenant).trim().toLowerCase() : '';
+      const tenant_id  = tenantMap.get(tenantKey) || null;
+
+      if (tenant && !tenant_id) {
+        tenantNotFound.push({ row: rowNum, barcode: bc, tenant: String(tenant).trim() });
+        // Still update stock even if tenant not resolved, skip tenant update
+      }
+
+      const prodRes = await query('SELECT product_id, tenant_id FROM products WHERE barcode = $1', [bc]);
+      if (prodRes.rows.length === 0) {
+        notFound.push({ row: rowNum, barcode: bc });
+        continue;
+      }
+
+      const product_id = prodRes.rows[0].product_id;
+      const newTenantId = tenant_id || prodRes.rows[0].tenant_id; // keep existing if not resolved
+
+      await query(
+        'UPDATE products SET stock_quantity = $1, tenant_id = $2, updated_at = NOW() WHERE product_id = $3',
+        [stock, newTenantId, product_id]
+      );
+      updated.push(product_id);
+    }
+
+    res.json({
+      success: true,
+      summary: {
+        total:          rows.length,
+        updated:        updated.length,
+        not_found:      notFound.length,
+        tenant_not_found: tenantNotFound.length,
+        errors:         errors.length,
+      },
+      details: { notFound, tenantNotFound, errors },
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /admin/products/pull-odoo
+ * Pull sales_price + stock on hand dari Odoo → update SOS products.
+ */
+router.post('/products/pull-odoo', ...adminOnly, async (req, res, next) => {
+  const integrationUrl = process.env.INTEGRATION_WEBHOOK_URL || 'http://localhost:4000';
+  const secret = process.env.WEBHOOK_SECRET || '';
+  try {
+    const resp = await fetch(`${integrationUrl}/sync/pull/products`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
+      signal:  AbortSignal.timeout(120_000),
+    });
+    const body = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(body);
+    res.json({ success: true, ...body });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.post('/products/sync-odoo', ...adminOnly, async (req, res, next) => {
   const { force = false } = req.body;
@@ -217,6 +319,144 @@ router.patch('/tenants/:tenantId', ...adminOnly, async (req, res, next) => {
   try {
     const data = await adminSvc.adminUpdateTenant(req.params.tenantId, req.body);
     res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+// ── Export Excel Master Data ──────────────────────────────────────────────────
+
+router.get('/export/master-data', ...adminOnly, async (req, res, next) => {
+  try {
+    const [products, tenants] = await Promise.all([
+      adminSvc.adminListProducts({ includeInactive: true, limit: 99999, page: 1 }),
+      adminSvc.adminListTenants({ includeInactive: true }),
+    ]);
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Amazing Toys SOS';
+    wb.created = new Date();
+
+    // ── Sheet 1: Produk ──────────────────────────────────────────────────────
+    const wsProd = wb.addWorksheet('Produk', { views: [{ state: 'frozen', ySplit: 1 }] });
+    wsProd.columns = [
+      { header: 'Product ID',        key: 'product_id',       width: 16 },
+      { header: 'Nama Produk',        key: 'product_name',     width: 36 },
+      { header: 'Kategori',           key: 'category',         width: 20 },
+      { header: 'Harga (Rp)',         key: 'price',            width: 16 },
+      { header: 'Stok',               key: 'stock_quantity',   width: 10 },
+      { header: 'Status Stok',        key: 'stock_status',     width: 16 },
+      { header: 'Tenant ID',          key: 'tenant_id',        width: 12 },
+      { header: 'Nama Tenant',        key: 'tenant_name',      width: 28 },
+      { header: 'Lokasi Booth',       key: 'booth_location',   width: 18 },
+      { header: 'Barcode',            key: 'barcode',          width: 20 },
+      { header: 'Odoo ID',            key: 'odoo_id',          width: 12 },
+      { header: 'Odoo Categ ID',      key: 'odoo_categ_id',    width: 14 },
+      { header: 'Deskripsi',          key: 'description',      width: 40 },
+      { header: 'Pre-Order',          key: 'is_preorder',      width: 12 },
+      { header: 'Catatan Pre-Order',  key: 'preorder_note',    width: 36 },
+      { header: 'Aktif',              key: 'is_active',        width: 10 },
+      { header: 'Dibuat',             key: 'created_at',       width: 22 },
+      { header: 'Diperbarui',         key: 'updated_at',       width: 22 },
+    ];
+
+    // Header style
+    const headerRow = wsProd.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+    headerRow.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    headerRow.height = 22;
+
+    for (const p of products.items) {
+      const row = wsProd.addRow({
+        product_id:      p.product_id,
+        product_name:    p.product_name,
+        category:        p.category,
+        price:           parseFloat(p.price),
+        stock_quantity:  parseInt(p.stock_quantity, 10),
+        stock_status:    p.stock_status,
+        tenant_id:       p.tenant_id,
+        tenant_name:     p.tenant_name,
+        booth_location:  p.booth_location,
+        barcode:         p.barcode,
+        odoo_id:         p.odoo_id || '',
+        odoo_categ_id:   p.odoo_categ_id || '',
+        description:     p.description || '',
+        is_preorder:     p.is_preorder ? 'Ya' : 'Tidak',
+        preorder_note:   p.preorder_note || '',
+        is_active:       p.is_active ? 'Aktif' : 'Nonaktif',
+        created_at:      p.created_at ? new Date(p.created_at).toLocaleString('id-ID') : '',
+        updated_at:      p.updated_at ? new Date(p.updated_at).toLocaleString('id-ID') : '',
+      });
+
+      // Color rows: inactive=grey, out of stock=light red, low stock=light yellow
+      if (!p.is_active) {
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
+      } else if (p.stock_status === 'OUT_OF_STOCK') {
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFECACA' } };
+      } else if (p.stock_status === 'LOW_STOCK') {
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF9C3' } };
+      }
+
+      // Format price column as currency
+      row.getCell('price').numFmt = '#,##0';
+    }
+
+    // Auto-filter
+    wsProd.autoFilter = { from: 'A1', to: 'R1' };
+
+    // ── Sheet 2: Tenant/Booth ────────────────────────────────────────────────
+    const wsTenant = wb.addWorksheet('Tenant - Booth', { views: [{ state: 'frozen', ySplit: 1 }] });
+    wsTenant.columns = [
+      { header: 'Tenant ID',          key: 'tenant_id',        width: 14 },
+      { header: 'Nama Tenant',        key: 'tenant_name',      width: 30 },
+      { header: 'Lokasi Booth',       key: 'booth_location',   width: 20 },
+      { header: 'Lantai',             key: 'floor_label',      width: 12 },
+      { header: 'Kontak PIC',         key: 'contact_name',     width: 24 },
+      { header: 'No. Telepon',        key: 'contact_phone',    width: 18 },
+      { header: 'Email',              key: 'contact_email',    width: 30 },
+      { header: 'Revenue Share (%)',  key: 'revenue_share_pct',width: 18 },
+      { header: 'Rekening Bank',      key: 'bank_account',     width: 24 },
+      { header: 'Order Mode',         key: 'order_mode',       width: 18 },
+      { header: 'Odoo Booth ID',      key: 'odoo_booth_id',    width: 14 },
+      { header: 'Aktif',              key: 'is_active',        width: 10 },
+      { header: 'Dibuat',             key: 'created_at',       width: 22 },
+    ];
+
+    const headerRowT = wsTenant.getRow(1);
+    headerRowT.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    headerRowT.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF059669' } };
+    headerRowT.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    headerRowT.height = 22;
+
+    for (const t of tenants) {
+      const row = wsTenant.addRow({
+        tenant_id:        t.tenant_id,
+        tenant_name:      t.tenant_name,
+        booth_location:   t.booth_location,
+        floor_label:      t.floor_label || '',
+        contact_name:     t.contact_name,
+        contact_phone:    t.contact_phone,
+        contact_email:    t.contact_email || '',
+        revenue_share_pct: t.revenue_share_pct != null ? parseFloat(t.revenue_share_pct) : '',
+        bank_account:     t.bank_account || '',
+        order_mode:       t.order_mode || 'Inherit Global',
+        odoo_booth_id:    t.odoo_booth_id || '',
+        is_active:        t.is_active ? 'Aktif' : 'Nonaktif',
+        created_at:       t.created_at ? new Date(t.created_at).toLocaleString('id-ID') : '',
+      });
+
+      if (!t.is_active) {
+        row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
+      }
+    }
+
+    wsTenant.autoFilter = { from: 'A1', to: 'M1' };
+
+    // ── Stream response ──────────────────────────────────────────────────────
+    const today = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="master-data-${today}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
   } catch (err) { next(err); }
 });
 
@@ -477,6 +717,42 @@ router.post('/wa-gateway/test', ...adminOnly, async (req, res, next) => {
     } else {
       res.status(422).json({ success: false, message: result.error || 'Gagal mengirim pesan tes.', data: result });
     }
+  } catch (err) { next(err); }
+});
+
+// ── Email / SMTP Config ───────────────────────────────────────────────────────
+
+router.get('/email-config', ...adminOnly, async (_req, res, next) => {
+  try {
+    const data = await adminSvc.getEmailConfig(true);
+    res.json({ success: true, data });
+  } catch (err) { next(err); }
+});
+
+router.put('/email-config', ...adminOnly, async (req, res, next) => {
+  try {
+    const data = await adminSvc.saveEmailConfig(req.body);
+    res.json({ success: true, message: 'Konfigurasi email disimpan.', data });
+  } catch (err) { next(err); }
+});
+
+router.post('/email-config/test', ...adminOnly, async (req, res, next) => {
+  try {
+    const { to } = req.body;
+    if (!to) return res.status(400).json({ success: false, message: 'Alamat email tujuan wajib diisi.' });
+    const mailer = require('../../config/mailer');
+    const ready  = await mailer.isReady();
+    if (!ready)  return res.status(422).json({ success: false, message: 'SMTP belum dikonfigurasi.' });
+    await mailer.sendMail({
+      to,
+      subject: '[SOS] Test Email — Konfigurasi SMTP berhasil',
+      html: `<div style="font-family:sans-serif;padding:24px;max-width:480px;margin:auto">
+        <h2 style="color:#1f2937">✅ Test Email Berhasil</h2>
+        <p style="color:#374151">Email ini dikirim dari sistem SOS untuk memverifikasi konfigurasi SMTP Anda.</p>
+        <p style="color:#9ca3af;font-size:12px">Jika Anda tidak meminta ini, abaikan email ini.</p>
+      </div>`,
+    });
+    res.json({ success: true, message: `Email tes berhasil dikirim ke ${to}.` });
   } catch (err) { next(err); }
 });
 

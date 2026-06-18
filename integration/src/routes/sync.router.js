@@ -8,6 +8,7 @@ const env     = require('../config/env');
 const logger  = require('../config/logger');
 const odoo    = require('../clients/odoo.client');
 const { pushProductsToOdoo } = require('../services/push.product.sync');
+const { syncProducts }       = require('../services/product.sync');
 
 const router = express.Router();
 
@@ -43,6 +44,22 @@ router.post('/push/products', requireSecret, async (req, res) => {
       success: false,
       message: err.message || 'Product push to Odoo failed',
     });
+  }
+});
+
+/**
+ * POST /sync/pull/products
+ * Triggered by admin "Pull from Odoo" button.
+ * Pulls sales_price → price  and  stock on hand → stock_quantity from Odoo into SOS.
+ */
+router.post('/pull/products', requireSecret, async (req, res) => {
+  logger.info('sync.router: pull/products requested');
+  try {
+    const stats = await syncProducts();
+    return res.json({ success: true, stats });
+  } catch (err) {
+    logger.error('sync.router: pull/products failed', { error: err.message });
+    return res.status(500).json({ success: false, message: err.message || 'Pull from Odoo failed' });
   }
 });
 

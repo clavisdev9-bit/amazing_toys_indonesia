@@ -1,6 +1,6 @@
 'use strict';
 
-const transporter = require('../../config/mailer');
+const mailer = require('../../config/mailer');
 
 function formatRupiah(amount) {
   return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
@@ -22,7 +22,7 @@ async function sendEReceiptEmail({ to, customerName, transactionId, eventName, e
 
   const from = process.env.EMAIL_FROM || process.env.SMTP_USER;
 
-  await transporter.sendMail({
+  await mailer.sendMail({
     from,
     to,
     subject: `E-Receipt #${transactionId} — ${eventName}`,

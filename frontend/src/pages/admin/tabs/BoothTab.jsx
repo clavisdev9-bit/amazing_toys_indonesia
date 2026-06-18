@@ -17,6 +17,7 @@ const EMPTY_FORM = {
   contact_phone: '',
   contact_email: '',
   order_mode: '',
+  odoo_booth_id: '',
 };
 
 const ORDER_MODE_OPTIONS = [
@@ -73,6 +74,30 @@ function FormFields({ form, setForm }) {
           NULL = ikuti mode global dari Konfigurasi → Mode Penjualan.
         </p>
       </div>
+
+      {/* Odoo mapping */}
+      <div className="border-t border-gray-100 pt-3">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded">Odoo</span>
+          <span className="text-xs text-gray-500">Mapping ke Odoo</span>
+        </div>
+        <Input
+          label={
+            <span className="flex items-center gap-1.5">
+              Odoo Booth ID
+              <span className="text-xs font-normal text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded">x_studio_booth</span>
+            </span>
+          }
+          type="number"
+          min="1"
+          placeholder="ID record Odoo (angka)"
+          value={form.odoo_booth_id ?? ''}
+          onChange={(e) => set('odoo_booth_id', e.target.value || '')}
+        />
+        <p className="text-xs text-gray-400 mt-1">
+          ID record booth di Odoo Studio. Dipakai integrasi untuk menautkan order ke booth yang benar.
+        </p>
+      </div>
     </div>
   );
 }
@@ -108,6 +133,11 @@ function BoothRow({ tenant, onEdit, onToggle }) {
         ) : (
           <span className="text-xs text-gray-400">—</span>
         )}
+      </td>
+      <td className="px-4 py-3">
+        {tenant.odoo_booth_id
+          ? <span className="font-mono text-xs text-violet-700 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded"># {tenant.odoo_booth_id}</span>
+          : <span className="text-xs text-gray-300">—</span>}
       </td>
       <td className="px-4 py-3">
         <div className="flex gap-1.5 flex-wrap">
@@ -181,6 +211,7 @@ export default function BoothTab() {
       contact_phone:  tenant.contact_phone,
       contact_email:  tenant.contact_email  ?? '',
       order_mode:     tenant.order_mode     ?? '',
+      odoo_booth_id:  tenant.odoo_booth_id  ?? '',
     });
   }
 
@@ -263,6 +294,12 @@ export default function BoothTab() {
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Kontak PIC</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Status</th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Mode</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">
+                    <span className="flex items-center gap-1">
+                      Odoo Booth
+                      <span className="font-mono font-normal text-gray-400 text-[10px]">x_studio_booth</span>
+                    </span>
+                  </th>
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Aksi</th>
                 </tr>
               </thead>

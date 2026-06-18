@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import ProductBulkUpload from '../ProductBulkUpload';
+import ProductBulkUploadMinimal from '../ProductBulkUploadMinimal';
+import BulkUpdateStockTenant from '../BulkUpdateStockTenant';
+import ProductBulkImageUpload from '../ProductBulkImageUpload';
 import {
   getAdminProducts, adminCreateProduct, adminUpdateProduct,
   adminDeleteProduct, adminBulkDeleteProducts, uploadProductImage, syncOdooProducts, syncStock,
+  pullOdooProducts,
   adminBulkUpdateCategory, adminBulkUpdateOdooCategory, adminBulkUpdateDescription,
-  getTaxConfig,
+  getTaxConfig, exportMasterDataExcel,
 } from '../../../api/admin';
 import { useAuth } from '../../../hooks/useAuth';
 import { getTenants } from '../../../api/tenants';
@@ -109,9 +113,9 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-gray-700">Tenant</label>
             <select
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={form.tenant_id}
-              disabled>
+              onChange={(e) => setForm((f) => ({ ...f, tenant_id: e.target.value }))}>
               {tenants.map((t) => (
                 <option key={t.tenant_id} value={t.tenant_id}>{t.tenant_name}</option>
               ))}
@@ -198,7 +202,10 @@ export default function MasterDataTab() {
   const { role } = useAuth();
   const { toasts, addToast, removeToast } = useToast();
   const { categories: odooCategories, isLoading: odooLoading, error: odooError } = useOdooProductCategories();
-  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [showBulkUpload, setShowBulkUpload]                       = useState(false);
+  const [showBulkUploadMinimal, setShowBulkUploadMinimal]         = useState(false);
+  const [showBulkUpdateStockTenant, setShowBulkUpdateStockTenant] = useState(false);
+  const [showBulkImageUpload, setShowBulkImageUpload]             = useState(false);
   const [products, setProducts]           = useState([]);
   const [tenants, setTenants]             = useState([]);
   const [categories, setCategories]       = useState([]);
@@ -229,7 +236,9 @@ export default function MasterDataTab() {
 
   const [qrModal, setQrModal]             = useState(null); // product for QR display
   const [holdingId, setHoldingId]         = useState(null); // productId being toggled
-  const [syncingToOdoo, setSyncingToOdoo] = useState(false);
+  const [syncingToOdoo, setSyncingToOdoo]     = useState(false);
+  const [pullingFromOdoo, setPullingFromOdoo] = useState(false);
+  const [exportingExcel, setExportingExcel]   = useState(false);
   const [bulkCatModal, setBulkCatModal]   = useState(false);
   const [bulkCatValue, setBulkCatValue]   = useState('');
   const [bulkCatSaving, setBulkCatSaving] = useState(false);
@@ -312,6 +321,24 @@ export default function MasterDataTab() {
     return <ProductBulkUpload onBack={() => { setShowBulkUpload(false); fetchProducts(); }} />;
   }
 
+  if (showBulkUploadMinimal) {
+    return <ProductBulkUploadMinimal
+      onBack={() => { setShowBulkUploadMinimal(false); fetchProducts(); }}
+      onGoToStockTenant={() => { setShowBulkUploadMinimal(false); setShowBulkUpdateStockTenant(true); }}
+    />;
+  }
+
+  if (showBulkImageUpload) {
+    return <ProductBulkImageUpload onBack={() => { setShowBulkImageUpload(false); fetchProducts(); }} />;
+  }
+
+  if (showBulkUpdateStockTenant) {
+    return <BulkUpdateStockTenant
+      onBack={() => setShowBulkUpdateStockTenant(false)}
+      onDone={() => fetchProducts()}
+    />;
+  }
+
   async function handleSyncToOdoo() {
     if (syncingToOdoo) return;
     setSyncingToOdoo(true);
@@ -336,6 +363,44 @@ export default function MasterDataTab() {
       addToast(err.response?.data?.message || err.message || 'Sync gagal.', 'error');
     } finally {
       setSyncingToOdoo(false);
+    }
+  }
+
+  async function handlePullFromOdoo() {
+    if (pullingFromOdoo) return;
+    setPullingFromOdoo(true);
+    try {
+      const res = (await pullOdooProducts()).data;
+      const s = res.stats ?? {};
+      const msg = `Pull Odoo: +${s.created ?? 0} baru, ${s.updated ?? 0} diperbarui, ${s.skipped ?? 0} skip`;
+      addToast(msg, (s.failed ?? 0) > 0 ? 'error' : 'success');
+      fetchProducts();
+    } catch (err) {
+      addToast(err.response?.data?.message || err.message || 'Pull dari Odoo gagal.', 'error');
+    } finally {
+      setPullingFromOdoo(false);
+    }
+  }
+
+  async function handleExportExcel() {
+    if (exportingExcel) return;
+    setExportingExcel(true);
+    try {
+      const res = await exportMasterDataExcel();
+      const url = URL.createObjectURL(new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }));
+      const today = new Date().toISOString().slice(0, 10);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `master-data-${today}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast('Export Excel berhasil diunduh.', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Export gagal.', 'error');
+    } finally {
+      setExportingExcel(false);
     }
   }
 
@@ -427,7 +492,6 @@ export default function MasterDataTab() {
   async function handleCreate(e) {
     e.preventDefault();
     setFormError('');
-    if (!form.odoo_categ_id) { setFormError('Kategori Odoo wajib dipilih.'); return; }
     setSaving(true);
     try {
       await adminCreateProduct({
@@ -455,7 +519,6 @@ export default function MasterDataTab() {
   async function handleEdit(e) {
     e.preventDefault();
     setFormError('');
-    if (!form.odoo_categ_id) { setFormError('Kategori Odoo wajib dipilih.'); return; }
     setSaving(true);
     try {
       await adminUpdateProduct(editModal.product_id, {
@@ -464,6 +527,7 @@ export default function MasterDataTab() {
         price:          parseFloat(form.price),
         stock_quantity: parseInt(form.stock_quantity, 10),
         barcode:        form.barcode,
+        tenant_id:      form.tenant_id,
         description:    form.description || null,
         image_url:      form.image_url   || null,
         categ_id:       form.odoo_categ_id,
@@ -625,6 +689,12 @@ export default function MasterDataTab() {
         <span className="text-base">📦</span>
         <h2 className="text-sm font-semibold flex-1">Daftar Produk</h2>
         {role === 'ADMIN' && (
+          <Button size="sm" onClick={handlePullFromOdoo} disabled={pullingFromOdoo}
+            className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+            {pullingFromOdoo ? '⟳ Pulling…' : '↓ Pull from Odoo'}
+          </Button>
+        )}
+        {role === 'ADMIN' && (
           <Button size="sm" onClick={handleSyncToOdoo} disabled={syncingToOdoo}
             className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
             {syncingToOdoo ? '⟳ Syncing…' : '↻ Sync to Odoo'}
@@ -648,9 +718,25 @@ export default function MasterDataTab() {
             Set Deskripsi
           </Button>
         )}
+        <Button size="sm" onClick={() => setShowBulkUploadMinimal(true)}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          ⚡ Upload Minimal
+        </Button>
         <Button size="sm" onClick={() => setShowBulkUpload(true)}
           className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
-          ⬆ Upload Massal
+          ⬆ Upload Lengkap
+        </Button>
+        <Button size="sm" onClick={() => setShowBulkImageUpload(true)}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          🖼 Upload Gambar
+        </Button>
+        <Button size="sm" onClick={() => setShowBulkUpdateStockTenant(true)}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          ↻ Update Stok & Tenant
+        </Button>
+        <Button size="sm" onClick={handleExportExcel} disabled={exportingExcel}
+          className="bg-white/20 hover:bg-white/30 text-white border-0 text-xs">
+          {exportingExcel ? '⟳ Exporting…' : '⬇ Export Excel'}
         </Button>
         <Button size="sm"
           onClick={() => window.open('/admin/print-products', '_blank')}

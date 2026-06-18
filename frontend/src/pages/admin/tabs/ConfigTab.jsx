@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getConfig, saveConfig, uploadLogo, getPrinterStatus, getUsers } from '../../../api/admin';
+import { getConfig, saveConfig, uploadLogo, getPrinterStatus, getUsers, getEmailConfig, saveEmailConfig, testEmailSend } from '../../../api/admin';
 import { bustPublicConfigCache } from '../../../hooks/useAppLogo';
 import Button from '../../../components/ui/Button';
 import Input from '../../../components/ui/Input';
@@ -46,6 +46,14 @@ export default function ConfigTab() {
   const [cashierTestStatus,  setCashierTestStatus]  = useState({});   // { [user_id]: { connected, address, message } | 'testing' }
   const [testingUserId,      setTestingUserId]       = useState(null);
 
+  // Email / SMTP config state
+  const [emailCfg,       setEmailCfg]       = useState({ smtpHost: '', smtpPort: '587', smtpUser: '', smtpPass: '', emailFrom: '', notifyTo: '' });
+  const [emailLoading,   setEmailLoading]   = useState(true);
+  const [emailSaving,    setEmailSaving]    = useState(false);
+  const [emailTestTo,    setEmailTestTo]    = useState('');
+  const [emailTesting,   setEmailTesting]   = useState(false);
+  const [emailTestResult,setEmailTestResult]= useState(null);
+
   useEffect(() => {
     Promise.all([
       getConfig(),
@@ -57,6 +65,11 @@ export default function ConfigTab() {
       })
       .catch(() => addToast('Gagal memuat konfigurasi.', 'error'))
       .finally(() => setLoading(false));
+
+    getEmailConfig()
+      .then((r) => setEmailCfg(r.data.data))
+      .catch(() => {})
+      .finally(() => setEmailLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function set(key, value) {
@@ -133,6 +146,35 @@ export default function ConfigTab() {
       }));
     } finally {
       setTestingUserId(null);
+    }
+  }
+
+  async function handleEmailSave(e) {
+    e.preventDefault();
+    setEmailSaving(true);
+    try {
+      const r = await saveEmailConfig(emailCfg);
+      setEmailCfg(r.data.data);
+      addToast('Konfigurasi email disimpan.', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal menyimpan konfigurasi email.', 'error');
+    } finally {
+      setEmailSaving(false);
+    }
+  }
+
+  async function handleEmailTest(e) {
+    e.preventDefault();
+    if (!emailTestTo.trim()) return;
+    setEmailTesting(true);
+    setEmailTestResult(null);
+    try {
+      await testEmailSend(emailTestTo.trim());
+      setEmailTestResult({ ok: true, msg: `Email tes berhasil dikirim ke ${emailTestTo.trim()}.` });
+    } catch (err) {
+      setEmailTestResult({ ok: false, msg: err.response?.data?.message ?? 'Gagal mengirim email tes.' });
+    } finally {
+      setEmailTesting(false);
     }
   }
 
@@ -617,6 +659,112 @@ export default function ConfigTab() {
                 </div>
               )}
             </div>
+          </section>
+
+          {/* ── Email / SMTP ─────────────────────────────────────────────── */}
+          <section>
+            <SectionHeader color="violet" icon="✉️" title="Email & Notifikasi" />
+            {emailLoading ? (
+              <div className="flex justify-center py-6"><Spinner /></div>
+            ) : (
+              <form onSubmit={handleEmailSave} className="space-y-4">
+                <div className="bg-white rounded-xl border p-4 space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Konfigurasi SMTP</p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <Input
+                        label="SMTP Host"
+                        placeholder="smtp.gmail.com"
+                        value={emailCfg.smtpHost}
+                        onChange={(e) => setEmailCfg((c) => ({ ...c, smtpHost: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        label="Port"
+                        type="number"
+                        placeholder="587"
+                        value={emailCfg.smtpPort}
+                        onChange={(e) => setEmailCfg((c) => ({ ...c, smtpPort: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <Input
+                    label="SMTP Username"
+                    type="email"
+                    placeholder="user@gmail.com"
+                    value={emailCfg.smtpUser}
+                    onChange={(e) => setEmailCfg((c) => ({ ...c, smtpUser: e.target.value }))}
+                  />
+                  <Input
+                    label="SMTP Password"
+                    type="password"
+                    placeholder={emailCfg.smtpPass === '***' ? '(tersimpan — kosongkan jika tidak ingin mengubah)' : 'Password / App Password'}
+                    value={emailCfg.smtpPass === '***' ? '' : emailCfg.smtpPass}
+                    onChange={(e) => setEmailCfg((c) => ({ ...c, smtpPass: e.target.value }))}
+                    autoComplete="new-password"
+                  />
+                </div>
+
+                <div className="bg-white rounded-xl border p-4 space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Alamat Email</p>
+                  <Input
+                    label="Email Pengirim (From)"
+                    type="email"
+                    placeholder="noreply@arenasosok.com"
+                    value={emailCfg.emailFrom}
+                    onChange={(e) => setEmailCfg((c) => ({ ...c, emailFrom: e.target.value }))}
+                  />
+                  <Input
+                    label="Email Notifikasi Admin (Notify To)"
+                    type="email"
+                    placeholder="admin@arenasosok.com"
+                    value={emailCfg.notifyTo}
+                    onChange={(e) => setEmailCfg((c) => ({ ...c, notifyTo: e.target.value }))}
+                    hint="Alamat email tujuan notifikasi login staff & kejadian penting."
+                  />
+                </div>
+
+                <Button type="submit" loading={emailSaving} className="bg-violet-600 hover:bg-violet-700 text-white w-full sm:w-auto px-6">
+                  💾 Simpan Konfigurasi Email
+                </Button>
+
+                {/* Test send */}
+                <div className="bg-white rounded-xl border p-4 space-y-3 mt-1">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Kirim Email Tes</p>
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <Input
+                        label="Kirim ke"
+                        type="email"
+                        placeholder="alamat@email.com"
+                        value={emailTestTo}
+                        onChange={(e) => { setEmailTestTo(e.target.value); setEmailTestResult(null); }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleEmailTest}
+                      disabled={emailTesting || !emailTestTo.trim()}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-violet-200 text-violet-700 text-sm hover:bg-violet-50 disabled:opacity-40 transition-colors mb-0.5"
+                    >
+                      {emailTesting
+                        ? <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/></svg> Mengirim…</>
+                        : <>📨 Kirim Tes</>}
+                    </button>
+                  </div>
+                  {emailTestResult && (
+                    <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 border
+                      ${emailTestResult.ok
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : 'bg-red-50 border-red-200 text-red-700'}`}>
+                      <span>{emailTestResult.ok ? '✅' : '❌'}</span>
+                      <span>{emailTestResult.msg}</span>
+                    </div>
+                  )}
+                </div>
+              </form>
+            )}
           </section>
 
           {/* ── System ───────────────────────────────────────────────────── */}

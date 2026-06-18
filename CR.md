@@ -1,5 +1,40 @@
 # Change Request Log
 
+## CR-064 — Hapus Toggle Register No. HP di Halaman Daftar Customer (2026-06-18)
+- **Date**: 2026-06-18
+- **Reporter**: Admin
+- **Severity**: Low
+- **Page**: `/daftar` — `RegisterPage.jsx`
+
+### Perubahan
+- Hapus toggle tab "Nomor HP / Email" dari halaman registrasi customer
+- Registrasi sekarang hanya via **Email** (email wajib, OTP dikirim ke email)
+- Nomor HP tetap ada sebagai field **opsional** (untuk notifikasi WA)
+- Hapus state `mode`, fungsi `handleModeSwitch`, logika kondisional phone/email mode
+- `validateForm` disederhanakan: hanya validasi email (required) dan phone (optional format)
+
+### Files Changed
+- `frontend/src/pages/customer/RegisterPage.jsx`
+
+---
+
+## CR-063 — Hapus Login by Phone di Halaman Masuk Customer (2026-06-18)
+- **Date**: 2026-06-18
+- **Reporter**: Admin
+- **Severity**: Low
+- **Page**: `/masuk` — `LoginCustomerPage.jsx`
+
+### Perubahan
+- Hapus toggle tab "Nomor HP / Email" dari halaman login customer
+- Login sekarang hanya via **Email** — langsung menampilkan input email
+- Setelah submit email → OTP dikirim ke email → step verifikasi OTP
+- Hapus state `mode`, fungsi `handleModeSwitch`, semua logika phone-mode dari komponen
+
+### Files Changed
+- `frontend/src/pages/customer/LoginCustomerPage.jsx`
+
+---
+
 ## CR-062 — Auto-fill Shipping Form dari Customer Lookup di Helper Order (2026-06-17)
 - **Date**: 2026-06-17
 - **Reporter**: Admin

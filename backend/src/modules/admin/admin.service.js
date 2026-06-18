@@ -191,7 +191,7 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
 }
 
 async function adminUpdateProduct(productId, data) {
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note'];
+  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'tenant_id', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note'];
   if (data.categ_id !== undefined) data = { ...data, odoo_categ_id: data.categ_id || null };
   if (data.categ_name !== undefined) data = { ...data, odoo_categ_name: data.categ_name || null };
   const fields = [];
@@ -331,7 +331,7 @@ async function adminListTenants({ search, includeInactive = true } = {}) {
   return result.rows;
 }
 
-async function adminCreateTenant({ tenant_name, booth_location, floor_label, contact_name, contact_phone, contact_email }) {
+async function adminCreateTenant({ tenant_name, booth_location, floor_label, contact_name, contact_phone, contact_email, odoo_booth_id }) {
   if (!tenant_name || !booth_location || !contact_name || !contact_phone) {
     throw new AppError('tenant_name, booth_location, contact_name, contact_phone wajib diisi.', 422);
   }
@@ -344,12 +344,20 @@ async function adminCreateTenant({ tenant_name, booth_location, floor_label, con
   }
   const tenant_id = `T${String(nextNum).padStart(3, '0')}`;
 
+  const boothId = odoo_booth_id ? parseInt(odoo_booth_id, 10) : null;
+
   const result = await query(
-    `INSERT INTO tenants (tenant_id, tenant_name, booth_location, floor_label, contact_name, contact_phone, contact_email)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [tenant_id, tenant_name, booth_location, floor_label || null, contact_name, contact_phone, contact_email || null]
+    `INSERT INTO tenants (tenant_id, tenant_name, booth_location, floor_label, contact_name, contact_phone, contact_email, odoo_booth_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [tenant_id, tenant_name, booth_location, floor_label || null, contact_name, contact_phone, contact_email || null, boothId]
   );
-  return result.rows[0];
+  const tenant = result.rows[0];
+
+  if (boothId) {
+    await _upsertTenantXref(tenant_id, boothId);
+  }
+
+  return tenant;
 }
 
 async function adminBulkUploadTenants(rows) {
@@ -392,14 +400,35 @@ async function adminBulkUploadTenants(rows) {
   return { created: inserted.length, tenants: inserted };
 }
 
+async function _upsertTenantXref(tenantId, odooBoothId) {
+  if (odooBoothId) {
+    await query(
+      `INSERT INTO integration_xref (entity_type, sos_id, odoo_id, sync_metadata, updated_at)
+       VALUES ('tenant', $1, $2, '{}', NOW())
+       ON CONFLICT (entity_type, sos_id) DO UPDATE
+         SET odoo_id = EXCLUDED.odoo_id, status = 'ACTIVE', updated_at = NOW()`,
+      [tenantId, odooBoothId]
+    );
+  } else {
+    await query(
+      `UPDATE integration_xref SET status = 'CANCELLED', updated_at = NOW()
+       WHERE entity_type = 'tenant' AND sos_id = $1`,
+      [tenantId]
+    );
+  }
+}
+
 async function adminUpdateTenant(tenantId, data) {
-  const allowed = ['tenant_name', 'booth_location', 'floor_label', 'contact_name', 'contact_phone', 'contact_email', 'is_active', 'order_mode'];
+  const allowed = ['tenant_name', 'booth_location', 'floor_label', 'contact_name', 'contact_phone', 'contact_email', 'is_active', 'order_mode', 'odoo_booth_id'];
   const fields = [];
   const params = [];
 
   for (const key of allowed) {
     if (data[key] !== undefined) {
-      params.push(data[key]);
+      const val = key === 'odoo_booth_id'
+        ? (data[key] ? parseInt(data[key], 10) : null)
+        : data[key];
+      params.push(val);
       fields.push(`${key} = $${params.length}`);
     }
   }
@@ -411,7 +440,13 @@ async function adminUpdateTenant(tenantId, data) {
     params
   );
   if (!result.rows[0]) throw new AppError('Tenant tidak ditemukan.', 404);
-  return result.rows[0];
+  const tenant = result.rows[0];
+
+  if (data.odoo_booth_id !== undefined) {
+    await _upsertTenantXref(tenantId, tenant.odoo_booth_id);
+  }
+
+  return tenant;
 }
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -1085,6 +1120,45 @@ async function listTransactions({ status, limit = 200 } = {}) {
   return result.rows;
 }
 
+// ── Email / SMTP Config ───────────────────────────────────────────────────────
+
+async function getEmailConfig(masked = true) {
+  const keys = ['email_smtp_host', 'email_smtp_port', 'email_smtp_user', 'email_smtp_pass', 'email_from', 'email_notify_to'];
+  const { rows } = await query('SELECT key, value FROM system_settings WHERE key = ANY($1)', [keys]);
+  const map = {};
+  rows.forEach((r) => { map[r.key] = r.value; });
+  return {
+    smtpHost:  map.email_smtp_host  || '',
+    smtpPort:  map.email_smtp_port  || '587',
+    smtpUser:  map.email_smtp_user  || '',
+    smtpPass:  masked ? (map.email_smtp_pass ? '***' : '') : (map.email_smtp_pass || ''),
+    emailFrom: map.email_from       || '',
+    notifyTo:  map.email_notify_to  || '',
+  };
+}
+
+async function saveEmailConfig(data) {
+  const current = await getEmailConfig(false);
+  const updates = {
+    email_smtp_host:  data.smtpHost  !== undefined ? String(data.smtpHost)                              : current.smtpHost,
+    email_smtp_port:  data.smtpPort  !== undefined ? String(parseInt(data.smtpPort, 10) || 587)         : current.smtpPort,
+    email_smtp_user:  data.smtpUser  !== undefined ? String(data.smtpUser)                              : current.smtpUser,
+    email_from:       data.emailFrom !== undefined ? String(data.emailFrom)                             : current.emailFrom,
+    email_notify_to:  data.notifyTo  !== undefined ? String(data.notifyTo)                              : current.notifyTo,
+  };
+  if (data.smtpPass && data.smtpPass !== '***') {
+    updates.email_smtp_pass = String(data.smtpPass);
+  }
+  for (const [key, value] of Object.entries(updates)) {
+    await query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, value],
+    );
+  }
+  return getEmailConfig(true);
+}
+
 // ── Data Health ───────────────────────────────────────────────────────────────
 
 async function getDataHealth() {
@@ -1133,6 +1207,8 @@ module.exports = {
   getTaxConfig, saveTaxConfig, getOdooTaxList,
   // WA Gateway config
   getWaGatewayConfig, saveWaGatewayConfig,
+  // Email / SMTP config
+  getEmailConfig, saveEmailConfig,
   // Data health
   getDataHealth,
 };

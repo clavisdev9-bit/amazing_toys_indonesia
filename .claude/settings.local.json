@@ -114,7 +114,22 @@
       "Bash(find \"C:\\\\Dev\\\\amazing_toys_odoo_online\" -type f -name \"*.jsx\" | head -5)",
       "Bash(grep -B 5 \"WHERE t.transaction_id = \\\\$1\" backend/src/modules/helper/helper.service.js)",
       "Bash(awk '/^async function getBoothOrder\\\\\\(transactionId, helperTenantId\\\\\\)/,/^async function/ {print NR\": \"$0}' backend/src/modules/helper/helper.service.js)",
-      "PowerShell($env:PGPASSWORD = \"localdev123\"; psql -h localhost -p 5432 -U postgres -d amazing_toys_sos -f \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\database\\\\reset_transactions.sql\")"
+      "PowerShell($env:PGPASSWORD = \"localdev123\"; psql -h localhost -p 5432 -U postgres -d amazing_toys_sos -f \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\database\\\\reset_transactions.sql\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(k,v\\) for k,v in d.get\\('dependencies',{}\\).items\\(\\)]\")",
+      "Bash(findstr /i \"xlsx exceljs\")",
+      "Bash(node -e \"require\\('exceljs'\\); console.log\\('ok'\\)\")",
+      "Read(//c/Users/arist/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/605749a9-85b7-40e2-b061-75506500d06e/46749590-c3c9-4e21-9c2a-b01ae7daaa68/skills/xlsx/**)",
+      "Bash(python -)",
+      "Bash(python -c \"import pandas as pd; df = pd.read_excel\\(r'C:\\\\Users\\\\arist\\\\Downloads\\\\upload.xlsx', dtype=str\\); print\\('Columns:', df.columns.tolist\\(\\)\\); print\\('Shape:', df.shape\\); print\\(df.head\\(5\\).to_string\\(\\)\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\([k for k in d.get\\('dependencies',{}\\) if 'zip' in k.lower\\(\\) or 'multer' in k.lower\\(\\) or 'csv' in k.lower\\(\\)]\\)\")",
+      "PowerShell($pkg = Get-Content \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\package.json\" | ConvertFrom-Json; $pkg.dependencies.PSObject.Properties | Where-Object { $_.Name -match 'zip|multer|csv|unzip|stream' } | Select-Object Name, Value)",
+      "PowerShell($pkg = Get-Content \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\package.json\" | ConvertFrom-Json; $pkg.dependencies.PSObject.Properties | Select-Object Name, Value)",
+      "Bash(node -e \"require\\('./src/modules/admin/bulkImageUpload.controller'\\)\")",
+      "Bash(node scripts/generate-sample-image-zip.js)",
+      "Bash(ls \"C:\\\\Users\\\\arist\\\\Downloads\\\\\" | grep -i mapping)",
+      "Bash(grep -r odoo_categ_name 'C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\migrations\" 2>/dev/null | head -5 *)",
+      "Bash(node -e \"require\\('./src/modules/admin/bulkUpload.controller'\\)\")",
+      "Bash(node -e \"require\\('./src/modules/admin/bulkUploadMinimal.controller'\\)\")"
     ]
   }
 }
