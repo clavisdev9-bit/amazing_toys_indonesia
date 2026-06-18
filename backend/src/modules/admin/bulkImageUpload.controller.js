@@ -26,7 +26,7 @@ const { parse: csvParse } = require('@fast-csv/parse');
 const sharp    = require('sharp');
 const { query } = require('../../config/database');
 
-const UPLOADS_DIR    = path.join(__dirname, '../../../../public/uploads/products');
+const UPLOADS_DIR    = path.join(__dirname, '../../../public/uploads/products');
 const ALLOWED_EXT    = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const MAX_IMG_BYTES  = 5 * 1024 * 1024; // 5 MB per image after processing
 const MAX_ZIP_BYTES  = 100 * 1024 * 1024; // 100 MB zip

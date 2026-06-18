@@ -88,6 +88,11 @@ const ItemRow = memo(function ItemRow({ txnId, item, onItemUpdated, onError }) {
   const isApproved = status === 'APPROVED';
   const isRejected = status === 'REJECTED';
 
+  // Hide immediately once processed — backend only returns PENDING items anyway;
+  // this prevents stale local-state from showing REJECTED/APPROVED items
+  // while the next server refresh is in-flight.
+  if (!isPending) return null;
+
   const effectiveQty = isApproved && item.approved_quantity != null
     ? item.approved_quantity
     : item.quantity;

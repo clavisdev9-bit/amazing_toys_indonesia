@@ -1,5 +1,112 @@
 # Resolution Log
 
+## BUG-087 — Login Page: Label Email Tampil Sebagai Key (login.email*) dan Placeholder Salah (2026-06-18)
+
+**Page:** `/masuk` — form login email customer
+**Reporter:** User — label input email menampilkan `login.email*` alih-alih "Login Email"; placeholder menampilkan `login.emailPh`
+
+### Root Cause
+
+`t()` function di `LangContext` mengembalikan **key** sebagai fallback jika kunci tidak ditemukan di dictionary. Key `login.email` dan `login.emailPh` belum ditambahkan ke `T.ID`, `T.EN`, dan `T.ZH`. Karena `t('login.email')` mengembalikan string `'login.email'` (truthy), fallback `|| 'Email'` tidak pernah dipakai.
+
+### Fix
+
+- `frontend/src/context/LangContext.jsx` — Tambah `'login.email': 'Login Email'` ke semua 3 bahasa (ID, EN, ZH).
+- `frontend/src/pages/customer/LoginCustomerPage.jsx` — Hapus prop `placeholder` dari email Input (tidak diperlukan).
+
+---
+
+## BUG-086 — Kasir: Item REJECTED Masih Tampil di Customer Active Transaction (2026-06-18)
+
+**Page:** Role Kasir — PaymentPage, getCustomerActiveTrx lookup
+**Reporter:** User — kasir mencari transaksi aktif customer, transaksi dengan partial approval (1 APPROVED + 1 REJECTED) menampilkan 2 item padahal harusnya 1
+
+### Root Cause
+
+`getCustomerActiveTrx()` di `cashier.service.js` melakukan `json_agg` items **tanpa filter** `approval_status`. Sehingga item REJECTED ikut dimasukkan ke array `items`. Lebih buruk lagi, `json_build_object` tidak menyertakan field `approval_status`, sehingga filter frontend `item.approval_status !== 'REJECTED'` tidak efektif (field-nya selalu `undefined`).
+
+```sql
+-- Before (buggy): semua item termasuk REJECTED
+JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+WHERE t.status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')
+
+-- After (fixed): exclude item REJECTED di SQL level
+WHERE t.status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')
+  AND ti.approval_status != 'REJECTED'
+```
+
+**File:** `backend/src/modules/cashier/cashier.service.js` — fungsi `getCustomerActiveTrx()`
+
+### Pencegahan
+
+Setiap query yang meng-aggregate items untuk ditampilkan ke user WAJIB filter `approval_status != 'REJECTED'`. Frontend filter tidak cukup jika field tidak tersedia di data.
+
+---
+
+## BUG-085 — Role Helper: Item REJECTED Masih Tampil di Approval Queue (2026-06-18)
+
+**Page:** Role Helper — Antrian Approval (tab "Menunggu" / ApprovalQueueTab)
+**Reporter:** User — TXN-20260618-00026: 1 item APPROVED + 1 item REJECTED, tapi 2 item tampil di approval queue card (seharusnya hanya item PENDING yang tampil)
+
+### Root Cause
+
+Dua root cause berbeda, symptom sama (item REJECTED terlihat bersama item yang valid):
+
+1. **BUG-082 (sudah diperbaiki)** — `getBoothOrder()` backend tidak filter REJECTED di handover view.
+2. **BUG-085 (bug ini)** — `ItemRow` di `ApprovalQueueTab.jsx` (frontend) menyimpan **local state** `status` yang diupdate ke `'REJECTED'` atau `'APPROVED'` setelah aksi helper, namun komponen **tetap di-render** sampai server refresh berikutnya. Selama jeda network (antara aksi item dan respons `fetchQueue`), item REJECTED masih terlihat di UI bersama item PENDING — menyebabkan helper melihat "2 item" padahal harusnya 1.
+
+Backend `getApprovalQueue()` sudah benar — hanya mengembalikan item `PENDING`. Masalah sepenuhnya di frontend local state.
+
+### Fix
+
+`frontend/src/components/helper/ApprovalQueueTab.jsx` — fungsi `ItemRow`:
+
+```jsx
+// Before: item REJECTED/APPROVED masih di-render dengan styling berbeda
+// After: item langsung disembunyikan begitu bukan PENDING lagi
+if (!isPending) return null;
+```
+
+Setelah aksi approve/reject, `ItemRow` langsung return `null` tanpa menunggu server refresh. Server refresh (`fetchQueue(true)`) tetap dipanggil via `onItemUpdated` untuk sinkronisasi state.
+
+### Pencegahan
+
+- Approval queue hanya boleh menampilkan item yang **masih PENDING** — item yang sudah diproses (approved/rejected) tidak perlu terlihat lagi.
+- Backend sudah benar (filter PENDING di query). Frontend harus konsisten: jangan render item non-PENDING dari local state.
+
+---
+
+## BUG-084 — Gambar Produk (Bulk Image Upload) Tidak Muncul Setelah Upload (2026-06-18)
+
+**Page:** `/admin?tab=master-data` — bulk image upload via ZIP
+**Reporter:** User — gambar berhasil diupload tapi tidak muncul (contoh: P40992-T001 `image_url = /uploads/products/1781768103609-P40992T001.webp`)
+
+### Root Cause
+
+`UPLOADS_DIR` di `bulkImageUpload.controller.js` menggunakan `../../../../public/uploads/products` (4 level up), tapi file tersebut ada di `/app/src/modules/admin/`, sehingga path resolves ke `/public/uploads/products` — **di luar volume Docker yang persisten**.
+
+Volume Docker (`hybrid_uploads_data`) hanya di-mount ke `/app/public/uploads`. File yang disimpan di `/public/uploads/products/` akan hilang setiap kali container di-rebuild.
+
+```js
+// Before (salah — resolves ke /public/uploads/products):
+const UPLOADS_DIR = path.join(__dirname, '../../../../public/uploads/products');
+
+// After (benar — resolves ke /app/public/uploads/products):
+const UPLOADS_DIR = path.join(__dirname, '../../../public/uploads/products');
+```
+
+**File:** `backend/src/modules/admin/bulkImageUpload.controller.js`
+
+### Impact
+
+File upload "berhasil" (tidak ada error), URL tersimpan di DB, tapi file fisiknya tidak ada karena disimpan ke path yang tidak di-mount → gambar tidak muncul dan hilang setelah restart.
+
+### Aksi yang Diperlukan
+
+Image yang sudah diupload sebelum fix (termasuk P40992-T001) perlu diupload ulang.
+
+---
+
 ## BUG-083 — Admin Master-Data: Buat/Edit Produk Selalu Gagal "Kategori Odoo wajib dipilih" (2026-06-18)
 
 **Page:** `/admin?tab=master-data` — form Buat Produk & Edit Produk

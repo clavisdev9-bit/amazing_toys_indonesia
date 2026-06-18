@@ -132,9 +132,8 @@ export default function LoginCustomerPage() {
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-3">
             <Input
-              label={t('login.email') || 'Email'}
+              label={t('login.email')}
               type="email"
-              placeholder={t('login.emailPh') || 'contoh@email.com'}
               value={value}
               onChange={(e) => { setValue(e.target.value); if (error) setError(''); }}
               required

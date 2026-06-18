@@ -33,23 +33,27 @@ async function initializeScheduledJobs(getConfigFn) {
     schedulerService.removeJob(txnExpireJob.JOB_NAME);
     schedulerService.removeJob(txnNotifJob.JOB_NAME);
 
-    schedulerService.registerJob(
-      productSyncJob.JOB_NAME,
-      prodMins,
-      () => productSyncJob.execute({
-        triggeredBy:    'scheduler',
-        configSnapshot: { interval_minutes: prodMins },
-      }),
-    );
-
-    schedulerService.registerJob(
-      stockSyncJob.JOB_NAME,
-      stockMins,
-      () => stockSyncJob.execute({
-        triggeredBy:    'scheduler',
-        configSnapshot: { interval_minutes: stockMins },
-      }),
-    );
+    // Odoo auto-sync dinonaktifkan — gunakan tombol manual di Admin › Master Data
+    // untuk Sync to Odoo / Pull from Odoo / Sync Stock.
+    // Aktifkan kembali dengan uncomment blok di bawah ini jika diperlukan.
+    //
+    // schedulerService.registerJob(
+    //   productSyncJob.JOB_NAME,
+    //   prodMins,
+    //   () => productSyncJob.execute({
+    //     triggeredBy:    'scheduler',
+    //     configSnapshot: { interval_minutes: prodMins },
+    //   }),
+    // );
+    //
+    // schedulerService.registerJob(
+    //   stockSyncJob.JOB_NAME,
+    //   stockMins,
+    //   () => stockSyncJob.execute({
+    //     triggeredBy:    'scheduler',
+    //     configSnapshot: { interval_minutes: stockMins },
+    //   }),
+    // );
 
     // CR-041 GAP 3b: expire stale PENDING orders every 5 minutes
     schedulerService.registerJob(
@@ -65,20 +69,7 @@ async function initializeScheduledJobs(getConfigFn) {
       () => txnNotifJob.execute(),
     );
 
-    // CP-1 — confirm odoo.stock.sync is in the registry after registration
-    const registered = schedulerService.listJobs().find(j => j.name === stockSyncJob.JOB_NAME);
-    if (registered) {
-      logger.info(
-        `[SYNC-TRACE][CP-1] PASS | ${stockSyncJob.JOB_NAME} registered — ` +
-        `interval=${registered.intervalMinutes}m typeof=${typeof registered.intervalMinutes}`
-      );
-    } else {
-      logger.error(`[SYNC-TRACE][CP-1] FAIL | ${stockSyncJob.JOB_NAME} not found in registry after registerJob()`);
-    }
-
-    logger.info(
-      `[Scheduler] initialized — ProductSync every ${prodMins}m, StockSync every ${stockMins}m`
-    );
+    logger.info('[Scheduler] initialized — Odoo auto-sync DISABLED (manual only).');
   } catch (err) {
     // Non-fatal: app still starts; admin can fix config and call re-init via API.
     logger.error('[Scheduler] initializeScheduledJobs failed', {

@@ -269,6 +269,7 @@ async function getCustomerActiveTrx({ phone, name }) {
      JOIN tenants ten ON ten.tenant_id = ti.tenant_id
      WHERE t.status IN ('RESERVED', 'WAITING_PAYMENT', 'PENDING')
        AND t.group_id IS NULL
+       AND ti.approval_status != 'REJECTED'
        AND (${whereClause})
      GROUP BY t.transaction_id, c.customer_id, c.full_name, c.phone_number
      ORDER BY t.created_at ASC`,
