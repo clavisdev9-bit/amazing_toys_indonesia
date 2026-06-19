@@ -152,8 +152,7 @@ async function createOrder(customerId, items, voucherCode = null) {
     }
 
     // 3. Calculate totals
-    const taxCfg         = await _getTaxSettings();
-    const TAX_RATE       = taxCfg.active ? taxCfg.rate : 0;
+    const TAX_RATE       = 0;
     const subtotalAmount = items.reduce((sum, item) => {
       return sum + (productMap[item.product_id].price * item.quantity);
     }, 0);
@@ -176,9 +175,8 @@ async function createOrder(customerId, items, voucherCode = null) {
       discountAmount = vResult.discount_amount;
     }
 
-    const taxableAmount = subtotalAmount - discountAmount;
-    const taxAmount     = Math.round(taxableAmount * TAX_RATE / 100);
-    const totalAmount   = taxableAmount + taxAmount;
+    const taxAmount   = 0;
+    const totalAmount = subtotalAmount - discountAmount;
 
     // 4. Generate TXN ID
     const transactionId = await generateTxnId();
@@ -457,19 +455,14 @@ async function updateItemQuantity(transactionId, customerId, productId, newQty) 
       [newQty, item.unit_price * newQty, transactionId, productId]
     );
 
-    // Recalculate transaction total — keep original tax_rate from the order
+    // Recalculate transaction total
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS subtotal, tax_rate
-       FROM transaction_items ti
-       JOIN transactions t ON t.transaction_id = ti.transaction_id
-       WHERE ti.transaction_id = $1
-       GROUP BY t.tax_rate`,
+      `SELECT SUM(subtotal) AS subtotal FROM transaction_items WHERE transaction_id = $1`,
       [transactionId]
     );
     const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
-    const txnTaxRate   = parseFloat(totalResult.rows[0].tax_rate ?? 12);
-    const newTaxAmount = Math.round(newSubtotal * txnTaxRate / 100);
-    const newTotal     = newSubtotal + newTaxAmount;
+    const newTaxAmount = 0;
+    const newTotal     = newSubtotal;
     await client.query(
       `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
        WHERE transaction_id = $4`,
@@ -552,17 +545,12 @@ async function removeOrderItem(transactionId, customerId, productId) {
 
     // Recalculate transaction total
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS subtotal, tax_rate
-       FROM transaction_items ti
-       JOIN transactions t ON t.transaction_id = ti.transaction_id
-       WHERE ti.transaction_id = $1
-       GROUP BY t.tax_rate`,
+      `SELECT SUM(subtotal) AS subtotal FROM transaction_items WHERE transaction_id = $1`,
       [transactionId]
     );
     const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
-    const txnTaxRate   = parseFloat(totalResult.rows[0].tax_rate ?? 12);
-    const newTaxAmount = Math.round(newSubtotal * txnTaxRate / 100);
-    const newTotal     = newSubtotal + newTaxAmount;
+    const newTaxAmount = 0;
+    const newTotal     = newSubtotal;
     await client.query(
       `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
        WHERE transaction_id = $4`,
@@ -638,9 +626,8 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
       }
     }
 
-    // 3. Calculate totals — PPN dihitung pada (subtotal - diskon)
-    const taxCfg         = await _getTaxSettings();
-    const TAX_RATE       = taxCfg.active ? taxCfg.rate : 0;
+    // 3. Calculate totals
+    const TAX_RATE       = 0;
     const subtotalAmount = items.reduce((sum, item) => sum + productMap[item.product_id].price * item.quantity, 0);
 
     let discountAmount = 0;
@@ -661,9 +648,8 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
       discountAmount = vResult.discount_amount;
     }
 
-    const taxableAmount = subtotalAmount - discountAmount;
-    const taxAmount     = Math.round(taxableAmount * TAX_RATE / 100);
-    const totalAmount   = taxableAmount + taxAmount;
+    const taxAmount   = 0;
+    const totalAmount = subtotalAmount - discountAmount;
 
     // 4. Generate IDs
     const transactionId = await generateTxnId();
@@ -792,17 +778,12 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
 
     // Recalculate totals
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS subtotal, t.tax_rate
-       FROM transaction_items ti
-       JOIN transactions t ON t.transaction_id = ti.transaction_id
-       WHERE ti.transaction_id = $1
-       GROUP BY t.tax_rate`,
+      `SELECT SUM(subtotal) AS subtotal FROM transaction_items WHERE transaction_id = $1`,
       [transactionId]
     );
     const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
-    const taxRate      = parseFloat(totalResult.rows[0].tax_rate ?? 12);
-    const newTaxAmount = Math.round(newSubtotal * taxRate / 100);
-    const newTotal     = newSubtotal + newTaxAmount;
+    const newTaxAmount = 0;
+    const newTotal     = newSubtotal;
 
     await client.query(
       `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3 WHERE transaction_id = $4`,
@@ -865,10 +846,8 @@ async function applyVoucherToTransaction(transactionId, cashierId, voucherCode) 
     const discountAmount = vResult.discount_amount;
 
     // 4. Recalculate totals
-    const taxRate      = parseFloat(txn.tax_rate) || 0;
-    const taxableAmt   = cartTotal - discountAmount;
-    const taxAmount    = Math.round(taxableAmt * taxRate / 100);
-    const totalAmount  = taxableAmt + taxAmount;
+    const taxAmount   = 0;
+    const totalAmount = cartTotal - discountAmount;
 
     // 5. Persist voucher on transaction
     await client.query(
@@ -949,9 +928,8 @@ async function partialProcessOrder(transactionId, customerId) {
     }
 
     const subtotalAmount = approvedItems.reduce((sum, i) => sum + parseFloat(i.subtotal), 0);
-    const taxRate        = parseFloat(txn.tax_rate) || 0;
-    const taxAmount      = Math.round(subtotalAmount * taxRate / 100);
-    const totalAmount    = subtotalAmount + taxAmount;
+    const taxAmount      = 0;
+    const totalAmount    = subtotalAmount;
     const expiresAt      = new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
 
     await client.query(

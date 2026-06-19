@@ -5,11 +5,10 @@ import { useLang } from '../../context/LangContext';
 
 export default function StockApprovalModal({ approvedItems, waitingItems, onConfirm, onCancel }) {
   const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
   const { t }   = useLang();
 
   function itemTotal(item) {
-    return Math.round(item.price * item.quantity * (1 + ppnRate / 100));
+    return Math.round(item.price * item.quantity);
   }
 
   const approvedTotal = approvedItems.reduce((s, i) => s + itemTotal(i), 0);

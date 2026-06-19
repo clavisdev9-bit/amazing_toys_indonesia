@@ -226,7 +226,7 @@ async function processPayment({ transactionId, paymentMethod, cashReceived, paym
       transactionId,
       status: 'PAID',
       subtotalAmount:  parseFloat(txn.subtotal_amount ?? txn.total_amount),
-      taxRate:         parseFloat(txn.tax_rate ?? 12),
+      taxRate:         parseFloat(txn.tax_rate ?? 0),
       taxAmount:       parseFloat(txn.tax_amount ?? 0),
       totalAmount:     parseFloat(txn.total_amount),
       paidAt,

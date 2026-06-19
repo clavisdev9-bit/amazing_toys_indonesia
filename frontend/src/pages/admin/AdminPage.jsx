@@ -8,7 +8,6 @@ import BoothTab       from './tabs/BoothTab';
 import AuditLogTab    from './tabs/AuditLogTab';
 import ConfigTab      from './tabs/ConfigTab';
 import IntegrationTab from './tabs/IntegrationTab';
-import TaxTab         from './tabs/TaxTab';
 import VoucherTab     from './tabs/VoucherTab';
 import WaGatewayTab    from './tabs/WaGatewayTab';
 import DataHealthTab   from './tabs/DataHealthTab';
@@ -21,7 +20,6 @@ const TABS = [
   { key: 'voucher',     label: 'Voucher',      icon: '🏷️', active: 'bg-pink-600 text-white shadow',   desc: 'Buat & kelola kode diskon event' },
   { key: 'audit-log',   label: 'Audit Log',    icon: '📋', active: 'bg-slate-600 text-white shadow',  desc: 'Monitor aktivitas' },
   { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
-  { key: 'tax',         label: 'Pajak & SPT',  icon: '🧮', active: 'bg-orange-500 text-white shadow',  desc: 'Konfigurasi PPN, Tax Grid SPT Masa, dan mapping akun Odoo' },
   { key: 'wa-gateway',  label: 'WA API',        icon: '📲', active: 'bg-green-600 text-white shadow',   desc: 'Konfigurasi WA Gateway (WAHA / Wablas / Zenziva / Twilio) untuk pengiriman QR order via WhatsApp' },
   { key: 'data-health', label: 'Data Health',   icon: '🩺', active: 'bg-rose-600 text-white shadow',    desc: 'Pantau kelengkapan & kesehatan data sistem' },
 ];
@@ -101,7 +99,6 @@ export default function AdminPage() {
         {tab === 'voucher'     && <VoucherTab />}
         {tab === 'audit-log'   && <AuditLogTab />}
         {tab === 'integration' && <IntegrationTab />}
-        {tab === 'tax'         && <TaxTab />}
         {tab === 'wa-gateway'  && <WaGatewayTab />}
         {tab === 'data-health' && <DataHealthTab />}
       </ErrorBoundary>

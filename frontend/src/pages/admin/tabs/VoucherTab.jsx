@@ -505,7 +505,7 @@ export default function VoucherTab() {
               <span className="text-green-600 font-bold mt-0.5 shrink-0">✓</span>
               <div>
                 <p className="font-medium text-gray-700">Kalkulasi Pajak</p>
-                <p className="text-xs text-gray-400">PPN dihitung dari (Subtotal − Diskon). Total bayar = harga setelah diskon + PPN atas harga diskon.</p>
+                <p className="text-xs text-gray-400">Total bayar = Subtotal − Diskon.</p>
               </div>
             </div>
             <div className="flex items-start gap-2">

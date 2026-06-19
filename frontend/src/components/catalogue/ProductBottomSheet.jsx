@@ -12,7 +12,6 @@ export default function ProductBottomSheet({ product, onClose }) {
   const [visible, setVisible] = useState(false);
   const [imgError, setImgError] = useState(false);
   const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setVisible(true));
@@ -69,7 +68,7 @@ export default function ProductBottomSheet({ product, onClose }) {
             </span>
           </div>
 
-          <p className="text-sm text-gray-400 mb-4">{formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}</p>
+          <p className="text-sm text-gray-400 mb-4">{formatPrice(product.price)}</p>
 
           <p className="text-xs font-medium text-gray-500 mb-2">
             Kategori {product.category} · Available at

@@ -297,13 +297,6 @@ async function _doPushOrder(transactionId) {
       name:            item.product_name,
       discount:        lineDiscount,
     };
-    // Apply configured tax on the order line. The exact field name is detected at
-    // startup via fields_get (taxLineFieldName) — standard is 'tax_id' but varies
-    // across Odoo versions. If Odoo rejects it on create, RC-17 removes it and retries;
-    // Step 1.5 then re-applies via a separate write() call on the created draft lines.
-    if (cache.defaultTaxId && cache.taxLineFieldName) {
-      lineVals[cache.taxLineFieldName] = [[6, 0, [cache.defaultTaxId]]];
-    }
     lines.push([0, 0, lineVals]);
   }
 

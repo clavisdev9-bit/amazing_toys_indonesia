@@ -82,7 +82,6 @@ import VoucherReportPage from './pages/leader/VoucherReportPage';
 import TopProductsPage from './pages/leader/TopProductsPage';
 import ConversionPage from './pages/leader/ConversionPage';
 import HelperPerformancePage from './pages/leader/HelperPerformancePage';
-import TaxReportPage from './pages/leader/TaxReportPage';
 import TopCustomersPage from './pages/leader/TopCustomersPage';
 
 const CASHIER_NAV = [
@@ -115,7 +114,6 @@ const LEADER_NAV = [
   { to: '/leader/top-customer', icon: '👑', label: 'Top Customer' },
   { to: '/leader/konversi', icon: '📊', label: 'Konversi' },
   { to: '/leader/kinerja-helper', icon: '🙋', label: 'Kinerja Helper' },
-  { to: '/leader/pajak', icon: '🧾', label: 'Laporan Pajak' },
   { to: '/leader/pengunjung', icon: '👥', label: 'Pengunjung' },
   { to: '/leader/retur', icon: '↩️', label: 'Retur' },
   { to: '/leader/hapus-approval', icon: '🗑️', label: 'Hapus Approval' },
@@ -273,7 +271,6 @@ function AppRoutes() {
               <Route path="/leader/top-customer" element={<TopCustomersPage />} />
               <Route path="/leader/konversi" element={<ConversionPage />} />
               <Route path="/leader/kinerja-helper" element={<HelperPerformancePage />} />
-              <Route path="/leader/pajak" element={<TaxReportPage />} />
               <Route path="/leader/pengunjung" element={<VisitorStatsPage />} />
               <Route path="/leader/retur" element={<ReturnsPage />} />
               <Route path="/leader/hapus-approval" element={<LeaderDeleteApprovalPage />} />

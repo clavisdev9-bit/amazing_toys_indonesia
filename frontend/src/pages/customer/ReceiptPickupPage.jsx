@@ -121,12 +121,10 @@ export default function ReceiptPickupPage() {
             </div>
             <div className="divide-y">
               {order.items.filter(i => i.approval_status !== 'REJECTED').map((item, idx) => {
-                const taxRate = parseFloat(order.tax_rate ?? 0);
-                const priceIncTax = Math.round(item.subtotal * (1 + taxRate / 100));
                 return (
                   <div key={idx} className="flex justify-between items-center px-4 py-2.5 text-sm">
                     <span className="text-gray-700">{item.product_name} ×{item.approved_quantity ?? item.quantity}</span>
-                    <span className="text-gray-700">{formatRupiah(priceIncTax)}</span>
+                    <span className="text-gray-700">{formatRupiah(item.subtotal)}</span>
                   </div>
                 );
               })}

@@ -451,15 +451,12 @@ export default function PaymentPage() {
                   })}
                 </div>
                 {(() => {
-                  const subtotal     = parseFloat(txn.subtotal_amount ?? 0);
-                  const taxAmt       = parseFloat(txn.tax_amount ?? 0);
-                  const taxRate      = parseFloat(txn.tax_rate ?? 12);
-                  const discountAmt  = parseFloat(txn.discount_amount ?? 0);
-                  const hasTax       = taxAmt > 0;
-                  const hasDiscount  = discountAmt > 0;
+                  const subtotal    = parseFloat(txn.subtotal_amount ?? 0);
+                  const discountAmt = parseFloat(txn.discount_amount ?? 0);
+                  const hasDiscount = discountAmt > 0;
                   return (
                     <div className="border-t pt-2 mt-2 space-y-1 text-sm">
-                      {(hasTax || hasDiscount) && (
+                      {hasDiscount && (
                         <div className="flex justify-between text-gray-500">
                           <span>{t('cart.subtotal')}</span>
                           <span>{formatRupiah(subtotal)}</span>
@@ -469,12 +466,6 @@ export default function PaymentPage() {
                         <div className="flex justify-between text-green-600">
                           <span>{t('cart.discount')} ({txn.voucher_code})</span>
                           <span>-{formatRupiah(discountAmt)}</span>
-                        </div>
-                      )}
-                      {hasTax && (
-                        <div className="flex justify-between text-gray-500">
-                          <span>{t('cart.taxLine', { rate: taxRate })}</span>
-                          <span>{formatRupiah(taxAmt)}</span>
                         </div>
                       )}
                       <div className="flex justify-between font-bold">

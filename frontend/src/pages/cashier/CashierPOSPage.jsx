@@ -582,7 +582,6 @@ export default function CashierPOSPage() {
                 <span className="text-sm font-bold text-green-600">-{formatRupiah(discount)}</span>
               </div>
             )}
-            <p className="text-[10px] text-gray-400">+ PPN dihitung saat proses pembayaran</p>
 
             {/* Voucher input */}
             {cart.length > 0 && (

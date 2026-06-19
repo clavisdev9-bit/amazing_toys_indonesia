@@ -54,7 +54,6 @@ export default function MockProductDetailPage() {
   const { t } = useLang();
   const { isWished, toggleWish } = useWishlist();
   const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [imgError, setImgError] = useState(false);
@@ -224,7 +223,7 @@ export default function MockProductDetailPage() {
         {/* Price */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           <span style={{ fontSize: 24, fontWeight: 800, color: '#6366F1' }}>
-            {formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}
+            {formatPrice(product.price)}
           </span>
         </div>
 

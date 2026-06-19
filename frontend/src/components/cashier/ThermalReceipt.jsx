@@ -167,7 +167,6 @@ export default function ThermalReceipt({
   const paymentMethod = success?.paymentMethod;
   const cashChange    = success?.cashChange ?? null;
   const items         = txn?.items ?? [];
-  const taxRate       = parseFloat(txn?.tax_rate ?? 0);
   const isPreorder    = (txn?.order_type ?? success?.orderType) === 'PREORDER';
 
   const tenantMap = new Map();
@@ -243,7 +242,7 @@ export default function ThermalReceipt({
         <div key={i} style={S.itemWrap}>
           <div style={S.itemTop}>
             <span style={S.itemName}>{item.product_name}</span>
-            <span style={S.itemPrice}>{formatRupiah(Math.round(item.subtotal * (1 + taxRate / 100)))}</span>
+            <span style={S.itemPrice}>{formatRupiah(item.subtotal)}</span>
           </div>
           <div style={S.itemSub}>
             {[item.tenant_name, item.booth_location, `x${item.approved_quantity ?? item.quantity}`]

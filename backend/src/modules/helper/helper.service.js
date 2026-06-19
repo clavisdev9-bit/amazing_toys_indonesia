@@ -151,11 +151,10 @@ async function createHelperOrder({
     }
 
     // 5. Calculate totals
-    const taxCfg      = await _getTaxSettings();
-    const TAX_RATE    = taxCfg.active ? taxCfg.rate : 0;
+    const TAX_RATE    = 0;
     const subtotal    = items.reduce((s, i) => s + productMap[i.product_id].price * i.qty, 0);
-    const taxAmount   = Math.round(subtotal * TAX_RATE / 100);
-    const totalAmount = subtotal + taxAmount;
+    const taxAmount   = 0;
+    const totalAmount = subtotal;
 
     // 6. CR-036: Resolve customerId + effective phone/email.
     //    Step A — reverse-lookup by phone atau email untuk temukan registered customer.
@@ -1229,14 +1228,8 @@ async function _resolveAfterItemAction(client, transactionId, helperTenantId, he
   );
   const newSubtotal = parseFloat(totalsRes.rows[0].new_subtotal) || 0;
 
-  // Re-read tax rate from transaction
-  const taxRes = await client.query(
-    `SELECT tax_rate FROM transactions WHERE transaction_id = $1`,
-    [transactionId],
-  );
-  const taxRate = parseFloat(taxRes.rows[0]?.tax_rate) || 0;
-  const newTaxAmount = Math.round(newSubtotal * taxRate / 100);
-  const newTotal = newSubtotal + newTaxAmount;
+  const newTaxAmount = 0;
+  const newTotal = newSubtotal;
 
   const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutesCR040() * 60 * 1000);
 

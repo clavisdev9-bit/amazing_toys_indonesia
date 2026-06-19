@@ -84,7 +84,7 @@ function ProductAvailableToast({ product, onMoveToCart, onDismiss }) {
 }
 
 // ── Saved-for-later item row ────────────────────────────────────────────────
-function SavedForLaterRow({ item, onMoveToCart, onRemove, ppnRate, isAvailable, t }) {
+function SavedForLaterRow({ item, onMoveToCart, onRemove, isAvailable, t }) {
   return (
     <div
       className="px-4 py-3 flex gap-3 relative"
@@ -167,7 +167,6 @@ export default function CartPage() {
   const { t }          = useLang();
 
   const config           = usePublicConfig();
-  const ppnRate          = parseFloat(config?.ppn_rate) || 0;
   const maxItemsPerOrder = parseInt(config?.max_items_per_order, 10) || 20;
   const orderMode        = config?.order_mode ?? 'HELPER_INPUT';
   const isHelperMode     = orderMode === 'HELPER_INPUT';
@@ -197,11 +196,8 @@ export default function CartPage() {
   // ── Price breakdown (approved items only when modal triggered) ─────────────
   const subtotalRaw     = totalAmount;
   const discountRaw     = discountAmount;
-  const taxableRaw      = subtotalRaw - discountRaw;
-  const taxRaw          = Math.round(taxableRaw * ppnRate / 100);
-  const grandTotal      = taxableRaw + taxRaw;
-  // Display: tax-inclusive subtotal (before discount) for customer-facing summary
-  const subtotalInclTax = Math.round(subtotalRaw * (1 + ppnRate / 100));
+  const grandTotal      = subtotalRaw - discountRaw;
+  const subtotalInclTax = subtotalRaw;
 
   // ── WS: listen for PRODUCT_AVAILABLE ──────────────────────────────────────
   useEffect(() => {
@@ -476,7 +472,7 @@ export default function CartPage() {
                     className="text-sm font-semibold"
                     style={{ color: item.is_on_hold ? '#92400E' : '#1D4ED8' }}
                   >
-                    {formatRupiah(Math.round(item.price * item.quantity * (1 + ppnRate / 100)))}
+                    {formatRupiah(item.price * item.quantity)}
                   </span>
                 </div>
               </div>
@@ -510,7 +506,6 @@ export default function CartPage() {
                 <SavedForLaterRow
                   key={item.product_id}
                   item={item}
-                  ppnRate={ppnRate}
                   isAvailable={!!availableProducts[item.product_id]}
                   onMoveToCart={handleMoveToCart}
                   onRemove={handleRemoveSFL}
@@ -586,12 +581,7 @@ export default function CartPage() {
 
               <div className="space-y-1 mb-3">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-500">
-                    {t('cart.subtotal')}
-                    {ppnRate > 0 && (
-                      <span className="text-xs text-gray-400 ml-1">(incl. PPN {ppnRate}%)</span>
-                    )}
-                  </span>
+                  <span className="text-gray-500">{t('cart.subtotal')}</span>
                   <span className="text-gray-700">{formatRupiah(subtotalInclTax)}</span>
                 </div>
                 {discountRaw > 0 && (
@@ -610,7 +600,7 @@ export default function CartPage() {
                     <span>{t('cart.estimatedTotal', { count: approvedItems.length })}</span>
                     <span className="font-bold">
                       {formatRupiah(approvedItems.reduce((s, i) =>
-                        s + Math.round(i.price * i.quantity * (1 + ppnRate / 100)), 0))}
+                        s + (i.price * i.quantity), 0))}
                     </span>
                   </div>
                 )}

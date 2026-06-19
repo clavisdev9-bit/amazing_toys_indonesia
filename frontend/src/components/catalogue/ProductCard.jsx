@@ -48,7 +48,6 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
   const [bouncing, setBouncing] = useState(false);
   const [imgError, setImgError] = useState(false);
   const config       = usePublicConfig();
-  const ppnRate      = parseFloat(config?.ppn_rate) || 0;
   const isHelperMode  = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
   const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
 
@@ -161,7 +160,7 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
         </p>
 
         <div className="flex items-center justify-between gap-1">
-          <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(Math.round(product.price * (1 + ppnRate / 100)))}</span>
+          <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(product.price)}</span>
           {product.is_preorder
             ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-[8px]" style={{ background: 'rgba(255,237,213,0.85)', color: '#EA580C', border: '1px solid rgba(234,88,12,0.15)' }}>Pre-Order</span>
             : <StockBadge level={stockLevel} label={t(stockKey)} />

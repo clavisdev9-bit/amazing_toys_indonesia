@@ -199,7 +199,6 @@ function AuthenticatedOrderView({ transactionId }) {
   const expiresAt = order?.status === 'PENDING' ? order.expires_at : null;
   const { remaining, mins, secs } = useCountdown(expiresAt);
   const config  = usePublicConfig();
-  const ppnRate = parseFloat(config?.ppn_rate) || 0;
 
   const fetchOrder = useCallback(() => {
     getOrder(transactionId)
@@ -472,7 +471,7 @@ function AuthenticatedOrderView({ transactionId }) {
                         </button>
                       )}
                     </div>
-                    <span className="text-gray-500">{formatRupiah(Math.round(item.subtotal * (1 + ppnRate / 100)))}</span>
+                    <span className="text-gray-500">{formatRupiah(item.subtotal)}</span>
                   </div>
                 ))}
               </div>
