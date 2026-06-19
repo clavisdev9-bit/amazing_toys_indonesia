@@ -10,7 +10,7 @@ const router = Router();
 const _startedAt = new Date().toISOString();
 
 // Track last successful sync times
-const syncTimes = { product: null, stock: null, sweep: null };
+const syncTimes = { sweep: null };
 
 function updateSyncTime(type) {
   syncTimes[type] = new Date().toISOString();

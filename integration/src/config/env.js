@@ -20,9 +20,6 @@ module.exports = {
   WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
   XREF_DB_URL: process.env.XREF_DB_URL,
 
-  LOW_STOCK_THRESHOLD: parseInt(process.env.LOW_STOCK_THRESHOLD || '10', 10),
-  PRODUCT_SYNC_INTERVAL_MIN: parseInt(process.env.PRODUCT_SYNC_INTERVAL_MIN || '30', 10),
-  STOCK_SYNC_INTERVAL_MIN: parseInt(process.env.STOCK_SYNC_INTERVAL_MIN || '30', 10),
   SWEEP_INTERVAL_MIN: parseInt(process.env.SWEEP_INTERVAL_MIN || '5', 10),
   POLLING_INTERVAL_SEC: parseInt(process.env.POLLING_INTERVAL_SEC || '60', 10),
   RETRY_MAX_ATTEMPTS: parseInt(process.env.RETRY_MAX_ATTEMPTS || '3', 10),

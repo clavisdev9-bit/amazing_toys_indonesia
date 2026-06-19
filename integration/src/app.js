@@ -64,9 +64,6 @@ async function loadConfigFromDB() {
     };
     const intFields = {
       odoo_walkin_partner_id:        'ODOO_WALKIN_PARTNER_ID',
-      odoo_low_stock_threshold:      'LOW_STOCK_THRESHOLD',
-      odoo_product_sync_interval_min:'PRODUCT_SYNC_INTERVAL_MIN',
-      odoo_stock_sync_interval_min:  'STOCK_SYNC_INTERVAL_MIN',
       odoo_sweep_interval_min:       'SWEEP_INTERVAL_MIN',
       odoo_polling_interval_sec:     'POLLING_INTERVAL_SEC',
       odoo_retry_max_attempts:       'RETRY_MAX_ATTEMPTS',

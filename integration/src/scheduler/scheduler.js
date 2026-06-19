@@ -1,8 +1,6 @@
 'use strict';
 
 const cron        = require('node-cron');
-const productSync = require('../services/product.sync');
-const stockSync   = require('../services/stock.sync');
 const cancelSync  = require('../services/cancel.sync');
 const orderPush   = require('../services/order.push');
 const voucherSvc  = require('../services/payment-voucher.service');
@@ -28,27 +26,6 @@ function minuteToCron(min) {
 }
 
 function start() {
-  // ── Product sync (Odoo → SOS) ──────────────────────────────────────────────
-  cron.schedule(minuteToCron(env.PRODUCT_SYNC_INTERVAL_MIN), async () => {
-    try {
-      await productSync.syncProducts();
-      updateSyncTime('product');
-    } catch (err) {
-      logger.error('Scheduler: product sync error', { error: err.message });
-    }
-  });
-
-  // ── Stock sync (Odoo qty → SOS) ────────────────────────────────────────────
-  const stockInterval = Math.min(env.STOCK_SYNC_INTERVAL_MIN, env.PRODUCT_SYNC_INTERVAL_MIN);
-  cron.schedule(minuteToCron(stockInterval), async () => {
-    try {
-      await stockSync.syncStock();
-      updateSyncTime('stock');
-    } catch (err) {
-      logger.error('Scheduler: stock sync error', { error: err.message });
-    }
-  });
-
   // ── Expiry sweep (cancel stale Odoo draft orders) ──────────────────────────
   cron.schedule(minuteToCron(env.SWEEP_INTERVAL_MIN), async () => {
     try {
@@ -154,8 +131,6 @@ function start() {
   }, 30_000);
 
   logger.info('Scheduler started', {
-    productSyncMin: env.PRODUCT_SYNC_INTERVAL_MIN,
-    stockSyncMin: stockInterval,
     sweepMin: env.SWEEP_INTERVAL_MIN,
     pollingSec: env.POLLING_INTERVAL_SEC,
   });

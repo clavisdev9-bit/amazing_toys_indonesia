@@ -19,7 +19,6 @@
  *   await LogNoteFormatterService.post({ event, model, recordId, payload });
  */
 
-import { stockSyncTemplate }    from './templates/stockSync.mjs';
 import { orderConfirmTemplate } from './templates/orderConfirm.mjs';
 import { posSessionTemplate }   from './templates/posSession.mjs';
 import { LogNoteAdapter }       from './LogNoteAdapter.mjs';
@@ -28,9 +27,6 @@ import { LogNoteAdapter }       from './LogNoteAdapter.mjs';
 
 /** @type {Record<string, 'INFO'|'WARNING'|'ERROR'>} */
 const EVENT_SEVERITY = {
-  STOCK_SYNC_SUCCESS: 'INFO',
-  STOCK_SYNC_FAILED:  'ERROR',
-  STOCK_SYNC_RETRY:   'WARNING',
   ORDER_CONFIRMED:    'INFO',
   ORDER_FAILED:       'ERROR',
   POS_SESSION_OPENED: 'INFO',
@@ -39,9 +35,6 @@ const EVENT_SEVERITY = {
 
 /** Human-readable display label inserted into the note header. */
 const EVENT_LABEL = {
-  STOCK_SYNC_SUCCESS: 'STOCK SYNC SUCCESS',
-  STOCK_SYNC_FAILED:  'STOCK SYNC FAILED',
-  STOCK_SYNC_RETRY:   'STOCK SYNC RETRY',
   ORDER_CONFIRMED:    'ORDER CONFIRMED',
   ORDER_FAILED:       'ORDER FAILED',
   POS_SESSION_OPENED: 'POS SESSION OPENED',
@@ -55,9 +48,6 @@ const EVENT_LABEL = {
  * @type {Record<string, Function>}
  */
 const EVENT_TEMPLATE = {
-  STOCK_SYNC_SUCCESS: stockSyncTemplate,
-  STOCK_SYNC_FAILED:  stockSyncTemplate,
-  STOCK_SYNC_RETRY:   stockSyncTemplate,
   ORDER_CONFIRMED:    orderConfirmTemplate,
   ORDER_FAILED:       orderConfirmTemplate,
   POS_SESSION_OPENED: posSessionTemplate,
