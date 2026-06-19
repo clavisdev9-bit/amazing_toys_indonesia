@@ -11,8 +11,9 @@ const JOB_NAME = 'txn.expire.sweep';
 
 /**
  * Restore stock for a single transaction (non-fatal per-item).
- * Used when RESERVED or WAITING_PAYMENT orders expire — stock was
- * deducted at creation and must be returned.
+ * Used when RESERVED, WAITING_PAYMENT, or PENDING orders expire — stock was
+ * deducted at creation and must be returned. Pre-order items are excluded
+ * because their stock was never deducted.
  */
 async function restoreStock(client, transactionId) {
   try {
@@ -22,7 +23,8 @@ async function restoreStock(client, transactionId) {
          FROM transaction_items ti
         WHERE ti.transaction_id = $1
           AND ti.product_id = p.product_id
-          AND ti.approval_status != 'REJECTED'`,
+          AND ti.approval_status != 'REJECTED'
+          AND p.is_preorder = FALSE`,
       [transactionId],
     );
   } catch (err) {
@@ -36,7 +38,7 @@ async function restoreStock(client, transactionId) {
  * Statuses swept:
  *  - RESERVED        → stock deducted at creation → must restore stock on expire
  *  - WAITING_PAYMENT → inherited from RESERVED    → must restore stock on expire
- *  - PENDING         → legacy self-order          → stock handled by Odoo cancel sync, no restore here
+ *  - PENDING         → cashier / self-order        → stock deducted at creation → must restore on expire
  *
  * Never touches PENDING_APPROVAL (expires_at = NULL), PAID, CANCELLED, COMPLETED.
  */
@@ -80,8 +82,10 @@ async function execute() {
     }
   }
 
-  // ── Step 2: Expire PENDING — no stock restore (Odoo cancel sync handles it) ─
-  // CR-050: fetch order_type + customer contact so we can send WA for pre-order PENDING expiry
+  // ── Step 2: Expire PENDING (cashier / self-order) and restore their stock ────
+  // Stock was deducted at order creation for all non-preorder PENDING items,
+  // so we must restore it here — same pattern as RESERVED/WAITING_PAYMENT above.
+  // CR-050: also fetch order_type + customer contact to send WA for pre-order expiry.
   let pendingExpired = [];
   try {
     const result = await query(`
@@ -105,17 +109,22 @@ async function execute() {
     logger.info(`[${JOB_NAME}] expired ${pendingExpired.length} PENDING transaction(s)`, {
       ids: pendingExpired.map(r => r.transaction_id),
     });
+
+    // Restore stock + audit (each in its own transaction, non-fatal)
     for (const row of pendingExpired) {
       try {
-        await writeAuditLog({
-          action: 'TXN_EXPIRED', actorId: null, actorRole: 'SYSTEM',
-          entityType: 'TRANSACTION', entityId: row.transaction_id,
-          oldValue: { status: 'PENDING' },
-          newValue: { status: 'EXPIRED' },
+        await withTransaction(async (client) => {
+          await restoreStock(client, row.transaction_id);
+          await writeAuditLog({
+            action: 'TXN_EXPIRED', actorId: null, actorRole: 'SYSTEM',
+            entityType: 'TRANSACTION', entityId: row.transaction_id,
+            oldValue: { status: 'PENDING' },
+            newValue: { status: 'EXPIRED', stockRestored: true },
+          });
         });
       } catch { /* non-critical */ }
 
-      // CR-050: fire-and-forget WA for pre-order PENDING expiry (no stock restore — never deducted)
+      // CR-050: fire-and-forget WA for pre-order PENDING expiry
       if (row.order_type === 'PREORDER') {
         const phone = row.reg_phone || row.customer_phone;
         const name  = row.customer_name || 'Customer';
@@ -141,7 +150,7 @@ async function execute() {
     } catch { /* non-critical — WebSocket may not be initialized yet */ }
   }
 
-  return { expired: total, withStockRestore: stockStatuses.length, pendingOnly: pendingExpired.length };
+  return { expired: total, withStockRestore: stockStatuses.length + pendingExpired.length };
 }
 
 module.exports = { JOB_NAME, execute };

@@ -10,7 +10,7 @@ async function listProducts({ tenantId, category, search, inStockOnly, page = 1,
 
   if (tenantId) { params.push(tenantId); conditions.push(`p.tenant_id = $${params.length}`); }
   if (category) { params.push(category); conditions.push(`p.category = $${params.length}`); }
-  if (search)   { params.push(`%${search}%`); conditions.push(`(p.product_name ILIKE $${params.length} OR p.description ILIKE $${params.length})`); }
+  if (search)   { params.push(`%${search}%`); conditions.push(`(p.product_name ILIKE $${params.length} OR p.description ILIKE $${params.length} OR p.barcode ILIKE $${params.length})`); }
   if (inStockOnly) conditions.push(`p.stock_status != 'OUT_OF_STOCK'`);
 
   const where = conditions.join(' AND ');

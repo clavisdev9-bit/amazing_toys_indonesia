@@ -6,7 +6,7 @@ const { pool } = require('./src/config/database');
 
 async function addAdmin() {
   const username = 'admin';
-  const password = 'admin123';
+  const password = 'P@ssw0rdAr123';
   const displayName = 'Administrator';
 
   try {

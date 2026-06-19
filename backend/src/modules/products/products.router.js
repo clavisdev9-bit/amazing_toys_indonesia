@@ -17,7 +17,7 @@ router.get('/',
     qv('search').optional().isString(),
     qv('in_stock_only').optional().isBoolean(),
     qv('page').optional().isInt({ min: 1 }).toInt(),
-    qv('limit').optional().isInt({ min: 1, max: 500 }).toInt(),
+    qv('limit').optional().isInt({ min: 1, max: 5000 }).toInt(),
   ],
   validate,
   async (req, res, next) => {

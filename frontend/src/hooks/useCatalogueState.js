@@ -5,12 +5,16 @@ import { useWebSocket } from './useWebSocket';
 
 const FLOOR_ORDER = ['GF', 'UG', 'LG', '1F', '2F', '3F'];
 
-// Sort priority: Available (0) → Limited (1) → Out of Stock (2)
-// Matches the thresholds in stockUtils.js getStockStatus()
+// Sort priority: has image (0) → no image (1), then Available (0) → Limited (1) → Out of Stock (2)
 function stockSortKey(stock) {
   if (stock === 0) return 2;
   if (stock <= 3)  return 1;
   return 0;
+}
+
+function productSortKey(p) {
+  const img = p.image_url ? 0 : 1;
+  return img * 10 + stockSortKey(p.stock);
 }
 
 const TENANT_COLORS = [
@@ -45,6 +49,8 @@ function normalizeProduct(p) {
     is_on_hold:     p.is_on_hold || false,
     is_preorder:    p.is_preorder || false,
     preorder_note:  p.preorder_note || null,
+    barcode:        p.barcode || '',
+    description:    p.description || '',
     tenant_id:      p.tenant_id,
     tenant_name:    p.tenant_name,
     booth_location: p.booth_location,
@@ -83,14 +89,18 @@ export function useCatalogueState() {
 
   const { subscribe } = useWebSocket();
   // Prevent concurrent fetches triggered by rapid visibility/WS events
-  const fetchingRef = useRef(false);
+  const fetchingRef  = useRef(false);
+  const isFirstLoad  = useRef(true);
 
   const loadData = useCallback(() => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
-    setLoading(true);
+    // Only show the full-page spinner on the very first load.
+    // Background refreshes (tab focus, WS events) update data silently
+    // so the scroll position is not disturbed.
+    if (isFirstLoad.current) setLoading(true);
     Promise.all([
-      getProducts({ limit: 500 }),
+      getProducts({ limit: 5000 }),
       getTenants({ active_only: true }),
       getCategories(),
     ])
@@ -103,18 +113,15 @@ export function useCatalogueState() {
         setCategories(['All', ...rawCats.filter(c => c !== 'All')]);
       })
       .catch(console.error)
-      .finally(() => { setLoading(false); fetchingRef.current = false; });
+      .finally(() => {
+        setLoading(false);
+        fetchingRef.current = false;
+        isFirstLoad.current = false;
+      });
   }, []);
 
   // Initial load
   useEffect(() => { loadData(); }, [loadData]);
-
-  // Refetch when the browser tab becomes visible again (user returns from another tab)
-  useEffect(() => {
-    const onVisibility = () => { if (document.visibilityState === 'visible') loadData(); };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [loadData]);
 
   // Refetch in real-time when admin creates / updates / deletes any product
   useEffect(() => subscribe('PRODUCT_UPDATED', loadData), [subscribe, loadData]);
@@ -165,15 +172,22 @@ export function useCatalogueState() {
   const productModeProducts = useMemo(() => {
     let result = products;
     if (curCat !== 'All') result = result.filter(p => p.category === curCat);
-    if (search.trim()) result = result.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
-    return [...result].sort((a, b) => stockSortKey(a.stock) - stockSortKey(b.stock));
+    if (search.trim()) {
+      const term = search.toLowerCase();
+      result = result.filter(p =>
+        p.name.toLowerCase().includes(term) ||
+        p.barcode.toLowerCase().includes(term) ||
+        p.description.toLowerCase().includes(term)
+      );
+    }
+    return [...result].sort((a, b) => productSortKey(a) - productSortKey(b));
   }, [products, curCat, search]);
 
   const storeModeProducts = useMemo(() => {
     if (selectedStoreIds.length === 0) return [];
     let result = products.filter(p => selectedStoreIds.includes(p.tenant_id));
     if (storeCat !== 'All') result = result.filter(p => p.category === storeCat);
-    return [...result].sort((a, b) => stockSortKey(a.stock) - stockSortKey(b.stock));
+    return [...result].sort((a, b) => productSortKey(a) - productSortKey(b));
   }, [products, selectedStoreIds, storeCat]);
 
   const storesByFloor = useMemo(() => {
