@@ -179,6 +179,11 @@ export default function ThermalReceipt({
   const tenantGroups = Array.from(tenantMap.values());
   const txnId = txn?.transaction_id ?? 'TXN-UNKNOWN';
 
+  const publicToken = txn?.public_token ?? null;
+  const qrValue = publicToken
+    ? `${window.location.origin}/pesanan/${txnId}?token=${publicToken}`
+    : txnId;
+
   return (
     <div style={S.root}>
 
@@ -313,7 +318,7 @@ export default function ThermalReceipt({
       {/* QR Code — level H = 30% error correction */}
       <div style={S.qrZone}>
         <QRCodeSVG
-          value={txnId}
+          value={qrValue}
           size={qrSize}
           level="H"
           includeMargin={true}

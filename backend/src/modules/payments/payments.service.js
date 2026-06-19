@@ -25,7 +25,8 @@ async function lookupTransaction(transactionId) {
             c.email AS customer_email,
             t.created_at AS checkout_time, t.created_by_role,
             t.order_type, t.shipping_name, t.shipping_phone,
-            t.shipping_address, t.shipping_city, t.shipping_province
+            t.shipping_address, t.shipping_city, t.shipping_province,
+            t.public_token, t.public_token_exp
      FROM transactions t
      LEFT JOIN customers c ON c.customer_id = t.customer_id
      WHERE t.transaction_id = $1`,

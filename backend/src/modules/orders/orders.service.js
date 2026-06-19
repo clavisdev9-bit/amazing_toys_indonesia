@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs   = require('fs');
 const path = require('path');
 
@@ -11,6 +12,7 @@ const { writeAuditLog }          = require('../../utils/auditLog');
 const notificationsSvc           = require('../notifications/notifications.service');
 const { fireWebhook }            = require('../../utils/webhook');
 const voucherSvc                 = require('../vouchers/vouchers.service');
+const waSvc                      = require('../wa/wa.service');
 const { broadcastToTenant, broadcastToCustomer } = require('../../ws/websocket');
 const logger                     = require('../../config/logger');
 
@@ -653,14 +655,19 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
     const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutes() * 60 * 1000);
     const qrPayload = await generateTransactionQR(transactionId);
 
+    // CR-036: public_token untuk order-tracking page (sama seperti helper orders)
+    const waConfig       = await waSvc.getWaConfig();
+    const publicToken    = crypto.randomUUID();
+    const publicTokenExp = new Date(Date.now() + waConfig.ttlMinutes * 60 * 1000);
+
     // 5. Insert transaction with cashier_id pre-filled
     await client.query(
       `INSERT INTO transactions
          (transaction_id, customer_id, cashier_id, status, subtotal_amount, tax_rate, tax_amount, total_amount,
-          voucher_code, discount_amount, qr_payload, expires_at)
-       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9, $10, $11)`,
+          voucher_code, discount_amount, qr_payload, expires_at, public_token, public_token_exp)
+       VALUES ($1, $2, $3, 'PENDING', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [transactionId, customerId, cashierId, subtotalAmount, TAX_RATE, taxAmount, totalAmount,
-       voucherCode || null, discountAmount, qrPayload, expiresAt]
+       voucherCode || null, discountAmount, qrPayload, expiresAt, publicToken, publicTokenExp]
     );
 
     // 6. Insert items & decrement stock
@@ -701,7 +708,7 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
       newValue: { cashierId, customerId, totalAmount, items: items.length, discountAmount, voucherCode },
     });
 
-    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, discountAmount, voucherCode: voucherCode || null, expiresAt, qrPayload, status: 'PENDING' };
+    return { transactionId, subtotalAmount, taxRate: TAX_RATE, taxAmount, totalAmount, discountAmount, voucherCode: voucherCode || null, expiresAt, qrPayload, status: 'PENDING', publicToken, publicTokenExp };
   });
 }
 
