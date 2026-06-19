@@ -3,6 +3,8 @@ services:
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
+    port:
+      - "5432:5432"
     container_name: hybrid_postgres
     restart: unless-stopped
     environment:
@@ -35,7 +37,7 @@ services:
       - ./backend/migrations/016_drop_expires_at_not_null.sql:/docker-entrypoint-initdb.d/21_drop_expires_at_not_null.sql:ro
       - ./backend/migrations/024_customer_otp_devices.sql:/docker-entrypoint-initdb.d/25_customer_otp_devices.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d amazing_toys_hybrid"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d amazing_toys_hybrid" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -87,7 +89,7 @@ services:
       - hybrid_uploads_data:/app/public/uploads
       - hybrid_config_data:/app/data
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:3001/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
