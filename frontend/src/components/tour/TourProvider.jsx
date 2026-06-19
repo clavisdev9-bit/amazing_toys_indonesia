@@ -89,19 +89,6 @@ export function TourProvider({ children }) {
     if (state.hasSeenTour) localStorage.setItem('sos-tour-seen', 'true');
   }, [state.hasSeenTour]);
 
-  // Auto-show welcome modal on first visit to /katalog — customers only
-  useEffect(() => {
-    if (
-      isAuthenticated &&
-      role === 'CUSTOMER' &&
-      !state.hasSeenTour &&
-      !state.isActive &&
-      !state.showWelcome &&
-      location.pathname === '/katalog'
-    ) {
-      dispatch({ type: 'SHOW_WELCOME' });
-    }
-  }, [location.pathname, state.hasSeenTour, state.isActive, state.showWelcome, isAuthenticated, role]);
 
   // Clean up tour state on logout
   useEffect(() => {
