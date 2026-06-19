@@ -3,7 +3,7 @@ services:
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
-    port:
+    ports:
       - "5432:5432"
     container_name: hybrid_postgres
     restart: unless-stopped
