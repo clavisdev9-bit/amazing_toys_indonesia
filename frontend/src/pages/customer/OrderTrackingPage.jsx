@@ -604,7 +604,7 @@ function AuthenticatedOrderView({ transactionId }) {
               <button onClick={() => setEditQty(q => q + 1)} className="w-10 h-10 rounded-full border border-gray-300 text-xl font-bold text-gray-600 hover:bg-gray-100 flex items-center justify-center">+</button>
             </div>
             <p className="text-center text-sm text-gray-500 mb-4">
-              Subtotal: <span className="font-semibold text-gray-800">{formatRupiah(Math.round(editItem.unit_price * editQty * (1 + ppnRate / 100)))}</span>
+              Subtotal: <span className="font-semibold text-gray-800">{formatRupiah(editItem.unit_price * editQty)}</span>
             </p>
             <div className="flex gap-2">
               <Button variant="secondary" className="flex-1" onClick={() => setEditItem(null)}>Batal</Button>

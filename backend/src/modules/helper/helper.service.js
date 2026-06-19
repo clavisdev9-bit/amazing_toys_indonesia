@@ -26,16 +26,6 @@ function _getOrderMode() {
   }
 }
 
-async function _getTaxSettings() {
-  try {
-    const result = await query("SELECT value FROM system_settings WHERE key = 'tax_config'");
-    if (result.rows.length > 0) {
-      const cfg = JSON.parse(result.rows[0].value);
-      return { active: cfg.ppn_active !== false, rate: parseFloat(cfg.ppn_rate) || 12.00 };
-    }
-  } catch { /* ignore — use default */ }
-  return { active: true, rate: 12.00 };
-}
 
 /**
  * Create a RESERVED order on behalf of a customer.

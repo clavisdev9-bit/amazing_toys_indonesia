@@ -46,19 +46,6 @@ function _getOrderMode() {
   }
 }
 
-async function _getTaxSettings() {
-  try {
-    const result = await query("SELECT value FROM system_settings WHERE key = 'tax_config'");
-    if (result.rows.length > 0) {
-      const cfg = JSON.parse(result.rows[0].value);
-      return {
-        active: cfg.ppn_active !== false,
-        rate:   parseFloat(cfg.ppn_rate) || 12.00,
-      };
-    }
-  } catch { /* ignore — use default */ }
-  return { active: true, rate: 12.00 };
-}
 
 /**
  * Create a new order from a validated cart.
@@ -457,12 +444,17 @@ async function updateItemQuantity(transactionId, customerId, productId, newQty) 
 
     // Recalculate transaction total
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS subtotal FROM transaction_items WHERE transaction_id = $1`,
+      `SELECT SUM(ti.subtotal) AS subtotal, t.discount_amount
+       FROM transaction_items ti
+       JOIN transactions t ON t.transaction_id = ti.transaction_id
+       WHERE ti.transaction_id = $1
+       GROUP BY t.discount_amount`,
       [transactionId]
     );
-    const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
-    const newTaxAmount = 0;
-    const newTotal     = newSubtotal;
+    const newSubtotal   = parseFloat(totalResult.rows[0].subtotal);
+    const discountAmt   = parseFloat(totalResult.rows[0].discount_amount) || 0;
+    const newTaxAmount  = 0;
+    const newTotal      = newSubtotal - discountAmt;
     await client.query(
       `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
        WHERE transaction_id = $4`,
@@ -545,12 +537,17 @@ async function removeOrderItem(transactionId, customerId, productId) {
 
     // Recalculate transaction total
     const totalResult = await client.query(
-      `SELECT SUM(subtotal) AS subtotal FROM transaction_items WHERE transaction_id = $1`,
+      `SELECT SUM(ti.subtotal) AS subtotal, t.discount_amount
+       FROM transaction_items ti
+       JOIN transactions t ON t.transaction_id = ti.transaction_id
+       WHERE ti.transaction_id = $1
+       GROUP BY t.discount_amount`,
       [transactionId]
     );
-    const newSubtotal  = parseFloat(totalResult.rows[0].subtotal);
-    const newTaxAmount = 0;
-    const newTotal     = newSubtotal;
+    const newSubtotal   = parseFloat(totalResult.rows[0].subtotal);
+    const discountAmt   = parseFloat(totalResult.rows[0].discount_amount) || 0;
+    const newTaxAmount  = 0;
+    const newTotal      = newSubtotal - discountAmt;
     await client.query(
       `UPDATE transactions SET subtotal_amount = $1, tax_amount = $2, total_amount = $3
        WHERE transaction_id = $4`,
@@ -809,13 +806,13 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
 
 /**
  * Apply a voucher to an existing PENDING transaction (cashier/payment screen).
- * Recalculates tax_amount and total_amount after applying discount.
+ * Recalculates total_amount after applying discount.
  */
 async function applyVoucherToTransaction(transactionId, cashierId, voucherCode) {
   return withTransaction(async (client) => {
     // 1. Lock & validate transaction
     const txResult = await client.query(
-      `SELECT transaction_id, status, customer_id, subtotal_amount, tax_rate, voucher_code
+      `SELECT transaction_id, status, customer_id, subtotal_amount, voucher_code
        FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
       [transactionId]
     );

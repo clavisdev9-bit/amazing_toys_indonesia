@@ -196,8 +196,7 @@ export default function CartPage() {
   // ── Price breakdown (approved items only when modal triggered) ─────────────
   const subtotalRaw     = totalAmount;
   const discountRaw     = discountAmount;
-  const grandTotal      = subtotalRaw - discountRaw;
-  const subtotalInclTax = subtotalRaw;
+  const grandTotal = subtotalRaw - discountRaw;
 
   // ── WS: listen for PRODUCT_AVAILABLE ──────────────────────────────────────
   useEffect(() => {
@@ -582,14 +581,14 @@ export default function CartPage() {
               <div className="space-y-1 mb-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500">{t('cart.subtotal')}</span>
-                  <span className="text-gray-700">{formatRupiah(subtotalInclTax)}</span>
+                  <span className="text-gray-700">{formatRupiah(subtotalRaw)}</span>
                 </div>
                 {discountRaw > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-green-600">
                       {t('cart.discount')}{appliedVoucher?.code ? ` (${appliedVoucher.code})` : ''}
                     </span>
-                    <span className="text-green-600 font-medium">− {formatRupiah(subtotalInclTax - grandTotal)}</span>
+                    <span className="text-green-600 font-medium">− {formatRupiah(discountRaw)}</span>
                   </div>
                 )}
                 {hasWaiting && approvedItems.length > 0 && (

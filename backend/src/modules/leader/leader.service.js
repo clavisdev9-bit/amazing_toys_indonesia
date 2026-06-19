@@ -283,12 +283,12 @@ async function reviewDeleteRequest(requestId, leaderId, action, reason) {
          WHERE transaction_id = $1 AND product_id = $2`,
         [req.transaction_id, req.product_id],
       );
-      // Recalculate subtotal and total from remaining items (no tax)
+      // Recalculate subtotal and total from remaining items (no tax, preserve discount)
       await client.query(
         `UPDATE transactions t
          SET subtotal_amount = COALESCE(sub.s, 0),
              tax_amount      = 0,
-             total_amount    = COALESCE(sub.s, 0)
+             total_amount    = GREATEST(0, COALESCE(sub.s, 0) - COALESCE(t.discount_amount, 0))
          FROM (
            SELECT COALESCE(SUM(subtotal), 0) AS s
            FROM transaction_items

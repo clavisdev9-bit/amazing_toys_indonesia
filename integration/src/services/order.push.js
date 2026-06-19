@@ -280,15 +280,7 @@ async function _doPushOrder(transactionId) {
     // Compute per-line discount for Odoo (field `discount` = percent, 0–100)
     const lineDiscount = _calcLineDiscount(txn, item, items);
 
-    // SOS unit_price is always DPP (before tax / exclusive).
-    // If the Odoo tax is configured as price_include=True, Odoo will back-calculate
-    // the base by dividing price_unit by (1 + rate), which would deflate the DPP.
-    // To counter this, gross-up the price so Odoo's back-calculation lands on the
-    // correct DPP: gross_price = dpp × (1 + rate) → Odoo extracts dpp back out.
     let priceUnit = parseFloat(item.unit_price);
-    if (cache.defaultTaxId && cache.defaultTaxPriceInclude && cache.defaultTaxRate) {
-      priceUnit = parseFloat((priceUnit * (1 + cache.defaultTaxRate)).toFixed(2));
-    }
 
     const lineVals = {
       product_id:      odooProductId,

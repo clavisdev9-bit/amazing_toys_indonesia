@@ -331,7 +331,6 @@ export default function ThermalReceipt({
 
       {/* Footer */}
       <div style={S.footer}>
-        <div style={{ ...S.footerLine, marginBottom: '6px' }}>* Item prices include tax.</div>
         <div style={S.footerStrong}>Thank you for visiting!</div>
         <div style={S.footerLine}>Keep this receipt for your records.</div>
         {publicCfg?.contact_email && (
