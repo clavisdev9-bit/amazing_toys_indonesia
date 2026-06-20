@@ -1,7 +1,7 @@
 'use strict';
 
 const express  = require('express');
-const { body } = require('express-validator');
+const { body, query: qv } = require('express-validator');
 const { authenticate, authorize } = require('../../middlewares/auth.middleware');
 const { validate }  = require('../../middlewares/validate.middleware');
 const voucherSvc    = require('./vouchers.service');
@@ -55,6 +55,29 @@ router.post('/validate',
 );
 
 /**
+ * GET /api/v1/vouchers/active-promos?product_ids=P001-T001,P002-T001
+ * Ambil active product promo rules untuk product_ids di cart.
+ * Public — tidak perlu auth karena info promosi bersifat publik.
+ */
+router.get('/active-promos',
+  [
+    qv('product_ids')
+      .optional()
+      .isString()
+      .withMessage('product_ids harus string CSV.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const raw = (req.query.product_ids || '').trim();
+      const productIds = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const rules = await voucherSvc.getActiveProductPromos(productIds);
+      res.json({ success: true, data: rules });
+    } catch (err) { next(err); }
+  }
+);
+
+/**
  * POST /api/v1/vouchers/apply
  * Internal: record voucher usage after order is created.
  * Auth: ADMIN only (called by integration or internal flows)
@@ -94,6 +117,45 @@ adminRouter.get('/',
     } catch (err) { next(err); }
   }
 );
+
+// ── Admin: Product Promo Vouchers (/api/v1/admin/vouchers/product-promos) ────
+// MUST be registered BEFORE /:code to avoid Express capturing 'product-promos' as a code param
+
+adminRouter.get('/product-promos',
+  authenticate, authorize('ADMIN'),
+  async (req, res, next) => {
+    try {
+      const activeOnly = req.query.active === 'true';
+      const data = await voucherSvc.listProductPromoVouchers({ activeOnly });
+      res.json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+adminRouter.post('/product-promos',
+  authenticate, authorize('ADMIN'),
+  [
+    body('code').trim().notEmpty().withMessage('Kode voucher wajib diisi.'),
+    body('valid_from').isISO8601().withMessage('valid_from harus format ISO8601.'),
+    body('valid_until').isISO8601().withMessage('valid_until harus format ISO8601.'),
+    body('rules').isArray({ min: 1 }).withMessage('Minimal 1 rule produk.'),
+    body('rules.*.buy_product_id').notEmpty().withMessage('buy_product_id wajib.'),
+    body('rules.*.buy_qty').isInt({ min: 1 }).withMessage('buy_qty minimal 1.'),
+    body('rules.*.free_qty').isInt({ min: 1 }).withMessage('free_qty minimal 1.'),
+  ],
+  validate,
+  async (req, res, next) => {
+    try {
+      const data = await voucherSvc.createProductPromoVoucher({
+        ...req.body,
+        created_by: req.user.userId || req.user.username,
+      });
+      res.status(201).json({ success: true, data });
+    } catch (err) { next(err); }
+  }
+);
+
+// ── Generic voucher CRUD (/:code must come AFTER specific sub-paths above) ────
 
 adminRouter.get('/:code',
   authenticate, authorize('ADMIN'),

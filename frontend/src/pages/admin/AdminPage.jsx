@@ -8,7 +8,8 @@ import BoothTab       from './tabs/BoothTab';
 import AuditLogTab    from './tabs/AuditLogTab';
 import ConfigTab      from './tabs/ConfigTab';
 import IntegrationTab from './tabs/IntegrationTab';
-import VoucherTab     from './tabs/VoucherTab';
+import VoucherTab      from './tabs/VoucherTab';
+import ProductPromoTab from './tabs/ProductPromoTab';
 import WaGatewayTab    from './tabs/WaGatewayTab';
 import DataHealthTab   from './tabs/DataHealthTab';
 
@@ -17,7 +18,8 @@ const TABS = [
   { key: 'user-role',   label: 'User & Role',  icon: '👥', active: 'bg-violet-600 text-white shadow', desc: 'Buat & atur akun user' },
   { key: 'booth',       label: 'Booth Tenant', icon: '🏪', active: 'bg-emerald-600 text-white shadow',desc: 'Kelola data booth & kontak' },
   { key: 'config',      label: 'Konfigurasi',  icon: '⚙️',  active: 'bg-amber-500 text-white shadow',  desc: 'Setup event & logo' },
-  { key: 'voucher',     label: 'Voucher',      icon: '🏷️', active: 'bg-pink-600 text-white shadow',   desc: 'Buat & kelola kode diskon event' },
+  { key: 'voucher',       label: 'Voucher',        icon: '🏷️', active: 'bg-pink-600 text-white shadow',    desc: 'Buat & kelola kode diskon event' },
+  { key: 'product-promo', label: 'Promo Produk',   icon: '🎁', active: 'bg-emerald-600 text-white shadow', desc: 'Kelola promo Buy X Get Y otomatis di cart' },
   { key: 'audit-log',   label: 'Audit Log',    icon: '📋', active: 'bg-slate-600 text-white shadow',  desc: 'Monitor aktivitas' },
   { key: 'integration', label: 'Integrasi',    icon: '🔌', active: 'bg-teal-600 text-white shadow',   desc: 'Payment API & Integration with Odoo' },
   { key: 'wa-gateway',  label: 'WA API',        icon: '📲', active: 'bg-green-600 text-white shadow',   desc: 'Konfigurasi WA Gateway (WAHA / Wablas / Zenziva / Twilio) untuk pengiriman QR order via WhatsApp' },
@@ -96,7 +98,8 @@ export default function AdminPage() {
         {tab === 'user-role'   && <UserRoleTab />}
         {tab === 'booth'       && <BoothTab />}
         {tab === 'config'      && <ConfigTab />}
-        {tab === 'voucher'     && <VoucherTab />}
+        {tab === 'voucher'       && <VoucherTab />}
+        {tab === 'product-promo' && <ProductPromoTab />}
         {tab === 'audit-log'   && <AuditLogTab />}
         {tab === 'integration' && <IntegrationTab />}
         {tab === 'wa-gateway'  && <WaGatewayTab />}

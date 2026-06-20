@@ -129,7 +129,8 @@
       "Bash(ls \"C:\\\\Users\\\\arist\\\\Downloads\\\\\" | grep -i mapping)",
       "Bash(grep -r odoo_categ_name 'C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\migrations\" 2>/dev/null | head -5 *)",
       "Bash(node -e \"require\\('./src/modules/admin/bulkUpload.controller'\\)\")",
-      "Bash(node -e \"require\\('./src/modules/admin/bulkUploadMinimal.controller'\\)\")"
+      "Bash(node -e \"require\\('./src/modules/admin/bulkUploadMinimal.controller'\\)\")",
+      "Bash(dir)"
     ]
   }
 }

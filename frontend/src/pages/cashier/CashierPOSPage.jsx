@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getProducts, getCategories, getProductByBarcode } from '../../api/products';
 import { createCashierOrder, createDeleteRequest, getPendingDeleteRequests, lookupCustomerByPhone } from '../../api/cashier';
+import { getActivePromos } from '../../api/vouchers';
 import { formatRupiah } from '../../utils/format';
 import { canAddToCart, getStockStatus, getStockBadgeStyle } from '../../utils/stockUtils';
 import Button from '../../components/ui/Button';
@@ -11,6 +12,27 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { useToast } from '../../hooks/useToast';
 import ToastContainer from '../../components/ui/Toast';
 import { useOrderNotifications } from '../../hooks/useOrderNotifications';
+
+function derivePromoFreeItems(cartItems, rules) {
+  const freeItems = [];
+  for (const rule of rules) {
+    const cartItem = cartItems.find(i => i.product_id === rule.buy_product_id);
+    if (!cartItem) continue;
+    const rawFree = Math.floor(cartItem.quantity / rule.buy_qty) * rule.free_qty;
+    if (rawFree <= 0) continue;
+    const maxCapped = rule.max_free_qty != null ? Math.min(rawFree, rule.max_free_qty) : rawFree;
+    const stockAvailable = rule.free_product_stock != null ? parseInt(rule.free_product_stock, 10) : Infinity;
+    const finalQty = Math.min(maxCapped, stockAvailable);
+    if (finalQty <= 0) continue;
+    freeItems.push({
+      product_id:   rule.free_product_id,
+      product_name: rule.free_product_name,
+      quantity:     finalQty,
+      free_reason:  rule.voucher_code,
+    });
+  }
+  return freeItems;
+}
 
 function normalizeProduct(p) {
   return {
@@ -180,6 +202,13 @@ export default function CashierPOSPage() {
   const [appliedVoucher, setAppliedVoucher] = useState(null);
   const [creating, setCreating]   = useState(false);
   const [error, setError]         = useState('');
+  // voucherResetKey: increment to force VoucherInput remount when voucher is cleared by cart change
+  const [voucherResetKey, setVoucherResetKey] = useState(0);
+
+  // Product promo (B1G1/B2G1)
+  const [activePromos, setActivePromos] = useState([]);
+  // promoDismissed: kasir pilih tidak pakai promo otomatis untuk transaksi ini
+  const [promoDismissed, setPromoDismissed] = useState(false);
 
   // Delete approval — tracks product_ids with a PENDING delete request
   const [pendingDeleteIds, setPendingDeleteIds] = useState(new Set());
@@ -225,6 +254,23 @@ export default function CashierPOSPage() {
       }
     });
   }, [subscribe, addToast]);
+
+  // Fetch active product promos whenever cart items/quantities change
+  const cartKey = cart.map(i => `${i.id}:${i.qty}`).join(',');
+  useEffect(() => {
+    const productIds = cart.map(i => i.id).filter(Boolean);
+    if (!productIds.length) { setActivePromos([]); return; }
+    getActivePromos(productIds)
+      .then(res => setActivePromos(res.data?.data || []))
+      .catch(() => setActivePromos([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartKey]);
+
+  const freeItems = useMemo(() => {
+    const cartForCalc = cart.map(i => ({ product_id: i.id, quantity: i.qty }));
+    return derivePromoFreeItems(cartForCalc, activePromos);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartKey, activePromos]);
 
   const filtered = useMemo(() => {
     let list = products;
@@ -300,10 +346,15 @@ export default function CashierPOSPage() {
       }
       return [...prev, { id: product.id, name: product.name, price: product.price, qty: 1, stock: product.stock, tenant_id: product.tenant_id }];
     });
-    setAppliedVoucher(null); // reset voucher when cart changes
+    // Reset voucher; force VoucherInput remount so stale "applied" banner is cleared
+    if (appliedVoucher) setVoucherResetKey(k => k + 1);
+    setAppliedVoucher(null);
+    // New product added — re-evaluate promo eligibility
+    setPromoDismissed(false);
   }
 
   function setQty(id, qty) {
+    if (appliedVoucher) setVoucherResetKey(k => k + 1);
     setAppliedVoucher(null);
     if (qty < 1) {
       setCart(prev => prev.filter(i => i.id !== id));
@@ -313,6 +364,7 @@ export default function CashierPOSPage() {
   }
 
   function removeItem(id) {
+    if (appliedVoucher) setVoucherResetKey(k => k + 1);
     setAppliedVoucher(null);
     setCart(prev => prev.filter(i => i.id !== id));
   }
@@ -351,7 +403,7 @@ export default function CashierPOSPage() {
       const items  = cart.map(i => ({ product_id: i.id, quantity: i.qty }));
       const phone  = customerPhone.trim() || null;
       const voucher = appliedVoucher?.code || null;
-      const res    = await createCashierOrder(items, phone, voucher);
+      const res    = await createCashierOrder(items, phone, voucher, promoDismissed);
       const txnId  = res.data.data?.transactionId;
       navigate(`/cashier/bayar/${txnId}`);
     } catch (err) {
@@ -565,6 +617,30 @@ export default function CashierPOSPage() {
             )}
           </div>
 
+          {/* Free items from product promo — dapat di-cancel kasir */}
+          {freeItems.length > 0 && !promoDismissed && (
+            <div className="border-t border-green-200 bg-green-50 px-3 py-2.5 space-y-1.5 shrink-0">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-green-700 uppercase tracking-wide">🎁 Item Gratis Promo</p>
+                <button
+                  onClick={() => setPromoDismissed(true)}
+                  className="text-gray-400 hover:text-red-500 text-xs leading-none p-0.5 transition-colors"
+                  title="Batalkan promo untuk transaksi ini"
+                >✕</button>
+              </div>
+              {freeItems.map((fi, idx) => (
+                <div key={idx} className="flex items-center justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-green-800 truncate">{fi.product_name}</p>
+                    <p className="text-[10px] text-green-600">×{fi.quantity} · Kode: {fi.free_reason}</p>
+                  </div>
+                  <span className="text-xs font-bold text-green-600 shrink-0">GRATIS</span>
+                </div>
+              ))}
+              <p className="text-[10px] text-green-500 italic">Ditambahkan otomatis saat bayar.</p>
+            </div>
+          )}
+
           {/* Footer */}
           <div className="px-4 py-3 border-t bg-gray-50 space-y-2">
             {error && (
@@ -576,6 +652,12 @@ export default function CashierPOSPage() {
               <span className="text-xs text-gray-500">Subtotal</span>
               <span className="text-sm font-bold text-gray-900">{formatRupiah(subtotal)}</span>
             </div>
+            {freeItems.length > 0 && (
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-green-600">🎁 Item gratis</span>
+                <span className="text-xs font-bold text-green-600">{freeItems.reduce((s, fi) => s + fi.quantity, 0)} item</span>
+              </div>
+            )}
             {discount > 0 && (
               <div className="flex justify-between items-center">
                 <span className="text-xs text-green-600">Diskon voucher</span>
@@ -583,9 +665,10 @@ export default function CashierPOSPage() {
               </div>
             )}
 
-            {/* Voucher input */}
+            {/* Voucher input — key forces remount when appliedVoucher di-reset oleh operasi cart */}
             {cart.length > 0 && (
               <VoucherInput
+                key={voucherResetKey}
                 cartTotal={subtotal}
                 tenantIds={cartTenantIds}
                 items={cartItems}
@@ -604,7 +687,12 @@ export default function CashierPOSPage() {
             </Button>
             {cart.length > 0 && (
               <button
-                onClick={() => { setCart([]); setAppliedVoucher(null); }}
+                onClick={() => {
+                  setCart([]);
+                  setAppliedVoucher(null);
+                  setVoucherResetKey(k => k + 1);
+                  setPromoDismissed(false);
+                }}
                 className="w-full text-xs text-red-400 hover:text-red-600 transition-colors"
               >
                 Kosongkan keranjang

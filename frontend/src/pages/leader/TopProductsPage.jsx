@@ -36,6 +36,7 @@ export default function TopProductsPage() {
   useEffect(() => { fetch(); }, []);
 
   const totalRevenue = data.reduce((s, r) => s + r.revenue, 0);
+  const totalQtySold = data.reduce((s, r) => s + r.qtySold, 0);
 
   return (
     <div className="max-w-3xl">
@@ -69,6 +70,21 @@ export default function TopProductsPage() {
       </div>
 
       {!loading && data.length > 0 && (
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          {[
+            { label: 'Total Produk',    value: data.length,                         cls: 'bg-indigo-50 text-indigo-700' },
+            { label: 'Total Qty Terjual', value: totalQtySold.toLocaleString('id-ID') + ' pcs', cls: 'bg-emerald-50 text-emerald-700' },
+            { label: 'Total Revenue',   value: formatRupiah(totalRevenue),          cls: 'bg-blue-50 text-blue-700' },
+          ].map((c) => (
+            <div key={c.label} className={`rounded-xl px-4 py-3 ${c.cls}`}>
+              <p className="text-xs font-medium opacity-70">{c.label}</p>
+              <p className="text-lg font-bold mt-0.5">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && data.length > 0 && (
         <div className="flex justify-end mb-2">
           <button
             onClick={() => exportToExcel(`Top_Produk_${dateFrom}_${dateTo}`, [{
@@ -80,6 +96,8 @@ export default function TopProductsPage() {
                 'Kategori': r.category ?? '-',
                 'Harga': r.price,
                 'Qty Terjual': r.qtySold,
+                'Stok Sisa': r.stockQuantity ?? '-',
+                'Status Stok': r.stockStatus ?? '-',
                 'Revenue': r.revenue,
                 '% dari Total': totalRevenue > 0 ? Math.round((r.revenue / totalRevenue) * 100) : 0,
               })),
@@ -98,7 +116,7 @@ export default function TopProductsPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
-                {['#', 'Produk', 'Tenant', 'Kategori', 'Harga', 'Qty Terjual', 'Revenue'].map((h) => (
+                {['#', 'Produk', 'Tenant', 'Kategori', 'Harga', 'Qty Terjual', 'Stok Sisa', 'Revenue'].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                 ))}
               </tr>

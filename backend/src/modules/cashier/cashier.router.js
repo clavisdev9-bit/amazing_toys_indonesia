@@ -88,8 +88,10 @@ router.post('/orders',
   validate,
   async (req, res, next) => {
     try {
-      const { items, customerPhone, voucherCode } = req.body;
-      const data = await ordersSvc.createOrderByCashier(req.user.userId, items, voucherCode || null, customerPhone || null);
+      const { items, customerPhone, voucherCode, skipProductPromo } = req.body;
+      const data = await ordersSvc.createOrderByCashier(
+        req.user.userId, items, voucherCode || null, customerPhone || null, !!skipProductPromo
+      );
       res.status(201).json({ success: true, message: 'Pesanan berhasil dibuat.', data });
     } catch (err) { next(err); }
   }
@@ -132,6 +134,20 @@ router.post('/orders/:transactionId/items',
         req.body.quantity,
       );
       res.json({ success: true, message: 'Produk berhasil ditambahkan.', data });
+    } catch (err) { next(err); }
+  }
+);
+
+// DELETE /api/v1/cashier/orders/:transactionId — kasir membatalkan transaksi aktif
+router.delete('/orders/:transactionId',
+  authenticate, authorize('CASHIER', 'LEADER'),
+  async (req, res, next) => {
+    try {
+      const data = await ordersSvc.cancelOrderByCashier(
+        req.params.transactionId,
+        req.user.userId,
+      );
+      res.json({ success: true, message: 'Transaksi berhasil dibatalkan.', data });
     } catch (err) { next(err); }
   }
 );

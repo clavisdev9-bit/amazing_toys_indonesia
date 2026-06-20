@@ -2,16 +2,19 @@ import client from './client';
 
 export const getRecap = (params) => client.get('/cashier/recap', { params });
 export const getTransactions = (params) => client.get('/cashier/transactions', { params });
-export const createCashierOrder = (items, customerPhone = null, voucherCode = null) =>
+export const createCashierOrder = (items, customerPhone = null, voucherCode = null, skipProductPromo = false) =>
   client.post('/cashier/orders', {
     items,
-    ...(customerPhone ? { customerPhone } : {}),
-    ...(voucherCode   ? { voucherCode }   : {}),
+    ...(customerPhone    ? { customerPhone }    : {}),
+    ...(voucherCode      ? { voucherCode }      : {}),
+    ...(skipProductPromo ? { skipProductPromo } : {}),
   });
 export const addItemToTransaction = (transactionId, productId, quantity) =>
   client.post(`/cashier/orders/${transactionId}/items`, { product_id: productId, quantity });
 export const applyVoucherToOrder = (transactionId, voucherCode) =>
   client.post(`/cashier/orders/${transactionId}/voucher`, { voucherCode });
+export const cancelCashierOrder = (transactionId) =>
+  client.delete(`/cashier/orders/${transactionId}`);
 
 export const getExpiredTransactions     = (params) => client.get('/cashier/expired', { params });
 // CR-053: dedicated pre-order payment queue (PENDING pre-orders, no date filter)

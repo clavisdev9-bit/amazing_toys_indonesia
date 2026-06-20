@@ -1,5 +1,205 @@
 # Resolution Log
 
+## BUG-093 — Klik "+" pada Produk Promo Memunculkan "Voucher" Otomatis Tanpa Mekanisme Cancel (2026-06-20)
+
+**Page:** `/cashier/pos` (CashierPOSPage)
+**Reporter:** Kasir — barcode "2600108", klik tombol "+" pada cart item, muncul 🎁 "Item Gratis Promo" otomatis tanpa bisa di-cancel
+
+### Root Cause
+
+Dua bug terpisah pada implementasi BUG-092:
+
+**1. Promo section muncul otomatis tanpa dismiss mechanism**
+Implementasi BUG-092 menambahkan `getActivePromos` yang dipanggil setiap kali `cartKey` berubah (setQty, addToCart). Setiap kali kasir menekan "+" pada produk dengan promo aktif (mis. GET22 / B1G1), section 🎁 muncul otomatis. Tidak ada tombol untuk membatalkan promo per-transaksi jika kasir tidak ingin menerapkannya. Backend `createOrderByCashier` juga selalu menerapkan promo tanpa opsi opt-out.
+
+**2. VoucherInput menampilkan state stale setelah voucher di-reset oleh operasi cart**
+`VoucherInput` memiliki state internal `appliedVoucher` sendiri. Ketika parent memanggil `setAppliedVoucher(null)` (dipicu oleh `addToCart`, `setQty`, `removeItem`), VoucherInput tidak tahu — internal state-nya tetap menampilkan banner hijau "Voucher X applied" meskipun discount di parent sudah 0. `VoucherInput` tidak memiliki `key` prop sehingga tidak pernah di-remount untuk clear internal state.
+
+### Fix
+
+**Frontend `CashierPOSPage.jsx`**:
+- Tambah state `voucherResetKey` (integer, increment setiap cart operation yang mereset `appliedVoucher`); pass sebagai `key` ke VoucherInput → force remount dan clear internal state
+- Tambah state `promoDismissed` (boolean); reset ke `false` saat produk baru ditambahkan atau keranjang dikosongkan
+- Tambah tombol ✕ di header section 🎁: `onClick={() => setPromoDismissed(true)}`; kondisi render: `freeItems.length > 0 && !promoDismissed`
+- `handleBayar` mengirim `promoDismissed` sebagai `skipProductPromo` ke API
+
+**Frontend `api/cashier.js`**:
+- `createCashierOrder` menerima parameter `skipProductPromo` (default `false`); dikirim ke backend jika `true`
+
+**Backend `cashier.router.js`**:
+- Baca `skipProductPromo` dari `req.body`, pass ke `createOrderByCashier`
+
+**Backend `orders.service.js`**:
+- `createOrderByCashier` menerima `skipProductPromo = false`; jika `true`, skip step 2b (promo calculation) — `promoRules = []`
+
+### Pencegahan
+
+Setiap komponen dengan state internal (seperti VoucherInput) yang dikontrol oleh parent harus memiliki mekanisme sync. Gunakan `key` prop untuk force remount, atau buat komponen fully controlled. Lihat STD-045.
+
+---
+
+## BUG-092 — Voucher Promo Produk Tidak Terimplementasi di Kasir (2026-06-20)
+
+**Page:** `/cashier` (CashierPOSPage)
+**Reporter:** Internal — voucher `GET22` (tipe PRODUCT_PROMO / B1G1) tidak memberikan item gratis di kasir
+
+### Root Cause
+
+Dua lapisan tidak terimplementasi:
+
+1. **Backend** — `createOrderByCashier` di `orders.service.js` tidak memanggil `voucherSvc.getActiveProductPromos()` dan tidak menyisipkan item gratis ke `transaction_items`. Hanya `createOrder` (flow customer) yang sudah memiliki logika ini.
+
+2. **Frontend** — `CashierPOSPage.jsx` menggunakan local `cart` state (bukan CartContext) dan tidak memiliki: `getActivePromos` call, `freeItems` kalkulasi, tampilan item gratis di keranjang. Kasir tidak mendapat preview item gratis yang akan diberikan.
+
+### Fix
+
+**Backend (`backend/src/modules/orders/orders.service.js`)**:
+- Ditambahkan step 2b setelah validasi stok: panggil `voucherSvc.getActiveProductPromos(productIds)`, lock baris free product `FOR UPDATE`, panggil `voucherSvc.calculateFreeItems()`, cap qty oleh stok tersedia.
+- Ditambahkan step 6b setelah insert item reguler: INSERT setiap free item ke `transaction_items` dengan `is_free=TRUE`, `unit_price=0`, `subtotal=0`, `free_reason=voucher_code`, lalu deduct stok.
+
+**Frontend (`frontend/src/pages/cashier/CashierPOSPage.jsx`)**:
+- Tambah import `getActivePromos` dari `../../api/vouchers`
+- Tambah fungsi `derivePromoFreeItems()` (identik dengan CartContext, untuk preview lokal)
+- Tambah state `activePromos`, `cartKey`, `useEffect` yang memanggil `getActivePromos` ketika cart berubah, dan `freeItems` via `useMemo`
+- Tambah seksi "🎁 Item Gratis Promo" di cart panel (di atas footer) dan baris summary "Item gratis: N item"
+
+### Pencegahan
+
+Setiap flow order (customer self-order, cashier, helper) harus memiliki implementasi product promo yang sama di backend. Saat menambah fitur ke `createOrder`, review apakah `createOrderByCashier` dan flow lain perlu update yang sama. Standardisasi: STD-044.
+
+---
+
+## BUG-091 — Admin Promo Produk: "Internal Server Error" Saat Klik Buat Promo — VARCHAR Overflow (2026-06-20)
+
+**Page:** `/admin` → menu "Promo Produk" → klik "Buat Promo"
+**Reporter:** Admin — internal server error masih terjadi setelah BUG-090 diperbaiki
+
+### Root Cause
+
+Kolom `vouchers.discount_type` didefinisikan sebagai `VARCHAR(10)` (migration 010). Nilai `'PRODUCT_PROMO'` memiliki 13 karakter sehingga melebihi batas kolom → PostgreSQL melempar `value too long for type character varying(10)` → 500 Internal Server Error.
+
+Nilai sebelumnya (`'PERCENT'` = 7 char, `'FIXED'` = 5 char) tidak memiliki masalah ini. Overflow baru muncul saat tipe baru dengan nama lebih panjang ditambahkan.
+
+### Fix
+
+Perluas kolom: `ALTER TABLE vouchers ALTER COLUMN discount_type TYPE VARCHAR(20)`.
+
+Ditambahkan ke:
+- `backend/migrations/032_product_promo.sql` — agar konsisten di environment yang menjalankan migration manual
+- `backend/src/app.js` schema guard — agar diaplikasikan otomatis saat server restart
+- Diaplikasikan langsung ke database saat ini
+
+### Pencegahan
+
+Saat menambahkan tipe baru yang lebih panjang dari tipe yang ada, selalu periksa panjang kolom VARCHAR. Gunakan `VARCHAR(50)` atau lebih untuk kolom tipe/kategori yang berpotensi berkembang.
+
+---
+
+## BUG-090 — Admin Promo Produk: "Internal Server Error" Saat Klik Buat Promo (2026-06-20)
+
+**Page:** `/admin` → menu "Promo Produk" → klik "Buat Promo"
+**Reporter:** Admin — internal server error saat submit form promo baru
+
+### Root Cause
+
+Constraint `vouchers_discount_value_pos CHECK (discount_value > 0)` dari migration 010 tidak direlaksasi saat menambahkan tipe `PRODUCT_PROMO`.
+
+`createProductPromoVoucher()` meng-INSERT ke tabel `vouchers` dengan `discount_value = 0` karena PRODUCT_PROMO tidak memiliki nilai diskon nominal (manfaatnya berupa produk gratis, bukan persen/fixed). Nilai 0 melanggar constraint `discount_value > 0` → PostgreSQL throw constraint violation → 500 Internal Server Error.
+
+Migration 032 sudah meng-extend `vouchers_discount_type_check` dan `vouchers_percent_range`, tetapi lupa meng-drop dan merekonstruksi `vouchers_discount_value_pos`.
+
+### Fix
+
+**`backend/migrations/032_product_promo.sql`** dan **`backend/src/app.js`** (schema guard):
+- DROP CONSTRAINT IF EXISTS `vouchers_discount_value_pos`
+- ADD CONSTRAINT `vouchers_discount_value_pos CHECK (discount_type = 'PRODUCT_PROMO' OR discount_value > 0)`
+
+Constraint baru: PERCENT/FIXED tetap wajib `discount_value > 0`; PRODUCT_PROMO diizinkan `discount_value = 0`.
+
+### Pencegahan
+
+Saat menambahkan tipe baru ke enum/CHECK constraint, review SEMUA constraint yang menyentuh kolom terkait — bukan hanya constraint yang menyebutkan tipe secara eksplisit.
+
+---
+
+## BUG-089 — Admin Promo Produk: Dropdown Masih Kosong Setelah Fix Route (2026-06-20)
+
+**Page:** `/admin` → menu "Promo Produk"
+**Reporter:** Admin — "masih bug" setelah BUG-088 diperbaiki
+
+### Root Cause
+
+Schema guard untuk Migration 031 dan 032 tidak ada di `backend/src/app.js`.
+
+`listProductPromoVouchers()` di `vouchers.service.js` menjalankan query JOIN ke tabel `voucher_product_rule`. Tabel ini dibuat oleh Migration 032, tetapi file migrasi (`032_product_promo.sql`) hanya tersedia di folder `migrations/` — tabel tidak otomatis terbuat di environment yang belum menjalankan migrasi tersebut secara manual. Akibatnya query throw PostgreSQL error `relation "voucher_product_rule" does not exist` → 500 Internal Server Error → `Promise.all` di frontend reject → dropdown `products` dan `tenants` tetap `[]`.
+
+Migration 031 (`tenants.odoo_booth_id`) juga belum memiliki guard.
+
+### Fix
+
+**`backend/src/app.js`** — tambah dua schema guard sebelum `initializeScheduledJobs()`:
+
+```js
+await runSchemaGuard('Migration 031 — tenants.odoo_booth_id', [
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS odoo_booth_id INTEGER DEFAULT NULL`,
+]);
+
+await runSchemaGuard('Migration 032 — Product Promo Engine (Buy X Get Y)', [
+  `ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_discount_type_check`,
+  `ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_percent_range`,
+  `ALTER TABLE vouchers ADD CONSTRAINT vouchers_discount_type_check CHECK (discount_type IN ('PERCENT', 'FIXED', 'PRODUCT_PROMO'))`,
+  `ALTER TABLE vouchers ADD CONSTRAINT vouchers_percent_range CHECK (discount_type <> 'PERCENT' OR (discount_value > 0 AND discount_value <= 100))`,
+  `CREATE TABLE IF NOT EXISTS voucher_product_rule ( ... )`,
+  `ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS is_free     BOOLEAN  NOT NULL DEFAULT FALSE`,
+  `ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS free_reason VARCHAR(50)`,
+  // 4 indexes ...
+]);
+```
+
+### Pencegahan
+
+Setiap file migration baru **wajib** disertai schema guard idempotent di `app.js` (lihat STD-010). Tanpa guard, environment yang tidak menjalankan migration script secara manual akan gagal saat query menyentuh tabel/kolom baru tersebut.
+
+---
+
+## BUG-088 — Admin Promo Produk: Dropdown "Berlaku untuk Tenant" dan "Produk yang Dibeli" Tidak Muncul (2026-06-20)
+
+**Page:** `/admin` → menu "Promo Produk" → modal "Buat Promo Produk Baru"
+**Reporter:** Admin — dropdown tenant dan produk kosong saat membuka modal create promo
+
+### Root Cause
+
+Route ordering bug di `backend/src/modules/vouchers/vouchers.routes.js`.
+
+`adminRouter.get('/product-promos', ...)` didaftarkan **setelah** `adminRouter.get('/:code', ...)`. Karena Express mencocokkan route secara berurutan, request `GET /admin/vouchers/product-promos` ditangkap oleh handler `/:code` dengan `code = 'product-promos'` — route `/product-promos` **tidak pernah dicapai**.
+
+Handler `/:code` memanggil `getVoucherByCode('product-promos')` → tidak ada voucher dengan kode tersebut → throws 404 AppError → `listProductPromos()` di frontend reject.
+
+Di `ProductPromoTab.jsx`, `load()` menggunakan `Promise.all([listProductPromos(), getProducts(), getTenants()])`. Ketika `listProductPromos()` reject, seluruh `Promise.all` reject → catch block dijalankan → `products` dan `tenants` tetap `[]` (nilai awal) → kedua dropdown kosong.
+
+### Fix
+
+**`backend/src/modules/vouchers/vouchers.routes.js`:**
+- Pindahkan `GET /product-promos` dan `POST /product-promos` ke **sebelum** `GET /:code`
+- Tambah komentar `// MUST be registered BEFORE /:code` sebagai reminder
+
+Urutan route `adminRouter` setelah fix:
+```
+GET  /                  ← list semua voucher
+GET  /product-promos    ← ✅ spesifik, harus sebelum /:code
+POST /product-promos    ← ✅ spesifik
+GET  /:code             ← generic, setelah semua rute spesifik
+POST /                  ← create voucher
+PATCH /:code            ← update voucher
+DELETE /:code           ← deactivate voucher
+```
+
+### Pencegahan
+
+Setiap kali menambahkan route dengan path literal (non-parameter) ke router yang sudah punya route `/:param`, **rute literal harus didaftarkan lebih dulu**. Ini adalah aturan standar Express yang mudah terlewat saat menambahkan route baru ke file yang sudah ada.
+
+---
+
 ## BUG-087 — Login Page: Label Email Tampil Sebagai Key (login.email*) dan Placeholder Salah (2026-06-18)
 
 **Page:** `/masuk` — form login email customer

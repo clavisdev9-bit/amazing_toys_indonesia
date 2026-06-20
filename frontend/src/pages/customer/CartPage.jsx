@@ -160,6 +160,7 @@ export default function CartPage() {
     items, updateQty, removeItem, clearCart, totalAmount, addItem,
     markOnHold,
     appliedVoucher, discountAmount, applyVoucher, removeVoucher,
+    freeItems,
   } = useCart();
   const { toggleWish } = useWishlist();
   const { subscribe }  = useWebSocket();
@@ -479,6 +480,70 @@ export default function CartPage() {
           ))}
         </div>
 
+        {/* ── Free items dari product promo (B1G1/B2G1) ───────────────────── */}
+        {freeItems.length > 0 && (
+          <div className="bg-white border-t">
+            <div
+              className="px-4 py-2 flex items-center gap-2"
+              style={{ background: 'rgba(236,252,243,0.85)', borderBottom: '1px solid rgba(22,163,74,0.18)' }}
+            >
+              <span className="text-sm">🎁</span>
+              <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">
+                Item Gratis (Promo Otomatis)
+              </span>
+            </div>
+            {freeItems.map((fi) => (
+              <div
+                key={`free-${fi.product_id}-${fi.free_reason}`}
+                className="px-4 py-3 flex gap-3"
+                style={{ background: 'rgba(240,253,244,0.6)' }}
+              >
+                <div
+                  className="w-14 h-14 rounded-lg flex items-center justify-center shrink-0 text-xl"
+                  style={{ background: 'rgba(220,252,231,0.8)' }}
+                >
+                  🎁
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-1">
+                    <p className="text-sm font-medium text-emerald-800 line-clamp-2 flex-1">
+                      {fi.product_name}
+                    </p>
+                    <span
+                      className="text-[9px] font-bold px-2 py-0.5 rounded-full shrink-0 ml-1"
+                      style={{ background: 'rgba(22,163,74,0.12)', color: '#15803D', border: '1px solid rgba(22,163,74,0.3)' }}
+                    >
+                      GRATIS
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-600 mb-1">
+                    Voucher: {fi.free_reason}
+                    {fi.buy_product_name && ` · Beli ${fi.buy_product_name}`}
+                  </p>
+                  {fi.capped_by_max && (
+                    <p className="text-[10px] text-amber-600">
+                      ⚠️ Gratis dibatasi maks. kuantitas voucher
+                    </p>
+                  )}
+                  {fi.capped_by_stock && (
+                    <p className="text-[10px] text-amber-600">
+                      ⚠️ Gratis dibatasi stok tersedia
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-xs text-emerald-600">
+                      Qty: {fi.quantity} pcs
+                    </span>
+                    <span className="text-sm font-bold text-emerald-700">
+                      {formatRupiah(0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* ── Saved for later section ──────────────────────────────────────── */}
         {savedForLater.length > 0 && (
           <div className="mt-2 bg-white border-t">
@@ -578,11 +643,43 @@ export default function CartPage() {
                 </div>
               )}
 
+              {/* ── Cashier info banner jika ada promo aktif ────────────── */}
+              {freeItems.length > 0 && (
+                <div
+                  className="rounded-xl px-3.5 py-3 mb-3 flex items-start gap-2.5"
+                  style={{
+                    background: 'rgba(254,243,199,0.9)',
+                    border: '1px solid rgba(217,119,6,0.3)',
+                  }}
+                >
+                  <span className="text-amber-500 shrink-0 mt-0.5 text-base">🏷️</span>
+                  <div>
+                    <p className="text-[12px] font-bold text-amber-800">Info Kasir</p>
+                    <p className="text-[11px] text-amber-700 mt-0.5 leading-relaxed">
+                      Order ini mengandung{' '}
+                      <strong>{freeItems.reduce((s, f) => s + f.quantity, 0)} item gratis</strong>{' '}
+                      dari promo{' '}
+                      {[...new Set(freeItems.map(f => f.free_reason))].join(', ')}.
+                      Item gratis sudah tercatat sebagai line item terpisah (Rp 0).
+                      Pastikan diserahkan bersamaan.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-1 mb-3">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-gray-500">{t('cart.subtotal')}</span>
                   <span className="text-gray-700">{formatRupiah(subtotalRaw)}</span>
                 </div>
+                {freeItems.length > 0 && (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-emerald-600">
+                      🎁 Item gratis ({freeItems.reduce((s, f) => s + f.quantity, 0)} pcs)
+                    </span>
+                    <span className="text-emerald-600 font-medium">{formatRupiah(0)}</span>
+                  </div>
+                )}
                 {discountRaw > 0 && (
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-green-600">

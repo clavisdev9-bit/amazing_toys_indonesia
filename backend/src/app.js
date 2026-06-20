@@ -346,6 +346,47 @@ server.listen(PORT, async () => {
     `CREATE INDEX IF NOT EXISTS idx_product_categories_name ON product_categories(name)`,
   ]);
 
+  await runSchemaGuard('Migration 031 — tenants.odoo_booth_id', [
+    `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS odoo_booth_id INTEGER DEFAULT NULL`,
+  ]);
+
+  await runSchemaGuard('Migration 032 — Product Promo Engine (Buy X Get Y)', [
+    // 1a. Expand discount_type column — 'PRODUCT_PROMO' is 13 chars, VARCHAR(10) is too short
+    `ALTER TABLE vouchers ALTER COLUMN discount_type TYPE VARCHAR(20)`,
+    // 1b. Extend / relax vouchers CHECK constraints to accommodate PRODUCT_PROMO
+    `ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_discount_type_check`,
+    `ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_percent_range`,
+    // vouchers_discount_value_pos (discount_value > 0) blocks PRODUCT_PROMO (discount_value = 0)
+    `ALTER TABLE vouchers DROP CONSTRAINT IF EXISTS vouchers_discount_value_pos`,
+    `ALTER TABLE vouchers ADD CONSTRAINT vouchers_discount_type_check
+       CHECK (discount_type IN ('PERCENT', 'FIXED', 'PRODUCT_PROMO'))`,
+    `ALTER TABLE vouchers ADD CONSTRAINT vouchers_percent_range
+       CHECK (discount_type <> 'PERCENT' OR (discount_value > 0 AND discount_value <= 100))`,
+    // PRODUCT_PROMO legitimately has discount_value = 0 (no monetary discount)
+    `ALTER TABLE vouchers ADD CONSTRAINT vouchers_discount_value_pos
+       CHECK (discount_type = 'PRODUCT_PROMO' OR discount_value > 0)`,
+    // 2. voucher_product_rule table
+    `CREATE TABLE IF NOT EXISTS voucher_product_rule (
+       id               SERIAL      PRIMARY KEY,
+       voucher_id       INTEGER     NOT NULL REFERENCES vouchers(id) ON DELETE CASCADE,
+       buy_product_id   VARCHAR(20) NOT NULL REFERENCES products(product_id),
+       free_product_id  VARCHAR(20) REFERENCES products(product_id),
+       buy_qty          INTEGER     NOT NULL DEFAULT 1 CHECK (buy_qty > 0),
+       free_qty         INTEGER     NOT NULL DEFAULT 1 CHECK (free_qty > 0),
+       max_free_qty     INTEGER     CHECK (max_free_qty > 0),
+       priority         INTEGER     NOT NULL DEFAULT 1,
+       created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    // 3. transaction_items: free item tracking
+    `ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS is_free     BOOLEAN     NOT NULL DEFAULT FALSE`,
+    `ALTER TABLE transaction_items ADD COLUMN IF NOT EXISTS free_reason VARCHAR(50)`,
+    // 4. Indexes
+    `CREATE INDEX IF NOT EXISTS idx_vpr_voucher_id     ON voucher_product_rule(voucher_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_vpr_buy_product    ON voucher_product_rule(buy_product_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_vpr_free_product   ON voucher_product_rule(free_product_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_txn_items_is_free  ON transaction_items(is_free) WHERE is_free = TRUE`,
+  ]);
+
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
 

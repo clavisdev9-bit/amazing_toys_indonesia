@@ -199,4 +199,164 @@ async function deactivateVoucher(code) {
   return res.rows[0];
 }
 
-module.exports = { validateVoucher, applyVoucher, getVoucherByCode, listVouchers, createVoucher, updateVoucher, deactivateVoucher };
+/**
+ * Ambil semua active product promo rules untuk product_ids tertentu.
+ * Dipanggil oleh frontend (cart preview) dan backend (checkout).
+ *
+ * @param {string[]} productIds  - array product_id yang ada di cart
+ * @returns {Array} rules dengan info produk gratis
+ */
+async function getActiveProductPromos(productIds = []) {
+  if (!productIds.length) return [];
+
+  const res = await query(
+    `SELECT
+       r.id,
+       r.voucher_id,
+       v.code              AS voucher_code,
+       v.tenant_id         AS voucher_tenant_id,
+       r.buy_product_id,
+       bp.product_name     AS buy_product_name,
+       COALESCE(r.free_product_id, r.buy_product_id) AS free_product_id,
+       fp.product_name     AS free_product_name,
+       fp.price            AS free_product_price,
+       fp.stock_quantity   AS free_product_stock,
+       r.buy_qty,
+       r.free_qty,
+       r.max_free_qty,
+       r.priority
+     FROM voucher_product_rule r
+     JOIN vouchers v
+       ON v.id = r.voucher_id
+      AND v.is_active = TRUE
+      AND NOW() BETWEEN v.valid_from AND v.valid_until
+     JOIN products bp ON bp.product_id = r.buy_product_id AND bp.is_active = TRUE
+     JOIN products fp ON fp.product_id = COALESCE(r.free_product_id, r.buy_product_id)
+                      AND fp.is_active = TRUE
+     WHERE r.buy_product_id = ANY($1)
+     ORDER BY r.priority ASC`,
+    [productIds]
+  );
+  return res.rows;
+}
+
+/**
+ * Hitung free items dari promo rules berdasarkan isi cart.
+ * Pure calculation — tidak menyentuh database.
+ *
+ * @param {Array} cartItems   [{ product_id, quantity }]
+ * @param {Array} rules       hasil getActiveProductPromos()
+ * @returns {Array}           [{ free_product_id, free_product_name, free_qty, voucher_code, stock_available }]
+ */
+function calculateFreeItems(cartItems, rules) {
+  const freeItems = [];
+  for (const rule of rules) {
+    const cartItem = cartItems.find(i => i.product_id === rule.buy_product_id);
+    if (!cartItem) continue;
+
+    const rawFree = Math.floor(cartItem.quantity / rule.buy_qty) * rule.free_qty;
+    if (rawFree <= 0) continue;
+
+    const maxCapped = (rule.max_free_qty != null)
+      ? Math.min(rawFree, rule.max_free_qty)
+      : rawFree;
+
+    const stockAvailable = rule.free_product_stock != null
+      ? parseInt(rule.free_product_stock, 10)
+      : Infinity;
+    const finalQty = Math.min(maxCapped, stockAvailable);
+
+    if (finalQty <= 0) continue;
+
+    freeItems.push({
+      free_product_id:   rule.free_product_id,
+      free_product_name: rule.free_product_name,
+      free_product_price: parseFloat(rule.free_product_price || 0),
+      free_qty:          finalQty,
+      raw_free_qty:      rawFree,
+      max_free_qty:      rule.max_free_qty,
+      stock_available:   stockAvailable,
+      voucher_code:      rule.voucher_code,
+      buy_product_id:    rule.buy_product_id,
+      buy_product_name:  rule.buy_product_name,
+      voucher_tenant_id: rule.voucher_tenant_id,
+      is_same_product:   rule.free_product_id === null,
+      capped_by_max:     rule.max_free_qty != null && rawFree > rule.max_free_qty,
+      capped_by_stock:   stockAvailable < maxCapped,
+    });
+  }
+  return freeItems;
+}
+
+/**
+ * Buat/update voucher bertipe PRODUCT_PROMO beserta rules-nya (atomic).
+ */
+async function createProductPromoVoucher(data) {
+  const {
+    code, description, valid_from, valid_until, tenant_id, usage_limit,
+    created_by, rules = [],
+  } = data;
+
+  if (!rules.length) throw new AppError('Minimal 1 rule produk wajib diisi.', 400);
+
+  return withTransaction(async (client) => {
+    const vRes = await client.query(
+      `INSERT INTO vouchers
+         (code, description, discount_type, discount_value, valid_from, valid_until,
+          tenant_id, usage_limit, created_by)
+       VALUES ($1, $2, 'PRODUCT_PROMO', 0, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [code.trim().toUpperCase(), description || null, valid_from, valid_until,
+       tenant_id || null, usage_limit || null, created_by || null]
+    );
+    const voucher = vRes.rows[0];
+
+    for (const rule of rules) {
+      await client.query(
+        `INSERT INTO voucher_product_rule
+           (voucher_id, buy_product_id, free_product_id, buy_qty, free_qty, max_free_qty, priority)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [voucher.id, rule.buy_product_id, rule.free_product_id || null,
+         rule.buy_qty || 1, rule.free_qty || 1, rule.max_free_qty || null, rule.priority || 1]
+      );
+    }
+
+    const rulesRes = await client.query(
+      `SELECT * FROM voucher_product_rule WHERE voucher_id = $1 ORDER BY priority`,
+      [voucher.id]
+    );
+    return { ...voucher, rules: rulesRes.rows };
+  });
+}
+
+async function listProductPromoVouchers({ activeOnly = false } = {}) {
+  const where = activeOnly
+    ? `WHERE v.is_active = TRUE AND NOW() BETWEEN v.valid_from AND v.valid_until`
+    : `WHERE v.discount_type = 'PRODUCT_PROMO'`;
+  const res = await query(
+    `SELECT v.*,
+       json_agg(
+         json_build_object(
+           'id', r.id,
+           'buy_product_id', r.buy_product_id,
+           'free_product_id', r.free_product_id,
+           'buy_qty', r.buy_qty,
+           'free_qty', r.free_qty,
+           'max_free_qty', r.max_free_qty,
+           'priority', r.priority
+         ) ORDER BY r.priority
+       ) FILTER (WHERE r.id IS NOT NULL) AS rules
+     FROM vouchers v
+     LEFT JOIN voucher_product_rule r ON r.voucher_id = v.id
+     ${where}
+       AND v.discount_type = 'PRODUCT_PROMO'
+     GROUP BY v.id
+     ORDER BY v.created_at DESC`
+  );
+  return res.rows;
+}
+
+module.exports = {
+  validateVoucher, applyVoucher, getVoucherByCode, listVouchers, createVoucher, updateVoucher, deactivateVoucher,
+  getActiveProductPromos, calculateFreeItems, createProductPromoVoucher, listProductPromoVouchers,
+};

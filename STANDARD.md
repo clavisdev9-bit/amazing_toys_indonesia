@@ -2495,3 +2495,214 @@ AND ti.approval_status != 'REJECTED'
 ### Referensi
 
 BUG-082 — Item yang sudah di-approve/reject masih tampil di antrian approval karena items sub-query tidak memfilter `approval_status`.
+
+---
+
+## STD-043 — Express Router: Route Literal Wajib Didaftarkan Sebelum Route Parameter `/:param`
+
+**Berlaku untuk:** Semua Express Router yang memiliki route dengan path literal (non-parameter) dan route dengan parameter dinamis (`/:code`, `/:id`, dsb.) pada HTTP method yang sama.
+
+**Latar Belakang:** BUG-088 — `GET /admin/vouchers/product-promos` ditangkap oleh `GET /:code` karena `product-promos` didaftarkan setelah `/:code`. `getVoucherByCode('product-promos')` melempar 404, seluruh `Promise.all` di frontend reject, dan dropdown Tenant + Produk kosong.
+
+### Aturan
+
+**A. Selalu daftarkan route literal SEBELUM route parameter pada method yang sama:**
+
+```javascript
+// SALAH ❌ — /:code menangkap /product-promos terlebih dahulu
+router.get('/:code', ...);          // line 1
+router.get('/product-promos', ...); // line 2 — TIDAK PERNAH DICAPAI
+
+// BENAR ✅ — literal dulu, parameter belakangan
+router.get('/product-promos', ...); // line 1 — cocok jika path = /product-promos
+router.get('/:code', ...);          // line 2 — fallback untuk kode lainnya
+```
+
+**B. Tambah komentar penjelasan di atas route literal jika konteksnya tidak jelas:**
+
+```javascript
+// MUST be registered BEFORE /:code to avoid Express capturing this as a code param
+router.get('/product-promos', ...);
+router.get('/:code', ...);
+```
+
+**C. Aturan ini berlaku per HTTP method:**
+
+Jika `GET /:code` ada tapi `POST /:code` tidak ada, maka `POST /product-promos` aman di posisi manapun. Namun untuk konsistensi dan mencegah bug saat method baru ditambahkan, **selalu tempatkan semua literal routes sebelum semua parameter routes** dalam satu router block.
+
+**D. Pattern aman untuk router dengan mixed routes:**
+
+```
+router.get('/')             ← list semua
+router.get('/literal-a')    ← ✅ spesifik (sebelum /:param)
+router.post('/literal-b')   ← ✅ spesifik (sebelum /:param)
+router.get('/:param')       ← generic — SELALU di bawah semua literal
+router.post('/')            ← create
+router.patch('/:param')     ← update
+router.delete('/:param')    ← delete
+```
+
+### Checklist — setiap kali menambahkan route baru ke router yang sudah ada
+
+- [ ] Apakah router ini sudah punya `GET /:param`, `POST /:param`, atau sejenisnya?
+- [ ] Jika ya: pastikan route baru (jika literal) ditempatkan **sebelum** route parameter tersebut
+- [ ] Tambah komentar `// MUST be before /:param` jika posisinya mudah diubah secara tidak sengaja
+- [ ] Test manual: panggil endpoint literal baru, pastikan handler yang benar dipanggil (bukan handler /:param)
+
+### Referensi
+
+BUG-088 — `GET /admin/vouchers/product-promos` ditangkap `GET /:code` → 404 → `Promise.all` reject → dropdown Tenant & Produk kosong di modal Promo Produk.
+
+---
+
+## STD-044 — Sinkronisasi Logika Order di Semua Flow: Customer, Kasir, Helper
+
+**Berlaku untuk:** Semua fungsi pembuatan order di `backend/src/modules/orders/orders.service.js`: `createOrder`, `createOrderByCashier`, dan flow helper/approval.
+
+**Latar Belakang:** BUG-092 — Fitur product promo (B1G1/B2G1) diimplementasikan di `createOrder` (flow customer) tetapi tidak di `createOrderByCashier` (flow kasir). Akibatnya voucher `GET22` tidak memberikan item gratis ketika kasir yang melakukan checkout.
+
+### Aturan
+
+**A. Setiap fitur yang memengaruhi isi order WAJIB diimplementasikan di semua flow order:**
+
+| Fitur | `createOrder` | `createOrderByCashier` | Helper/Approval |
+|---|---|---|---|
+| Voucher PERCENT/FIXED | ✅ | ✅ | ✅ |
+| Product promo free items | ✅ | ✅ (STD-044) | Perlu review |
+
+**B. Checklist saat menambahkan logika baru ke `createOrder`:**
+
+- [ ] Apakah logika ini memengaruhi isi atau total order? (item, harga, diskon, stok)
+- [ ] Jika ya: terapkan logika yang sama di `createOrderByCashier`
+- [ ] Jika ada flow helper/approval: review apakah perlu diterapkan juga di sana
+- [ ] Test setiap flow secara terpisah: customer self-order, kasir POS, helper
+
+**C. Pattern implementasi product promo (B1G1/B2G1) di backend:**
+
+```js
+// Setelah validasi stok item reguler:
+let freeItemsList = [];
+const promoRules = await voucherSvc.getActiveProductPromos(productIds);
+if (promoRules.length > 0) {
+  const freeProductIds = [...new Set(promoRules.map(r => r.free_product_id).filter(Boolean))];
+  if (freeProductIds.length > 0) {
+    const freeProductRows = await client.query(
+      `SELECT product_id, stock_quantity, tenant_id FROM products
+       WHERE product_id = ANY($1) AND is_active = TRUE FOR UPDATE`, [freeProductIds]);
+    const freeProductMap = Object.fromEntries(freeProductRows.rows.map(p => [p.product_id, p]));
+    const rulesWithStock = promoRules.map(r => ({
+      ...r, free_product_stock: freeProductMap[r.free_product_id]?.stock_quantity ?? 0,
+    }));
+    freeItemsList = voucherSvc.calculateFreeItems(
+      items.map(i => ({ product_id: i.product_id, quantity: i.quantity })), rulesWithStock);
+    // Cap by available stock
+    for (const fi of freeItemsList) {
+      const fp = freeProductMap[fi.free_product_id];
+      if (!fp || fp.stock_quantity < fi.free_qty) fi.free_qty = Math.max(0, fp?.stock_quantity ?? 0);
+    }
+    freeItemsList = freeItemsList.filter(fi => fi.free_qty > 0);
+  }
+}
+
+// Setelah insert item reguler:
+for (const fi of freeItemsList) {
+  const { rows } = await client.query(`SELECT tenant_id FROM products WHERE product_id = $1`, [fi.free_product_id]);
+  await client.query(
+    `INSERT INTO transaction_items (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal, is_free, free_reason)
+     VALUES ($1, $2, $3, $4, 0, 0, TRUE, $5)`,
+    [transactionId, fi.free_product_id, rows[0]?.tenant_id || null, fi.free_qty, fi.voucher_code]);
+  await client.query(`UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`, [fi.free_qty, fi.free_product_id]);
+}
+```
+
+**D. Pattern implementasi product promo di frontend (halaman dengan local cart state):**
+
+```js
+// Import
+import { getActivePromos } from '../../api/vouchers';
+
+// State + computed
+const [activePromos, setActivePromos] = useState([]);
+const cartKey = cart.map(i => `${i.id}:${i.qty}`).join(',');
+
+useEffect(() => {
+  const productIds = cart.map(i => i.id).filter(Boolean);
+  if (!productIds.length) { setActivePromos([]); return; }
+  getActivePromos(productIds)
+    .then(res => setActivePromos(res.data?.data || []))
+    .catch(() => setActivePromos([]));
+}, [cartKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+const freeItems = useMemo(() => derivePromoFreeItems(
+  cart.map(i => ({ product_id: i.id, quantity: i.qty })), activePromos
+), [cartKey, activePromos]); // eslint-disable-line react-hooks/exhaustive-deps
+```
+
+### Referensi
+
+BUG-092 — Product promo tidak terimplementasi di kasir karena `createOrderByCashier` tidak memiliki logika promo yang sudah ada di `createOrder`.
+
+---
+
+## STD-045 — Komponen dengan State Internal: Wajib Ada Mekanisme Sync dengan Parent
+
+**Berlaku untuk:** Semua React component yang memiliki state internal (`useState`) yang merepresentasikan nilai yang juga dikontrol oleh parent (e.g., applied voucher, selected item, form value).
+
+**Latar Belakang:** BUG-093 — `VoucherInput` memiliki internal `appliedVoucher` state. Ketika parent mereset `appliedVoucher` via `setAppliedVoucher(null)` (dipicu oleh operasi cart), VoucherInput tidak tahu dan tetap menampilkan banner "Voucher applied" meskipun discount sudah 0 di parent.
+
+### Aturan
+
+**A. Pilih satu dari dua pola sinkronisasi:**
+
+| Pola | Kapan Digunakan | Cara |
+|---|---|---|
+| **Fully Controlled** | Component sederhana, parent punya data | Pass `value` + `onChange` sebagai props, hapus internal state |
+| **Key-based Remount** | Component kompleks dengan banyak internal state, reset hanya pada kondisi tertentu | Pass `key` prop yang berubah ketika reset diperlukan |
+
+**B. Jangan biarkan internal state "stale" terhadap parent:**
+
+```jsx
+// ❌ SALAH — VoucherInput tidak tahu parent reset voucher
+function Parent() {
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  function onCartChange() { setAppliedVoucher(null); } // VoucherInput tidak tahu!
+  return <VoucherInput onVoucherApplied={setAppliedVoucher} />;
+}
+
+// ✅ BENAR — Key berubah ketika voucher di-reset, force remount
+function Parent() {
+  const [appliedVoucher, setAppliedVoucher] = useState(null);
+  const [voucherKey, setVoucherKey] = useState(0);
+  function onCartChange() {
+    if (appliedVoucher) setVoucherKey(k => k + 1); // remount only when needed
+    setAppliedVoucher(null);
+  }
+  return <VoucherInput key={voucherKey} onVoucherApplied={setAppliedVoucher} />;
+}
+```
+
+**C. Feature toggle dengan opt-out: backend harus menghormati pilihan user:**
+
+Jika fitur auto-compute (seperti product promo) bisa di-dismiss oleh user, **backend harus menerima flag `skip*`** — jangan hanya sembunyikan UI. Frontend yang dismiss tanpa backend opt-out berarti fitur tetap aktif secara tersembunyi.
+
+```js
+// Frontend
+const res = await createCashierOrder(items, phone, voucher, promoDismissed);
+//                                                           ^^^^^^^^^^^^^^^ skip flag
+
+// Backend
+async function createOrderByCashier(..., skipProductPromo = false) {
+  const promoRules = skipProductPromo ? [] : await voucherSvc.getActiveProductPromos(productIds);
+}
+```
+
+**D. Checklist saat membuat komponen dengan internal state:**
+
+- [ ] Apakah parent bisa mereset/mengubah nilai ini dari luar?
+- [ ] Jika ya: pilih Fully Controlled atau Key-based Remount
+- [ ] Jika menggunakan Key-based: pastikan key hanya berubah saat reset diperlukan (bukan setiap render)
+- [ ] Dokumentasikan di JSDoc komponen: "Reset via `key` prop"
+
+### Referensi
+
+BUG-093 — VoucherInput stale state pada CashierPOSPage; promo auto-trigger tanpa dismiss mechanism.

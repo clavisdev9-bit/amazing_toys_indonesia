@@ -4,7 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { useLang } from '../../context/LangContext';
 import { lookupPayment, processPayment } from '../../api/payments';
 import { getProducts, getCategories } from '../../api/products';
-import { addItemToTransaction, applyVoucherToOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
+import { addItemToTransaction, applyVoucherToOrder, cancelCashierOrder, createDeleteRequest, getPendingDeleteRequests } from '../../api/cashier';
 import { formatRupiah, formatDate } from '../../utils/format';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../hooks/useToast';
@@ -105,6 +105,8 @@ export default function PaymentPage() {
   const [success, setSuccess] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [confirmModal, setConfirmModal] = useState(false);
+  const [cancelModal, setCancelModal]   = useState(false);
+  const [cancelling, setCancelling]     = useState(false);
 
   // Voucher state
   const [voucherApplying, setVoucherApplying] = useState(false);
@@ -304,6 +306,19 @@ export default function PaymentPage() {
     addToast('Receipt printed', 'success');
   }
 
+  async function handleCancelOrder() {
+    setCancelling(true);
+    try {
+      await cancelCashierOrder(transactionId);
+      navigate('/cashier/pos', { replace: true });
+    } catch (err) {
+      addToast(err.response?.data?.message ?? 'Gagal membatalkan transaksi. Coba lagi.', 'error');
+      setCancelModal(false);
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   const customer = txn
     ? { name: txn.customer_name, email: txn.customer_email ?? '', phone: txn.customer_phone }
     : null;
@@ -378,12 +393,22 @@ export default function PaymentPage() {
 
         {/* ── Kiri: transaksi + form pembayaran ──────────────────────── */}
         <div className="w-[460px] shrink-0 flex flex-col gap-4">
-          <button
-            onClick={() => navigate('/cashier')}
-            className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600 self-start"
-          >
-            {t('back')}
-          </button>
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => navigate('/cashier/pos')}
+              className="flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600"
+            >
+              {t('back')}
+            </button>
+            {txn && isEditable && (
+              <button
+                onClick={() => setCancelModal(true)}
+                className="flex items-center gap-1.5 text-sm font-medium text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 px-3 py-1 rounded-lg transition-colors"
+              >
+                ✕ Batalkan Transaksi
+              </button>
+            )}
+          </div>
 
           {error && !txn && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
@@ -649,6 +674,47 @@ export default function PaymentPage() {
           </div>
         )}
       </div>
+
+      {/* Konfirmasi batalkan transaksi */}
+      <Modal
+        open={cancelModal}
+        onClose={() => !cancelling && setCancelModal(false)}
+        title="Batalkan Transaksi"
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600">
+            Apakah Anda yakin ingin membatalkan transaksi ini?
+          </p>
+          <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">ID Transaksi</span>
+              <span className="font-mono font-bold text-gray-900">{txn?.transaction_id}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Total</span>
+              <span className="font-bold text-red-700">{formatRupiah(txn?.total_amount)}</span>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">Stok produk akan dikembalikan. Tindakan ini tidak dapat diurungkan.</p>
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="secondary"
+              className="flex-1"
+              disabled={cancelling}
+              onClick={() => setCancelModal(false)}
+            >
+              Kembali
+            </Button>
+            <Button
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              loading={cancelling}
+              onClick={handleCancelOrder}
+            >
+              Ya, Batalkan
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* CR-054: Konfirmasi sebelum proses pembayaran */}
       <Modal

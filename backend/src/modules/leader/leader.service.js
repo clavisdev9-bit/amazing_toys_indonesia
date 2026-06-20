@@ -532,6 +532,8 @@ async function getTopProducts({ dateFrom, dateTo, tenantId, limit = 20 }) {
        p.product_id,
        p.product_name,
        p.category,
+       p.stock_quantity,
+       p.stock_status,
        ten.tenant_name,
        SUM(ti.quantity)::INTEGER   AS qty_sold,
        ti.unit_price               AS price,
@@ -541,21 +543,23 @@ async function getTopProducts({ dateFrom, dateTo, tenantId, limit = 20 }) {
      JOIN products p      ON p.product_id       = ti.product_id
      JOIN tenants ten     ON ten.tenant_id       = ti.tenant_id
      WHERE ${conditions.join(' AND ')}
-     GROUP BY p.product_id, p.product_name, p.category, ten.tenant_name, ti.unit_price
+     GROUP BY p.product_id, p.product_name, p.category, p.stock_quantity, p.stock_status, ten.tenant_name, ti.unit_price
      ORDER BY revenue DESC
      LIMIT $${params.length + 1}`,
     [...params, limit]
   );
 
   return result.rows.map((r, i) => ({
-    rank:        i + 1,
-    productId:   r.product_id,
-    productName: r.product_name,
-    category:    r.category,
-    tenantName:  r.tenant_name,
-    qtySold:     r.qty_sold,
-    price:       Number(r.price),
-    revenue:     Number(r.revenue),
+    rank:          i + 1,
+    productId:     r.product_id,
+    productName:   r.product_name,
+    category:      r.category,
+    tenantName:    r.tenant_name,
+    qtySold:       r.qty_sold,
+    price:         Number(r.price),
+    revenue:       Number(r.revenue),
+    stockQuantity: r.stock_quantity,
+    stockStatus:   r.stock_status,
   }));
 }
 

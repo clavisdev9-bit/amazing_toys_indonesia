@@ -140,6 +140,46 @@ async function createOrder(customerId, items, voucherCode = null) {
       }
     }
 
+    // 2b. Product promo: hitung free items, lock & validasi stok free products
+    const isPreorderOrder = items.some(i => productMap[i.product_id]?.is_preorder);
+    let freeItemsList = [];
+
+    if (!isPreorderOrder) {
+      const promoRules = await voucherSvc.getActiveProductPromos(productIds);
+
+      if (promoRules.length > 0) {
+        // Lock free product rows untuk mencegah race condition stok
+        const freeProductIds = [...new Set(promoRules.map(r => r.free_product_id))];
+        const lockClauseFree = isHelperApproveMode ? '' : ' FOR UPDATE';
+        const freeProductRows = await client.query(
+          `SELECT product_id, product_name, stock_quantity, stock_status, tenant_id
+           FROM products WHERE product_id = ANY($1) AND is_active = TRUE${lockClauseFree}`,
+          [freeProductIds]
+        );
+        const freeProductMap = Object.fromEntries(freeProductRows.rows.map(p => [p.product_id, p]));
+
+        // Inject stok aktual ke dalam rules sebelum kalkulasi
+        const rulesWithStock = promoRules.map(r => ({
+          ...r,
+          free_product_stock: freeProductMap[r.free_product_id]?.stock_quantity ?? 0,
+        }));
+
+        const cartForCalc = items.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
+        freeItemsList = voucherSvc.calculateFreeItems(cartForCalc, rulesWithStock);
+
+        // Validasi stok free items
+        for (const fi of freeItemsList) {
+          const fp = freeProductMap[fi.free_product_id];
+          if (!fp || fp.stock_quantity < fi.free_qty) {
+            // Kurangi qty gratis sampai stok yang tersedia
+            const available = fp ? fp.stock_quantity : 0;
+            fi.free_qty = Math.max(0, available);
+          }
+        }
+        freeItemsList = freeItemsList.filter(fi => fi.free_qty > 0);
+      }
+    }
+
     // 3. Calculate totals
     const TAX_RATE       = 0;
     const subtotalAmount = items.reduce((sum, item) => {
@@ -218,6 +258,32 @@ async function createOrder(customerId, items, voucherCode = null) {
       }
     }
 
+    // 8b. Insert free items dari product promo
+    for (const fi of freeItemsList) {
+      const freeProductRow = await client.query(
+        `SELECT tenant_id FROM products WHERE product_id = $1`,
+        [fi.free_product_id]
+      );
+      const freeTenantId = freeProductRow.rows[0]?.tenant_id || null;
+
+      await client.query(
+        `INSERT INTO transaction_items
+           (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal,
+            approval_status, is_free, free_reason)
+         VALUES ($1, $2, $3, $4, 0, 0, $5, TRUE, $6)`,
+        [transactionId, fi.free_product_id, freeTenantId, fi.free_qty,
+         isHelperApproveMode ? 'PENDING' : 'APPROVED', fi.voucher_code]
+      );
+
+      // Deduct stok free item sama seperti item biasa
+      if (!isHelperApproveMode) {
+        await client.query(
+          `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+          [fi.free_qty, fi.free_product_id]
+        );
+      }
+    }
+
     // 9. Record voucher usage — only when stock is immediately reserved
     if (!isHelperApproveMode && voucherCode && discountAmount > 0) {
       try {
@@ -240,7 +306,12 @@ async function createOrder(customerId, items, voucherCode = null) {
     await writeAuditLog({
       action: 'TXN_CREATED', actorId: customerId, actorRole: 'CUSTOMER',
       entityType: 'TRANSACTION', entityId: transactionId,
-      newValue: { customerId, totalAmount, items: items.length, discountAmount, voucherCode, status: initialStatus, orderType },
+      newValue: {
+        customerId, totalAmount, items: items.length, discountAmount, voucherCode,
+        status: initialStatus, orderType,
+        freeItems: freeItemsList.length,
+        freeItemCodes: [...new Set(freeItemsList.map(f => f.voucher_code))],
+      },
     });
 
     console.log('Order created - TXN:', transactionId, 'Status:', initialStatus);
@@ -267,6 +338,12 @@ async function createOrder(customerId, items, voucherCode = null) {
       discountAmount, voucherCode: voucherCode || null, expiresAt,
       qrPayload: qrPayload || null,
       status: initialStatus,
+      freeItems: freeItemsList.map(fi => ({
+        product_id:   fi.free_product_id,
+        product_name: fi.free_product_name,
+        quantity:     fi.free_qty,
+        voucher_code: fi.voucher_code,
+      })),
     };
   });
 
@@ -575,7 +652,7 @@ async function removeOrderItem(transactionId, customerId, productId) {
  * @param {Array}       items
  * @param {string|null} voucherCode  optional voucher code
  */
-async function createOrderByCashier(cashierId, items, voucherCode = null, customerPhone = null) {
+async function createOrderByCashier(cashierId, items, voucherCode = null, customerPhone = null, skipProductPromo = false) {
   if (!items || items.length === 0) throw new AppError('Keranjang kosong.');
 
   const maxItems = _getMaxItemsPerOrder();
@@ -622,6 +699,34 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
       const p = productMap[item.product_id];
       if (p.stock_status === 'OUT_OF_STOCK' || p.stock_quantity < item.quantity) {
         throw new AppError(`Produk "${p.product_name}" tidak tersedia dalam jumlah yang diminta.`);
+      }
+    }
+
+    // 2b. Product promo: hitung free items, lock & validasi stok free products
+    // Dilewati jika kasir memilih untuk tidak menerapkan promo (skipProductPromo=true)
+    let freeItemsList = [];
+    const promoRules = skipProductPromo ? [] : await voucherSvc.getActiveProductPromos(productIds);
+    if (promoRules.length > 0) {
+      const freeProductIds = [...new Set(promoRules.map(r => r.free_product_id).filter(Boolean))];
+      if (freeProductIds.length > 0) {
+        const freeProductRows = await client.query(
+          `SELECT product_id, product_name, stock_quantity, stock_status, tenant_id
+           FROM products WHERE product_id = ANY($1) AND is_active = TRUE FOR UPDATE`,
+          [freeProductIds]
+        );
+        const freeProductMap = Object.fromEntries(freeProductRows.rows.map(p => [p.product_id, p]));
+        const rulesWithStock = promoRules.map(r => ({
+          ...r,
+          free_product_stock: freeProductMap[r.free_product_id]?.stock_quantity ?? 0,
+        }));
+        const cartForCalc = items.map(i => ({ product_id: i.product_id, quantity: i.quantity }));
+        freeItemsList = voucherSvc.calculateFreeItems(cartForCalc, rulesWithStock);
+        for (const fi of freeItemsList) {
+          const fp = freeProductMap[fi.free_product_id];
+          const available = fp ? fp.stock_quantity : 0;
+          if (!fp || fp.stock_quantity < fi.free_qty) fi.free_qty = Math.max(0, available);
+        }
+        freeItemsList = freeItemsList.filter(fi => fi.free_qty > 0);
       }
     }
 
@@ -681,6 +786,25 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
       await client.query(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
         [item.quantity, item.product_id]
+      );
+    }
+
+    // 6b. Insert free items dari product promo
+    for (const fi of freeItemsList) {
+      const freeProductRow = await client.query(
+        `SELECT tenant_id FROM products WHERE product_id = $1`,
+        [fi.free_product_id]
+      );
+      const freeTenantId = freeProductRow.rows[0]?.tenant_id || null;
+      await client.query(
+        `INSERT INTO transaction_items
+           (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal, is_free, free_reason)
+         VALUES ($1, $2, $3, $4, 0, 0, TRUE, $5)`,
+        [transactionId, fi.free_product_id, freeTenantId, fi.free_qty, fi.voucher_code]
+      );
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
+        [fi.free_qty, fi.free_product_id]
       );
     }
 
@@ -995,4 +1119,61 @@ async function partialProcessOrder(transactionId, customerId) {
   };
 }
 
-module.exports = { createOrder, createOrderByCashier, addItemToTransaction, applyVoucherToTransaction, getTransaction, cancelOrder, getCustomerOrders, updateItemQuantity, removeOrderItem, partialProcessOrder };
+/**
+ * Cashier (or Leader) cancels an active transaction.
+ * Restores stock for all items (including free promo items), marks as CANCELLED.
+ */
+async function cancelOrderByCashier(transactionId, cashierId) {
+  return withTransaction(async (client) => {
+    const txResult = await client.query(
+      `SELECT * FROM transactions WHERE transaction_id = $1 FOR UPDATE`,
+      [transactionId]
+    );
+    const txn = txResult.rows[0];
+    if (!txn) throw new AppError('Transaksi tidak ditemukan.', 404);
+
+    const CANCELLABLE = ['PENDING', 'RESERVED', 'WAITING_PAYMENT'];
+    if (!CANCELLABLE.includes(txn.status)) {
+      throw new AppError(
+        `Hanya transaksi aktif (${CANCELLABLE.join('/')}) yang dapat dibatalkan. Status saat ini: ${txn.status}.`,
+        422
+      );
+    }
+
+    // Restore stock for all items including free promo items
+    const items = await client.query(
+      `SELECT product_id, quantity FROM transaction_items WHERE transaction_id = $1`,
+      [transactionId]
+    );
+    for (const item of items.rows) {
+      await client.query(
+        `UPDATE products SET stock_quantity = stock_quantity + $1 WHERE product_id = $2`,
+        [item.quantity, item.product_id]
+      );
+    }
+
+    await client.query(
+      `UPDATE transactions SET status = 'CANCELLED', cancelled_at = NOW(),
+       cancellation_reason = 'Cancelled by cashier'
+       WHERE transaction_id = $1`,
+      [transactionId]
+    );
+
+    await writeAuditLog({
+      action: 'TXN_CANCELLED', actorId: cashierId, actorRole: 'CASHIER',
+      entityType: 'TRANSACTION', entityId: transactionId,
+      oldValue: { status: txn.status }, newValue: { status: 'CANCELLED' },
+    });
+
+    fireWebhook('/webhook/order-cancelled', {
+      transactionId,
+      status: 'CANCELLED',
+      cancelledAt: new Date().toISOString(),
+      cashierId,
+    });
+
+    return { transactionId, status: 'CANCELLED' };
+  });
+}
+
+module.exports = { createOrder, createOrderByCashier, addItemToTransaction, applyVoucherToTransaction, getTransaction, cancelOrder, cancelOrderByCashier, getCustomerOrders, updateItemQuantity, removeOrderItem, partialProcessOrder };
