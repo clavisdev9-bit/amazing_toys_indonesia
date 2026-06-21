@@ -130,7 +130,8 @@
       "Bash(grep -r odoo_categ_name 'C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\backend\\\\migrations\" 2>/dev/null | head -5 *)",
       "Bash(node -e \"require\\('./src/modules/admin/bulkUpload.controller'\\)\")",
       "Bash(node -e \"require\\('./src/modules/admin/bulkUploadMinimal.controller'\\)\")",
-      "Bash(dir)"
+      "Bash(dir)",
+      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='discount_percent';\" 2>&1)"
     ]
   }
 }

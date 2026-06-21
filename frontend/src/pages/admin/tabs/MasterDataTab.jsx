@@ -28,6 +28,7 @@ import { useOdooProductCategories } from '../../../hooks/useOdooProductCategorie
 
 const EMPTY_FORM = {
   product_id: '', product_name: '', category: '', price: '',
+  discount_percent: '',
   tenant_id: '', barcode: '', stock_quantity: '0', description: '', image_url: '',
   odoo_categ_id: null, odoo_categ_name: '', is_active: true,
   is_preorder: false, preorder_note: '',
@@ -80,6 +81,13 @@ function FormFields({ isEdit, form, setForm, tenants, categories, odooCategories
           onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
           required />
       </div>
+      <Input
+        label="Diskon (%)"
+        type="number" min="0" max="99" step="0.01"
+        placeholder="Kosongkan jika tidak ada diskon"
+        value={form.discount_percent}
+        onChange={(e) => setForm((f) => ({ ...f, discount_percent: e.target.value }))}
+      />
       <div className="grid grid-cols-2 gap-3">
         {!isEdit ? (
           <div className="flex flex-col gap-1">
@@ -454,20 +462,21 @@ export default function MasterDataTab() {
   function openEdit(p) {
     const odooCat = odooCategories.find(c => c.id === p.odoo_categ_id) ?? null;
     setForm({
-      product_id:      p.product_id,
-      product_name:    p.product_name,
-      category:        p.category,
-      price:           String(p.price),
-      tenant_id:       p.tenant_id,
-      barcode:         p.barcode,
-      stock_quantity:  String(p.stock_quantity),
-      description:     p.description || '',
-      image_url:       p.image_url   || '',
-      odoo_categ_id:   p.odoo_categ_id ?? null,
-      odoo_categ_name: odooCat?.completeName ?? '',
-      is_active:       p.is_active ?? true,
-      is_preorder:     p.is_preorder ?? false,
-      preorder_note:   p.preorder_note || '',
+      product_id:       p.product_id,
+      product_name:     p.product_name,
+      category:         p.category,
+      price:            String(p.price),
+      discount_percent: p.discount_percent != null ? String(p.discount_percent) : '',
+      tenant_id:        p.tenant_id,
+      barcode:          p.barcode,
+      stock_quantity:   String(p.stock_quantity),
+      description:      p.description || '',
+      image_url:        p.image_url   || '',
+      odoo_categ_id:    p.odoo_categ_id ?? null,
+      odoo_categ_name:  odooCat?.completeName ?? '',
+      is_active:        p.is_active ?? true,
+      is_preorder:      p.is_preorder ?? false,
+      preorder_note:    p.preorder_note || '',
     });
     setFormError('');
     setEditModal(p);
@@ -506,19 +515,20 @@ export default function MasterDataTab() {
     setSaving(true);
     try {
       await adminUpdateProduct(editModal.product_id, {
-        product_name:   form.product_name,
-        category:       resolveCategory(form.category),
-        price:          parseFloat(form.price),
-        stock_quantity: parseInt(form.stock_quantity, 10),
-        barcode:        form.barcode,
-        tenant_id:      form.tenant_id,
-        description:    form.description || null,
-        image_url:      form.image_url   || null,
-        categ_id:       form.odoo_categ_id,
-        categ_name:     form.odoo_categ_name || null,
-        is_active:      form.is_active,
-        is_preorder:    form.is_preorder,
-        preorder_note:  form.is_preorder ? (form.preorder_note || null) : null,
+        product_name:     form.product_name,
+        category:         resolveCategory(form.category),
+        price:            parseFloat(form.price),
+        discount_percent: form.discount_percent !== '' ? parseFloat(form.discount_percent) : null,
+        stock_quantity:   parseInt(form.stock_quantity, 10),
+        barcode:          form.barcode,
+        tenant_id:        form.tenant_id,
+        description:      form.description || null,
+        image_url:        form.image_url   || null,
+        categ_id:         form.odoo_categ_id,
+        categ_name:       form.odoo_categ_name || null,
+        is_active:        form.is_active,
+        is_preorder:      form.is_preorder,
+        preorder_note:    form.is_preorder ? (form.preorder_note || null) : null,
       });
       addToast('Produk diperbarui.', 'success');
       setEditModal(null);
@@ -802,7 +812,7 @@ export default function MasterDataTab() {
                       title="Pilih semua aktif"
                     />
                   </th>
-                  {['ID / Nama','Deskripsi','Kategori','Harga','Stok','Tenant','Barcode','Odoo ID','Status','Foto','Diperbarui','Aksi'].map((h) => (
+                  {['ID / Nama','Deskripsi','Kategori','Harga','Diskon','Stok','Tenant','Barcode','Odoo ID','Status','Foto','Diperbarui','Aksi'].map((h) => (
                     <th key={h} className="px-3 py-2.5 text-left text-xs font-semibold text-gray-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -832,6 +842,11 @@ export default function MasterDataTab() {
                     </td>
                     <td className="px-3 py-2.5 text-xs text-gray-600 whitespace-nowrap">{p.category}</td>
                     <td className="px-3 py-2.5 text-xs text-gray-700 whitespace-nowrap">{formatRupiah(p.price)}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap">
+                      {p.discount_percent > 0
+                        ? <span className="font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(224,49,49,0.10)', color: '#C92A2A' }}>{p.discount_percent}%</span>
+                        : <span className="text-gray-300">—</span>}
+                    </td>
                     <td className="px-3 py-2.5 text-xs tabular-nums whitespace-nowrap">
                       <span className={`font-semibold ${
                         p.stock_quantity <= 0  ? 'text-red-600'

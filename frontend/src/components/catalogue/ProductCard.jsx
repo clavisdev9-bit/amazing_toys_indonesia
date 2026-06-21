@@ -266,6 +266,11 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
   const isHelperMode  = (config?.order_mode ?? 'HELPER_INPUT') === 'HELPER_INPUT';
   const isApproveMode = config?.order_mode === 'HELPER_APPROVE';
 
+  const discountPct    = product.discount_percent > 0 ? product.discount_percent : null;
+  const effectivePrice = discountPct
+    ? Math.round(product.price * (1 - discountPct / 100))
+    : product.price;
+
   const { key: stockKey, level: stockLevel } = getStockStatus(product.stock);
   const addable = canAddToCart(product.stock);
   const wished  = isWished(product.id);
@@ -277,13 +282,14 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
   function handleAddToCart(e) {
     e.stopPropagation();
     addItem({
-      product_id:   product.id,
-      product_name: product.name,
-      price:        product.price,
-      tenant_id:    product.tenant_id,
-      tenant_name:  product.tenant_name,
-      image_url:    product.image_url || null,
-      is_on_hold:   product.is_on_hold || false,
+      product_id:       product.id,
+      product_name:     product.name,
+      price:            product.price,
+      discount_percent: product.discount_percent ?? null,
+      tenant_id:        product.tenant_id,
+      tenant_name:      product.tenant_name,
+      image_url:        product.image_url || null,
+      is_on_hold:       product.is_on_hold || false,
     }, 1);
     setAdded(true);
     setTimeout(() => setAdded(false), 1500);
@@ -340,6 +346,16 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
           />
         )}
 
+        {/* SALE badge overlay */}
+        {discountPct && (
+          <span
+            className="absolute top-2 left-2 text-[9px] font-black px-1.5 py-0.5 rounded-md tracking-wide"
+            style={{ background: 'rgba(224,49,49,0.90)', color: '#fff', backdropFilter: 'blur(6px)' }}
+          >
+            SALE
+          </span>
+        )}
+
         {/* PRE-ORDER badge overlay */}
         {product.is_preorder && (
           <span
@@ -391,12 +407,26 @@ export default function ProductCard({ product, tourAttr, isFirstCard }) {
           {product.tenant_name || ''}
         </p>
 
+        {/* Harga — tampilkan coret + efektif jika ada diskon */}
         <div className="flex items-center justify-between gap-1">
-          <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(product.price)}</span>
-          {product.is_preorder
-            ? <span className="text-[10px] font-bold px-2 py-0.5 rounded-[8px]" style={{ background: 'rgba(255,237,213,0.85)', color: '#EA580C', border: '1px solid rgba(234,88,12,0.15)' }}>Pre-Order</span>
-            : <StockBadge level={stockLevel} label={t(stockKey)} />
-          }
+          <div className="flex flex-col leading-tight">
+            {discountPct && (
+              <span className="text-[10px] text-gray-400 line-through">{formatPrice(product.price)}</span>
+            )}
+            <span className="text-[14px] font-extrabold text-[#3B5BDB]">{formatPrice(effectivePrice)}</span>
+          </div>
+          {discountPct ? (
+            <span
+              className="text-[10px] font-black px-1.5 py-0.5 rounded-[8px] shrink-0"
+              style={{ background: 'rgba(224,49,49,0.10)', color: '#C92A2A', border: '1px solid rgba(201,42,42,0.15)' }}
+            >
+              -{Math.round(discountPct)}%
+            </span>
+          ) : product.is_preorder ? (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-[8px]" style={{ background: 'rgba(255,237,213,0.85)', color: '#EA580C', border: '1px solid rgba(234,88,12,0.15)' }}>Pre-Order</span>
+          ) : (
+            <StockBadge level={stockLevel} label={t(stockKey)} />
+          )}
         </div>
 
         {/* Add to cart button — hidden in helper/approve mode */}

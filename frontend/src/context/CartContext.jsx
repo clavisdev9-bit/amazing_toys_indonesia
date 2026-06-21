@@ -57,6 +57,11 @@ function derivePromoFreeItems(cartItems, rules) {
   return freeItems;
 }
 
+function itemEffectivePrice(item) {
+  const d = parseFloat(item.discount_percent);
+  return (d > 0) ? Math.round(parseFloat(item.price) * (1 - d / 100)) : parseFloat(item.price);
+}
+
 export function CartProvider({ children }) {
   const [items, setItems] = useState(loadCart);
 
@@ -113,15 +118,16 @@ export function CartProvider({ children }) {
         );
       } else {
         next = [...prev, {
-          product_id:   product.product_id,
-          product_name: product.product_name,
-          price:        product.price,
-          tenant_id:    product.tenant_id,
-          tenant_name:  product.tenant_name,
-          image_url:    product.image_url,
-          is_on_hold:   product.is_on_hold  || false,
-          is_preorder:  product.is_preorder || false,
-          quantity:     qty,
+          product_id:       product.product_id,
+          product_name:     product.product_name,
+          price:            product.price,
+          discount_percent: product.discount_percent ?? null,
+          tenant_id:        product.tenant_id,
+          tenant_name:      product.tenant_name,
+          image_url:        product.image_url,
+          is_on_hold:       product.is_on_hold  || false,
+          is_preorder:      product.is_preorder || false,
+          quantity:         qty,
         }];
       }
       saveCart(next);
@@ -166,7 +172,7 @@ export function CartProvider({ children }) {
     });
   }, []);
 
-  const totalAmount = items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const totalAmount = items.reduce((sum, i) => sum + itemEffectivePrice(i) * i.quantity, 0);
   const totalItems  = items.reduce((sum, i) => sum + i.quantity, 0);
 
   return (
@@ -175,6 +181,7 @@ export function CartProvider({ children }) {
       markOnHold,
       appliedVoucher, discountAmount, applyVoucher, removeVoucher,
       freeItems, activePromos,
+      itemEffectivePrice,
     }}>
       {children}
     </CartContext.Provider>

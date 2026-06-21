@@ -41,6 +41,7 @@ function normalizeProduct(p) {
     id:             p.product_id,
     name:           p.product_name,
     price:          p.price,
+    discount_percent: p.discount_percent ? parseFloat(p.discount_percent) : null,
     category:       p.category,
     stock:          p.stock_quantity,
     stock_status:   p.stock_status,

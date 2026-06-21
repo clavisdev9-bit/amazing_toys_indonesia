@@ -18,6 +18,7 @@ async function listProducts({ tenantId, category, search, inStockOnly, page = 1,
 
   const sql = `
     SELECT p.product_id, p.product_name, p.category, p.price,
+           p.discount_percent,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.odoo_categ_name,
            p.is_on_hold, p.is_display_only, p.max_per_customer,
@@ -81,7 +82,7 @@ async function createProduct(data) {
 async function updateProduct(productId, data) {
   const fields = [];
   const params = [];
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active'];
+  const allowed = ['product_name', 'category', 'price', 'discount_percent', 'stock_quantity', 'image_url', 'description', 'is_active'];
 
   for (const key of allowed) {
     if (data[key] !== undefined) {

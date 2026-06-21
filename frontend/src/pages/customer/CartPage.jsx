@@ -160,7 +160,7 @@ export default function CartPage() {
     items, updateQty, removeItem, clearCart, totalAmount, addItem,
     markOnHold,
     appliedVoucher, discountAmount, applyVoucher, removeVoucher,
-    freeItems,
+    freeItems, itemEffectivePrice,
   } = useCart();
   const { toggleWish } = useWishlist();
   const { subscribe }  = useWebSocket();
@@ -468,12 +468,19 @@ export default function CartPage() {
                       className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-blue-600"
                     >+</button>
                   </div>
-                  <span
-                    className="text-sm font-semibold"
-                    style={{ color: item.is_on_hold ? '#92400E' : '#1D4ED8' }}
-                  >
-                    {formatRupiah(item.price * item.quantity)}
-                  </span>
+                  <div className="flex flex-col items-end">
+                    {item.discount_percent > 0 && (
+                      <span className="text-[10px] text-gray-400 line-through">
+                        {formatRupiah(item.price * item.quantity)}
+                      </span>
+                    )}
+                    <span
+                      className="text-sm font-semibold"
+                      style={{ color: item.is_on_hold ? '#92400E' : '#1D4ED8' }}
+                    >
+                      {formatRupiah(itemEffectivePrice(item) * item.quantity)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
