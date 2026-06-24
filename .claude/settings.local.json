@@ -131,7 +131,10 @@
       "Bash(node -e \"require\\('./src/modules/admin/bulkUpload.controller'\\)\")",
       "Bash(node -e \"require\\('./src/modules/admin/bulkUploadMinimal.controller'\\)\")",
       "Bash(dir)",
-      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='discount_percent';\" 2>&1)"
+      "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='discount_percent';\" 2>&1)",
+      "Read(//c/Users/arist/AppData/Local/Roaming/Claude/local-agent-mode-sessions/skills-plugin/605749a9-85b7-40e2-b061-75506500d06e/46749590-c3c9-4e21-9c2a-b01ae7daaa68/skills/**)",
+      "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Dev-amazing-toys-odoo-online---Hybrid\\\\eab0b057-8796-4928-b917-e2f3be36ccd5\\\\scratchpad\\\\create_master_template.py\")",
+      "PowerShell(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Dev-amazing-toys-odoo-online---Hybrid\\\\eab0b057-8796-4928-b917-e2f3be36ccd5\\\\scratchpad\\\\create_master_template.py\" 2>&1)"
     ]
   }
 }
