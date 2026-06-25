@@ -1,5 +1,237 @@
 # Resolution Log
 
+## BUG-097 — `approveOrder()` Menimpa Item REJECTED Kembali ke APPROVED (2026-06-25)
+
+**Page:** `/pesanan/:id` (TXN-20260625-00122)
+**Reporter:** Helper menolak "Wrist Strap-Starlight × 1" (habis stok) via `rejectItem()`, lalu meng-approve sisa item via `approveOrder()`. Halaman customer masih menampilkan kedua item padahal seharusnya hanya "1974 Godzilla - Silver × 1" yang tampil. Investigasi DB menunjukkan kedua item `approval_status = 'APPROVED'` dan `total_amount` masih mencakup harga Wrist Strap.
+
+### Root Cause
+
+Empat kerusakan berurutan di `approveOrder()` — `backend/src/modules/helper/helper.service.js`:
+
+**1. Items query mengambil semua item termasuk REJECTED**
+```sql
+-- Sebelum (buggy): seluruh item booth tanpa filter — stok REJECTED ikut terpotong
+WHERE ti.transaction_id = $1 AND ti.tenant_id = $2
+
+-- Sesudah (fixed): hanya item PENDING untuk validasi & deduct stok
+WHERE ti.transaction_id = $1 AND ti.tenant_id = $2
+  AND ti.approval_status = 'PENDING'
+```
+
+**2. UPDATE mark approved menimpa status REJECTED — ini root cause utama**
+```sql
+-- Sebelum (buggy): overwrite SEMUA item termasuk REJECTED → APPROVED
+UPDATE transaction_items SET approval_status = 'APPROVED'
+WHERE transaction_id = $1 AND tenant_id = $2
+
+-- Sesudah (fixed): hanya update item yang masih PENDING
+UPDATE transaction_items SET approval_status = 'APPROVED'
+WHERE transaction_id = $1 AND tenant_id = $2
+  AND approval_status = 'PENDING'
+```
+
+**3. `pendingCheck` salah menghitung resolved state**
+```sql
+-- Sebelum (buggy): item REJECTED dihitung sebagai "belum APPROVED" → allApproved selalu false
+WHERE transaction_id = $1 AND approval_status != 'APPROVED'
+
+-- Sesudah (fixed): hanya hitung item yang belum diputuskan (masih PENDING)
+WHERE transaction_id = $1 AND approval_status = 'PENDING'
+```
+
+**4. `total_amount` tidak diperbarui saat ada item REJECTED**
+Setelah transisi ke PENDING, `total_amount` masih menyimpan nilai awal (termasuk harga item REJECTED). Ditambahkan query kalkulasi ulang dari APPROVED items saja, lalu dipakai untuk update `total_amount = $10` di UPDATE transactions.
+
+### Fix
+
+**`backend/src/modules/helper/helper.service.js`** — `approveOrder()`:
+
+1. Items query: tambah `AND ti.approval_status = 'PENDING'` — hanya validasi & deduct stok untuk item yang akan diapprove
+2. Mark approved UPDATE: tambah `AND approval_status = 'PENDING'` — preserve item REJECTED
+3. pendingCheck: ubah `!= 'APPROVED'` → `= 'PENDING'` — REJECTED dianggap resolved bukan "belum APPROVED"
+4. Tambah `newTotal` kalkulasi dari APPROVED items sebelum transisi, update `total_amount` di UPDATE transactions
+
+### Pencegahan
+
+STD-001 checklist diperbarui — tambah baris `approveOrder()`:
+- Wajib filter `AND approval_status = 'PENDING'` pada items fetch (jangan deduct stok REJECTED)
+- Wajib filter `AND approval_status = 'PENDING'` pada UPDATE mark approved (jangan timpa REJECTED)
+- Setiap fungsi "bulk approve" HARUS coexist dengan per-item REJECTED dari `rejectItem()` sebelumnya
+
+---
+
+## BUG-096 — Item REJECTED Masih Tampil di Halaman Customer `/pesanan/:id` (2026-06-25)
+
+**Page:** `/pesanan/:id` (OrderTrackingPage — authenticated mode)
+**Reporter:** Customer — TXN-20260625-00117 memiliki 2 item (2600110 + GBT29). Helper men-cancel/reject item GBT29, namun halaman `/pesanan/:id` masih menampilkan kedua item padahal seharusnya hanya 2600110 yang tampil.
+
+### Root Cause
+
+Dua lapisan yang tidak memfilter item REJECTED secara bersamaan:
+
+**1. Backend — `getTransaction()` di `orders.service.js`**
+Query items tidak memiliki kondisi `AND ti.approval_status != 'REJECTED'`. Semua item dikembalikan ke client termasuk yang sudah REJECTED oleh helper.
+
+```sql
+-- Sebelum (buggy): semua item dikembalikan termasuk REJECTED
+WHERE ti.transaction_id = $1
+
+-- Sesudah (fixed): item REJECTED dieksklusi di level DB
+WHERE ti.transaction_id = $1
+  AND ti.approval_status != 'REJECTED'
+```
+
+**2. Frontend — `OrderTrackingPage.jsx`**
+`groups` useMemo tidak memfilter REJECTED sebelum `groupByTenant`. Meskipun backend sudah diperbaiki, defense-in-depth mengharuskan filter di frontend juga.
+
+```jsx
+// Sebelum (buggy):
+const groups = useMemo(() => groupByTenant(order?.items ?? []), [order?.items]);
+
+// Sesudah (fixed):
+const groups = useMemo(
+  () => groupByTenant((order?.items ?? []).filter(i => i.approval_status !== 'REJECTED')),
+  [order?.items],
+);
+```
+
+**Catatan:** Public endpoint (`/api/v1/orders/:txnId/public`) sudah benar — sudah memiliki `.filter(r => r.approval_status !== 'REJECTED')`. Bug ini hanya pada authenticated route yang menggunakan `getTransaction()`.
+
+### Fix
+
+- **`backend/src/modules/orders/orders.service.js`** — `getTransaction()`: tambah `AND ti.approval_status != 'REJECTED'` ke WHERE clause query items
+- **`frontend/src/pages/customer/OrderTrackingPage.jsx`** — `AuthenticatedOrderView`: filter REJECTED sebelum `groupByTenant` di useMemo
+
+### Pencegahan
+
+STD-001 checklist diperbarui:
+- Baris `OrderTrackingPage.jsx` ditambah "filter REJECTED" (sebelumnya hanya ada `approved_quantity ?? quantity`)
+- Tambah baris baru `backend/src/modules/orders/orders.service.js` — `getTransaction()` wajib filter `approval_status != 'REJECTED'` di SQL WHERE clause
+
+**Aturan:** Setiap fungsi backend yang mengembalikan `transaction_items` ke customer/cashier HARUS filter `approval_status != 'REJECTED'` di level SQL. Jangan andalkan frontend sebagai satu-satunya lapisan filter.
+
+### Deployment Note (2026-06-25)
+
+Fix berlaku untuk item manapun yang di-reject helper (GBT29 maupun 2600110 — keduanya sama-sama `approval_status = 'REJECTED'`). Saat dilaporkan ulang dengan skenario kebalikan (helper cancel 2600110, halaman tetap tampil 2600110), root cause sama. Perbaikan code sudah benar, masalah adalah **Docker menggunakan baked image** (bukan volume mount). Containers perlu di-rebuild dan di-restart setelah setiap code change:
+
+```
+docker compose build --no-cache backend frontend
+docker compose up -d backend frontend
+```
+
+---
+
+## BUG-095 — Kasir Tidak Menggunakan Harga Diskon Saat Membuat Transaksi (2026-06-25)
+
+**Page:** `/cashier/pos`, `/cashier/bayar/:id`
+**Reporter:** Kasir — produk barcode "2600110" memiliki `discount_percent`, tetapi kasir ditagih harga penuh
+
+### Root Cause
+
+Tiga fungsi order-creation di backend tidak pernah memilih `discount_percent` dari tabel `products` dan selalu menggunakan `p.price` mentah untuk `unit_price` dan `subtotal` di `transaction_items`. Field `discount_percent` hanya diterapkan di frontend (`CartContext.itemEffectivePrice`) untuk tampilan, bukan di backend saat menyimpan order.
+
+**1. `createOrder` (`orders.service.js`) — customer self-order**
+SELECT di baris 84 tidak mencantumkan `discount_percent`. Baris 186 dan 248–249 menggunakan `p.price` mentah untuk `subtotalAmount`, `unit_price`, dan `subtotal`.
+
+**2. `createOrderByCashier` (`orders.service.js`) — kasir POS**
+SELECT di baris 688 tidak mencantumkan `discount_percent`. Baris 735 dan 784 menggunakan `p.price` mentah untuk `subtotalAmount`, `unit_price`, dan `subtotal`.
+
+**3. `addItemToTransaction` (`orders.service.js`) — kasir menambah item ke transaksi yang ada**
+SELECT di baris 856–857 tidak mencantumkan `discount_percent`. Baris 891 (UPDATE qty), 897 (INSERT baru), dan 929 (audit log) menggunakan `product.price` mentah.
+
+**4. `createHelperOrder` (`helper.service.js`) — helper input order**
+SELECT di baris 57–63 tidak mencantumkan `discount_percent`. Baris 145 dan 231 menggunakan `p.price` mentah untuk `subtotal`, `unit_price`, dan subtotal INSERT.
+
+### Fix
+
+Formula effective price (sama dengan `CartContext.itemEffectivePrice`):
+```js
+const d = parseFloat(p.discount_percent) || 0;
+const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+```
+
+**`backend/src/modules/orders/orders.service.js`:**
+1. `createOrder` SELECT — tambah `discount_percent` ke SELECT query
+2. `createOrder` subtotalAmount — gunakan `effPrice` per item
+3. `createOrder` resolvedItems (voucher) — gunakan `effPrice` sebagai `price`
+4. `createOrder` INSERT `transaction_items` — gunakan `effPrice` untuk `unit_price` dan `subtotal`
+5. `createOrderByCashier` SELECT — tambah `discount_percent` ke SELECT query
+6. `createOrderByCashier` subtotalAmount — gunakan `effPrice` per item
+7. `createOrderByCashier` resolvedItems (voucher) — gunakan `effPrice` sebagai `price`
+8. `createOrderByCashier` INSERT `transaction_items` — gunakan `effPrice` untuk `unit_price` dan `subtotal`
+9. `addItemToTransaction` SELECT — tambah `discount_percent` ke SELECT query
+10. `addItemToTransaction` hitung `effPrice` setelah SELECT
+11. `addItemToTransaction` UPDATE qty — gunakan `effPrice * newQty` untuk `subtotal`
+12. `addItemToTransaction` INSERT baru — gunakan `effPrice` untuk `unit_price` dan `subtotal`
+13. `addItemToTransaction` audit log — gunakan `effPrice * quantity` untuk `subtotal`
+
+**`backend/src/modules/helper/helper.service.js`:**
+1. `createHelperOrder` SELECT — tambah `discount_percent` ke SELECT query
+2. `createHelperOrder` subtotal reduce — gunakan `effPrice` per item
+3. `createHelperOrder` INSERT `transaction_items` — gunakan `effPrice` untuk `unit_price` dan `subtotal`
+
+### Pencegahan
+
+Setiap fungsi yang meng-INSERT ke `transaction_items` HARUS:
+1. Menyertakan `discount_percent` di query SELECT produk
+2. Menghitung `effPrice = discount_percent > 0 ? Math.round(price * (1 - discount_percent/100)) : price`
+3. Menggunakan `effPrice` (bukan `price`) untuk kolom `unit_price`, `subtotal`, dan perhitungan `subtotal_amount` di header transaksi
+4. Jika ada voucher validation, kirim `effPrice` sebagai `price` di `resolvedItems` (voucher dihitung di atas harga yang sudah didiskon)
+
+---
+
+## BUG-094 — Admin Master Data: Field "Diskon (%)" Tidak Tersimpan di Form Edit dan Tambah Produk (2026-06-25)
+
+**Page:** `/admin?tab=master-data` — form "Edit Produk" dan "Tambah Produk Baru"
+**Reporter:** Admin — mengisi field Diskon (%), klik Simpan, diskon tidak tersimpan
+
+### Root Cause
+
+Empat gap pada implementasi field `discount_percent` (Migration 033) di layer backend admin:
+
+**1. `adminListProducts` SELECT tidak menyertakan `p.discount_percent`**
+Query SELECT di `admin.service.js` tidak mengambil kolom `discount_percent` dari tabel `products`. Akibatnya API `/admin/products` tidak mengembalikan field ini → saat admin membuka modal Edit, `p.discount_percent` selalu `undefined` → form selalu dimulai dengan field kosong, meskipun nilai sudah tersimpan sebelumnya di DB.
+
+**2. `adminCreateProduct` tidak menangani `discount_percent`**
+Fungsi menggunakan destructuring parameter yang tidak mencakup `discount_percent`. INSERT statement hanya memiliki 13 kolom — `discount_percent` tidak ada di column list maupun VALUES. Meskipun frontend mengirim nilainya via `...form` spread, backend mengabaikannya sepenuhnya.
+
+**3. `adminUpdateProduct` tidak menyertakan `discount_percent` di `allowed` array**
+Array `allowed` di `adminUpdateProduct` tidak mencantumkan `'discount_percent'`. Loop `for (const key of allowed)` melewatinya → field tidak masuk ke SET clause → UPDATE tidak mengubah kolom ini meskipun frontend mengirim nilai yang benar.
+
+**4. Tidak ada schema guard untuk Migration 033 di `app.js`**
+File `backend/migrations/033_product_discount.sql` tidak memiliki `runSchemaGuard` di `app.js`. Pada environment yang belum menjalankan migration file secara manual, kolom `discount_percent` tidak ada di DB → bug lebih parah (error saat query).
+
+**5. `handleCreate` di frontend tidak menormalisasi `discount_percent`**
+`handleCreate` mengirim `discount_percent` sebagai string melalui `...form` spread (misal `"10"` atau `""`), sedangkan `handleEdit` sudah benar dengan `parseFloat` + null-fallback. Inkonsistensi ini bisa menyebabkan value `""` atau `NaN` terkirim ke backend.
+
+### Fix
+
+**`backend/src/modules/admin/admin.service.js`:**
+1. `adminListProducts` SELECT — tambah `p.discount_percent,` setelah `p.price,`
+2. `adminCreateProduct` — tambah `discount_percent` ke parameter destructuring; tambah kolom + `$5` (shift semua param berikutnya) ke INSERT; tambah `discountVal` ke VALUES array (dengan normalisasi `parseFloat` dan null-fallback untuk string kosong)
+3. `adminUpdateProduct` — tambah `'discount_percent'` ke `allowed` array
+
+**`backend/src/app.js`:**
+- Tambah schema guard `Migration 033 — Per-product discount_percent` sebelum `initializeScheduledJobs()`:
+  ```js
+  `ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(5,2) DEFAULT NULL`
+  ```
+
+**`frontend/src/pages/admin/tabs/MasterDataTab.jsx`:**
+- `handleCreate` — tambah explicit `discount_percent: form.discount_percent !== '' ? parseFloat(form.discount_percent) : null` setelah spread, konsisten dengan pola di `handleEdit`
+
+### Pencegahan
+
+Setiap kali menambahkan kolom baru ke tabel `products`:
+1. Tambahkan schema guard di `app.js` (STD-010)
+2. Periksa `adminListProducts` SELECT — kolom baru harus ikut diselect agar admin UI membacanya
+3. Periksa `adminCreateProduct` — kolom harus ada di destructuring, INSERT column list, dan VALUES
+4. Periksa `adminUpdateProduct` `allowed` array — kolom harus masuk agar PATCH endpoint bisa mengubahnya
+5. Frontend `handleCreate` harus menormalisasi tipe data secara eksplisit (jangan andalkan string dari `...form` spread untuk kolom numerik)
+
+---
+
 ## BUG-093 — Klik "+" pada Produk Promo Memunculkan "Voucher" Otomatis Tanpa Mekanisme Cancel (2026-06-20)
 
 **Page:** `/cashier/pos` (CashierPOSPage)

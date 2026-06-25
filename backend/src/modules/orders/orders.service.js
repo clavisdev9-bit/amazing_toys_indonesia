@@ -81,7 +81,7 @@ async function createOrder(customerId, items, voucherCode = null) {
     const productIds = items.map(i => i.product_id);
     const lockClause = isHelperApproveMode ? '' : ' FOR UPDATE';
     const productRows = await client.query(
-      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status, is_preorder
+      `SELECT product_id, product_name, price, discount_percent, tenant_id, stock_quantity, stock_status, is_preorder
        FROM products WHERE product_id = ANY($1) AND is_active = TRUE${lockClause}`,
       [productIds]
     );
@@ -183,17 +183,21 @@ async function createOrder(customerId, items, voucherCode = null) {
     // 3. Calculate totals
     const TAX_RATE       = 0;
     const subtotalAmount = items.reduce((sum, item) => {
-      return sum + (productMap[item.product_id].price * item.quantity);
+      const p = productMap[item.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+      return sum + (effPrice * item.quantity);
     }, 0);
 
     let discountAmount = 0;
     if (voucherCode) {
       const tenantIds = [...new Set(items.map(i => productMap[i.product_id]?.tenant_id).filter(Boolean))];
-      const resolvedItems = items.map(i => ({
-        price:     productMap[i.product_id].price,
-        quantity:  i.quantity,
-        tenant_id: productMap[i.product_id].tenant_id,
-      }));
+      const resolvedItems = items.map(i => {
+        const p = productMap[i.product_id];
+        const d = parseFloat(p.discount_percent) || 0;
+        const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+        return { price: effPrice, quantity: i.quantity, tenant_id: p.tenant_id };
+      });
       const vResult = await voucherSvc.validateVoucher({
         code: voucherCode,
         customerId,
@@ -241,12 +245,14 @@ async function createOrder(customerId, items, voucherCode = null) {
     // 8. Insert items
     for (const item of items) {
       const p = productMap[item.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
       await client.query(
         `INSERT INTO transaction_items
            (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal, approval_status)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [transactionId, item.product_id, p.tenant_id, item.quantity, p.price,
-         p.price * item.quantity, isHelperApproveMode ? 'PENDING' : 'APPROVED']
+        [transactionId, item.product_id, p.tenant_id, item.quantity, effPrice,
+         effPrice * item.quantity, isHelperApproveMode ? 'PENDING' : 'APPROVED']
       );
 
       // Deduct stock immediately only in SELF_ORDER mode (never for pre-order — invariant CR-050)
@@ -384,7 +390,8 @@ async function getTransaction(transactionId, requesterId, requesterRole) {
             ON x.entity_type = 'product'
            AND x.sos_id = ti.product_id::text
            AND x.status = 'ACTIVE'
-     WHERE ti.transaction_id = $1`,
+     WHERE ti.transaction_id = $1
+       AND ti.approval_status != 'REJECTED'`,
     [transactionId]
   );
 
@@ -685,7 +692,7 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
     // 1. Load & lock products
     const productIds = items.map(i => i.product_id);
     const productRows = await client.query(
-      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status
+      `SELECT product_id, product_name, price, discount_percent, tenant_id, stock_quantity, stock_status
        FROM products WHERE product_id = ANY($1) AND is_active = TRUE FOR UPDATE`,
       [productIds]
     );
@@ -732,16 +739,22 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
 
     // 3. Calculate totals
     const TAX_RATE       = 0;
-    const subtotalAmount = items.reduce((sum, item) => sum + productMap[item.product_id].price * item.quantity, 0);
+    const subtotalAmount = items.reduce((sum, item) => {
+      const p = productMap[item.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+      return sum + effPrice * item.quantity;
+    }, 0);
 
     let discountAmount = 0;
     if (voucherCode) {
       const tenantIds = [...new Set(items.map(i => productMap[i.product_id]?.tenant_id).filter(Boolean))];
-      const resolvedItems = items.map(i => ({
-        price:     productMap[i.product_id].price,
-        quantity:  i.quantity,
-        tenant_id: productMap[i.product_id].tenant_id,
-      }));
+      const resolvedItems = items.map(i => {
+        const p = productMap[i.product_id];
+        const d = parseFloat(p.discount_percent) || 0;
+        const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+        return { price: effPrice, quantity: i.quantity, tenant_id: p.tenant_id };
+      });
       const vResult = await voucherSvc.validateVoucher({
         code: voucherCode,
         customerId,
@@ -778,10 +791,12 @@ async function createOrderByCashier(cashierId, items, voucherCode = null, custom
     // 6. Insert items & decrement stock
     for (const item of items) {
       const p = productMap[item.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
       await client.query(
         `INSERT INTO transaction_items (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [transactionId, item.product_id, p.tenant_id, item.quantity, p.price, p.price * item.quantity]
+        [transactionId, item.product_id, p.tenant_id, item.quantity, effPrice, effPrice * item.quantity]
       );
       await client.query(
         `UPDATE products SET stock_quantity = stock_quantity - $1 WHERE product_id = $2`,
@@ -853,7 +868,7 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
 
     // Lock product
     const productResult = await client.query(
-      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status
+      `SELECT product_id, product_name, price, discount_percent, tenant_id, stock_quantity, stock_status
        FROM products WHERE product_id = $1 AND is_active = TRUE FOR UPDATE`,
       [productId]
     );
@@ -862,6 +877,8 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
     if (product.stock_status === 'OUT_OF_STOCK' || product.stock_quantity < quantity) {
       throw new AppError(`Stok "${product.product_name}" tidak mencukupi.`);
     }
+    const _d = parseFloat(product.discount_percent) || 0;
+    const effPrice = _d > 0 ? Math.round(product.price * (1 - _d / 100)) : product.price;
 
     // Check max items per order (total qty across all items + net addition)
     const currentTotals = await client.query(
@@ -888,13 +905,13 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
       const newQty = existing.rows[0].quantity + quantity;
       await client.query(
         `UPDATE transaction_items SET quantity = $1, subtotal = $2 WHERE transaction_id = $3 AND product_id = $4`,
-        [newQty, product.price * newQty, transactionId, productId]
+        [newQty, effPrice * newQty, transactionId, productId]
       );
     } else {
       await client.query(
         `INSERT INTO transaction_items (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [transactionId, productId, product.tenant_id, quantity, product.price, product.price * quantity]
+        [transactionId, productId, product.tenant_id, quantity, effPrice, effPrice * quantity]
       );
     }
 
@@ -925,7 +942,7 @@ async function addItemToTransaction(transactionId, cashierId, productId, quantit
         product_id:   productId,
         product_name: product.product_name,
         qty:          quantity,
-        subtotal:     product.price * quantity,
+        subtotal:     effPrice * quantity,
         total_before: parseFloat(txn.total_amount),
         total_after:  newTotal,
       },

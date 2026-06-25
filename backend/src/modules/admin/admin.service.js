@@ -136,6 +136,7 @@ async function adminListProducts({ tenantId, search, includeInactive = true, ava
 
   const sql = `
     SELECT p.product_id, p.product_name, p.category, p.price,
+           p.discount_percent,
            p.stock_quantity, p.stock_status, p.image_url, p.description,
            p.barcode, p.odoo_categ_id, p.is_active, p.created_at, p.updated_at,
            p.is_preorder, p.preorder_note,
@@ -165,7 +166,7 @@ async function adminListProducts({ tenantId, search, includeInactive = true, ava
   };
 }
 
-async function adminCreateProduct({ product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, categ_id, categ_name, is_preorder, preorder_note }) {
+async function adminCreateProduct({ product_id, product_name, category, price, discount_percent, tenant_id, barcode, stock_quantity, image_url, description, categ_id, categ_name, is_preorder, preorder_note }) {
   if (!product_id || !product_name || !category || !price || !tenant_id || !barcode) {
     throw new AppError('product_id, product_name, category, price, tenant_id, barcode wajib diisi.', 422);
   }
@@ -177,10 +178,11 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
   if (bcExists.rows.length > 0) throw new AppError('Barcode sudah digunakan produk lain.', 409);
 
   const isPreorderBool = is_preorder === true || is_preorder === 'true';
+  const discountVal = (discount_percent !== '' && discount_percent != null) ? parseFloat(discount_percent) : null;
   const result = await query(
-    `INSERT INTO products (product_id, product_name, category, price, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id, odoo_categ_name, is_preorder, preorder_note)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-    [product_id, product_name, category, parseFloat(price), tenant_id, barcode,
+    `INSERT INTO products (product_id, product_name, category, price, discount_percent, tenant_id, barcode, stock_quantity, image_url, description, odoo_categ_id, odoo_categ_name, is_preorder, preorder_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    [product_id, product_name, category, parseFloat(price), discountVal, tenant_id, barcode,
      parseInt(stock_quantity) || 0, image_url || null, description || null,
      categ_id || null, categ_name || null,
      isPreorderBool, isPreorderBool ? (preorder_note || null) : null]
@@ -191,7 +193,7 @@ async function adminCreateProduct({ product_id, product_name, category, price, t
 }
 
 async function adminUpdateProduct(productId, data) {
-  const allowed = ['product_name', 'category', 'price', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'tenant_id', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note'];
+  const allowed = ['product_name', 'category', 'price', 'discount_percent', 'stock_quantity', 'image_url', 'description', 'is_active', 'barcode', 'tenant_id', 'odoo_categ_id', 'odoo_categ_name', 'is_on_hold', 'is_display_only', 'max_per_customer', 'is_preorder', 'preorder_note'];
   if (data.categ_id !== undefined) data = { ...data, odoo_categ_id: data.categ_id || null };
   if (data.categ_name !== undefined) data = { ...data, odoo_categ_name: data.categ_name || null };
   const fields = [];

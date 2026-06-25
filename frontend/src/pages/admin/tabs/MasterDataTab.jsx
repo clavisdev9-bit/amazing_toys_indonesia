@@ -489,15 +489,16 @@ export default function MasterDataTab() {
     try {
       await adminCreateProduct({
         ...form,
-        category:       resolveCategory(form.category),
-        price:          parseFloat(form.price),
-        stock_quantity: parseInt(form.stock_quantity, 10),
-        image_url:      form.image_url || undefined,
-        description:    form.description || undefined,
-        categ_id:       form.odoo_categ_id,
-        categ_name:     form.odoo_categ_name || undefined,
-        is_preorder:    form.is_preorder,
-        preorder_note:  form.is_preorder ? (form.preorder_note || null) : null,
+        category:         resolveCategory(form.category),
+        price:            parseFloat(form.price),
+        discount_percent: form.discount_percent !== '' ? parseFloat(form.discount_percent) : null,
+        stock_quantity:   parseInt(form.stock_quantity, 10),
+        image_url:        form.image_url || undefined,
+        description:      form.description || undefined,
+        categ_id:         form.odoo_categ_id,
+        categ_name:       form.odoo_categ_name || undefined,
+        is_preorder:      form.is_preorder,
+        preorder_note:    form.is_preorder ? (form.preorder_note || null) : null,
       });
       addToast('Produk berhasil dibuat.', 'success');
       setCreateModal(false);

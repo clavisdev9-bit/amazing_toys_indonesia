@@ -387,6 +387,10 @@ server.listen(PORT, async () => {
     `CREATE INDEX IF NOT EXISTS idx_txn_items_is_free  ON transaction_items(is_free) WHERE is_free = TRUE`,
   ]);
 
+  await runSchemaGuard('Migration 033 — Per-product discount_percent', [
+    `ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(5,2) DEFAULT NULL`,
+  ]);
+
   // DB pool is ready on first query; initialize scheduler after server is up.
   initializeScheduledJobs(() => adminSvcScheduler.getIntegrationConfig());
 

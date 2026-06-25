@@ -1,7 +1,7 @@
 # Coding Standard — Amazing Toys Fair 2026
 **Project:** Amazing Toy Show— SOS × Odoo 18 Integration  
 **Maintained by:** clavis Development  
-**Last updated:** 2026-06-16
+**Last updated:** 2026-06-25
 
 ---
 
@@ -29,12 +29,14 @@ Pastikan semua file berikut menggunakan pattern yang benar:
 
 | File | Halaman | Fix yang diperlukan |
 |---|---|---|
-| `frontend/src/pages/customer/OrderTrackingPage.jsx` | `/pesanan/:id` | `approved_quantity ?? quantity` + `item.subtotal` |
+| `backend/src/modules/orders/orders.service.js` — `getTransaction()` | API authenticated `/pesanan/:id` | `AND ti.approval_status != 'REJECTED'` di WHERE clause items query |
+| `backend/src/modules/orders/orders.router.js` | `/api/v1/orders/:txnId/public` | filter REJECTED sebelum `.map()` di items response |
+| `backend/src/modules/helper/helper.service.js` — `approveOrder()` | Bulk approve oleh helper | items query: `AND ti.approval_status = 'PENDING'`; UPDATE mark approved: `AND approval_status = 'PENDING'`; pendingCheck: `= 'PENDING'` bukan `!= 'APPROVED'`; recalculate `total_amount` dari APPROVED items saja |
+| `frontend/src/pages/customer/OrderTrackingPage.jsx` | `/pesanan/:id` | `approved_quantity ?? quantity` + `item.subtotal` + **filter REJECTED** sebelum `groupByTenant` |
 | `frontend/src/pages/customer/ReceiptPickupPage.jsx` | `/pesanan/:id/receipt` | `approved_quantity ?? quantity` + `item.subtotal` + filter REJECTED |
 | `frontend/src/pages/customer/PickupStatusPage.jsx` | `/pesanan/:id/pickup` | `approved_quantity ?? quantity` + `item.subtotal` + filter REJECTED + progress bar |
 | `frontend/src/pages/cashier/PaymentPage.jsx` | Kasir — halaman pembayaran | `approved_quantity ?? quantity` + `item.subtotal` + filter REJECTED |
 | `frontend/src/components/cashier/ThermalReceipt.jsx` | Kasir — print receipt | `approved_quantity ?? quantity` + `item.subtotal` + filter REJECTED |
-| `backend/src/modules/orders/orders.router.js` | `/api/v1/orders/:txnId/public` | `approved_quantity ?? quantity` + `subtotal` + filter REJECTED |
 
 ### Contoh Implementasi
 
@@ -2706,3 +2708,77 @@ async function createOrderByCashier(..., skipProductPromo = false) {
 ### Referensi
 
 BUG-093 — VoucherInput stale state pada CashierPOSPage; promo auto-trigger tanpa dismiss mechanism.
+
+---
+
+## STD-046 — Harga Efektif (discount_percent) Wajib Diterapkan di Backend Saat INSERT transaction_items
+
+**Berlaku untuk:** `orders.service.js`, `helper.service.js`, dan semua service yang meng-INSERT ke tabel `transaction_items`
+
+### Latar Belakang
+
+Field `discount_percent` pada tabel `products` menentukan harga jual aktual produk. Frontend menghitung harga efektif via `CartContext.itemEffectivePrice()` untuk tampilan, tetapi **backend adalah source of truth** — nilai yang tersimpan di `transaction_items` harus sudah mencerminkan harga setelah diskon.
+
+Menggunakan `p.price` mentah di INSERT backend (tanpa memperhitungkan `discount_percent`) menyebabkan customer ditagih harga penuh meskipun diskon sudah dikonfigurasi di admin.
+
+### Aturan
+
+**A. Selalu sertakan `discount_percent` di setiap query SELECT produk sebelum INSERT transaction_items.**
+
+```sql
+-- SALAH
+SELECT product_id, product_name, price, tenant_id, ...
+FROM products WHERE ...
+
+-- BENAR
+SELECT product_id, product_name, price, discount_percent, tenant_id, ...
+FROM products WHERE ...
+```
+
+**B. Hitung `effPrice` menggunakan formula yang sama dengan frontend.**
+
+```js
+// Formula wajib — identik dengan CartContext.itemEffectivePrice()
+const d = parseFloat(p.discount_percent) || 0;
+const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+```
+
+**C. Gunakan `effPrice` (bukan `p.price`) untuk semua kalkulasi order.**
+
+```js
+// SALAH
+subtotalAmount += p.price * item.quantity;
+INSERT INTO transaction_items (..., unit_price, subtotal) VALUES (..., p.price, p.price * qty)
+
+// BENAR
+subtotalAmount += effPrice * item.quantity;
+INSERT INTO transaction_items (..., unit_price, subtotal) VALUES (..., effPrice, effPrice * qty)
+```
+
+**D. Jika ada voucher validation, kirim `effPrice` sebagai `price` di `resolvedItems`.**
+
+Voucher dihitung di atas harga yang sudah didiskon per produk — bukan harga original.
+
+```js
+// BENAR
+const resolvedItems = items.map(i => {
+  const p = productMap[i.product_id];
+  const d = parseFloat(p.discount_percent) || 0;
+  const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+  return { price: effPrice, quantity: i.quantity, tenant_id: p.tenant_id };
+});
+```
+
+### Checklist saat menambah flow order baru
+
+- [ ] SELECT produk menyertakan `discount_percent`
+- [ ] `effPrice` dihitung dengan formula di atas sebelum INSERT
+- [ ] `unit_price` di `transaction_items` = `effPrice`
+- [ ] `subtotal` di `transaction_items` = `effPrice * qty`
+- [ ] `subtotal_amount` di header transaksi dihitung dari `effPrice` (bukan `price`)
+- [ ] `resolvedItems` untuk voucher validation menggunakan `effPrice`
+- [ ] Audit log menggunakan `effPrice` untuk field `subtotal`
+
+### Referensi
+
+BUG-095 — Kasir tidak menggunakan harga diskon: backend order-creation functions tidak menyertakan `discount_percent` di SELECT dan menggunakan `p.price` mentah di semua INSERT.

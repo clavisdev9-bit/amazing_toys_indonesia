@@ -329,7 +329,10 @@ function AuthenticatedOrderView({ transactionId }) {
     }
   }
 
-  const groups = useMemo(() => groupByTenant(order?.items ?? []), [order?.items]);
+  const groups = useMemo(
+    () => groupByTenant((order?.items ?? []).filter(i => i.approval_status !== 'REJECTED')),
+    [order?.items],
+  );
   const hasAnyBoothApproved = order?.status === 'PENDING_APPROVAL' &&
     groups.some(g => g.items.every(i => i.approval_status === 'APPROVED'));
 

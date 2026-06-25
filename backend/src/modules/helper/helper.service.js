@@ -55,7 +55,7 @@ async function createHelperOrder({
     // 1. Lock & load products — must all belong to this helper's booth
     const productIds = items.map(i => i.product_id);
     const productRows = await client.query(
-      `SELECT product_id, product_name, price, tenant_id, stock_quantity, stock_status,
+      `SELECT product_id, product_name, price, discount_percent, tenant_id, stock_quantity, stock_status,
               is_display_only, is_on_hold, max_per_customer, bundle_group,
               is_preorder, preorder_note
        FROM products
@@ -142,7 +142,12 @@ async function createHelperOrder({
 
     // 5. Calculate totals
     const TAX_RATE    = 0;
-    const subtotal    = items.reduce((s, i) => s + productMap[i.product_id].price * i.qty, 0);
+    const subtotal    = items.reduce((s, i) => {
+      const p = productMap[i.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
+      return s + effPrice * i.qty;
+    }, 0);
     const taxAmount   = 0;
     const totalAmount = subtotal;
 
@@ -224,11 +229,13 @@ async function createHelperOrder({
     // 10. Insert items & decrement stock atomically (skip stock deduction for pre-order, CR-050)
     for (const item of items) {
       const p = productMap[item.product_id];
+      const d = parseFloat(p.discount_percent) || 0;
+      const effPrice = d > 0 ? Math.round(p.price * (1 - d / 100)) : p.price;
       await client.query(
         `INSERT INTO transaction_items
            (transaction_id, product_id, tenant_id, quantity, unit_price, subtotal)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [transactionId, item.product_id, p.tenant_id, item.qty, p.price, p.price * item.qty],
+        [transactionId, item.product_id, p.tenant_id, item.qty, effPrice, effPrice * item.qty],
       );
       if (!p.is_preorder) {
         await client.query(
@@ -910,11 +917,12 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
       if (!sf.shipping_address?.trim()) throw new AppError('Alamat pengiriman wajib diisi untuk Pre-Order.', 422);
     }
 
-    // Fetch items for this booth
+    // Fetch PENDING items for this booth (REJECTED items already resolved — skip)
     const itemsRes = await client.query(
       `SELECT ti.product_id, ti.quantity
        FROM transaction_items ti
        WHERE ti.transaction_id = $1 AND ti.tenant_id = $2
+         AND ti.approval_status = 'PENDING'
        FOR UPDATE`,
       [transactionId, helperTenantId],
     );
@@ -948,17 +956,18 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
       }
     }
 
-    // Mark items as approved
+    // Mark PENDING items as approved (preserve previously REJECTED items)
     await client.query(
       `UPDATE transaction_items SET approval_status = 'APPROVED'
-       WHERE transaction_id = $1 AND tenant_id = $2`,
+       WHERE transaction_id = $1 AND tenant_id = $2
+         AND approval_status = 'PENDING'`,
       [transactionId, helperTenantId],
     );
 
-    // Check if ALL items across ALL booths are now approved
+    // Check if ALL items across ALL booths are now resolved (no PENDING remaining)
     const pendingCheck = await client.query(
       `SELECT COUNT(*) AS cnt FROM transaction_items
-       WHERE transaction_id = $1 AND approval_status != 'APPROVED'`,
+       WHERE transaction_id = $1 AND approval_status = 'PENDING'`,
       [transactionId],
     );
     const allApproved = parseInt(pendingCheck.rows[0].cnt) === 0;
@@ -971,6 +980,15 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
       });
       return { customerId: txn.customer_id, partialApproval: true };
     }
+
+    // Recalculate total from APPROVED items only (exclude REJECTED)
+    const totalsRes = await client.query(
+      `SELECT COALESCE(SUM(unit_price * COALESCE(approved_quantity, quantity)), 0) AS new_total
+       FROM transaction_items
+       WHERE transaction_id = $1 AND approval_status = 'APPROVED'`,
+      [transactionId],
+    );
+    const newTotal = parseFloat(totalsRes.rows[0].new_total);
 
     // All booths approved — set payment timer and transition to PENDING
     const expiresAt = new Date(Date.now() + _getCheckoutTimeoutMinutesCR040() * 60 * 1000);
@@ -986,6 +1004,7 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
              approval_note      = $2,
              timer_locked_until = $3,
              expires_at         = $3,
+             total_amount       = $10,
              shipping_name      = COALESCE($5, shipping_name),
              shipping_phone     = COALESCE($6, shipping_phone),
              shipping_address   = COALESCE($7, shipping_address),
@@ -998,6 +1017,7 @@ async function approveOrder(transactionId, helperId, helperTenantId, note = null
        sf.shipping_address || null,
        sf.shipping_city   || null,
        sf.shipping_province || null,
+       newTotal,
       ],
     );
 
