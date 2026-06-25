@@ -43,6 +43,11 @@ function maskEmail(email) {
   return `${visible}***@${domain}`;
 }
 
+function maskPhone(phone) {
+  const digits = phone.replace(/\D/g, '');
+  return digits.slice(0, 4) + '****' + digits.slice(-2);
+}
+
 async function issueFullTokens(user, deviceId) {
   const payload = {
     userId:   user.user_id,
@@ -272,39 +277,45 @@ async function registerCustomer({ full_name, phone_number, email, gender, birth_
     );
 
     await sendCustomerOTPEmail(email, otpCode, full_name);
+    // Juga kirim via WA jika customer menyertakan phone (dual channel)
+    if (phone_number) {
+      sendOTP(phone_number, otpCode, full_name).catch(() => {});
+    }
 
     const tempToken   = signTempToken({ _regIdentifier: email });
     const maskedEmail = email.replace(/(.{2}).+(@.+)/, '$1***$2');
     return { requiresOtp: true, tempToken, maskedEmail, identifierType: 'email' };
   }
 
-  // Phone (with or without email) → direct register (no OTP)
-  const inserted = await query(
-    `INSERT INTO customers (full_name, phone_number, email, gender, birth_date)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING customer_id, full_name, phone_number, email, gender, birth_date, registered_at`,
-    [full_name, phone_number, email || null, gender, birth_date || null]
+  // Phone mode (phone as primary identifier) → WA OTP
+  const otpCodePhone = customerOtpSvc.generateOTP();
+  const otpHashPhone = await customerOtpSvc.hashOTP(otpCodePhone);
+  const otpTtlPhone  = parseInt(process.env.OTP_TTL_MINUTES || '5', 10);
+
+  await query(
+    `INSERT INTO pending_registrations
+       (identifier, full_name, phone_number, email, gender, birth_date, otp_hash, expires_at, attempt_count, identifier_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + $8 * INTERVAL '1 minute', 0, 'phone')
+     ON CONFLICT (identifier) DO UPDATE
+       SET full_name        = EXCLUDED.full_name,
+           email            = EXCLUDED.email,
+           gender           = EXCLUDED.gender,
+           birth_date       = EXCLUDED.birth_date,
+           otp_hash         = EXCLUDED.otp_hash,
+           expires_at       = EXCLUDED.expires_at,
+           attempt_count    = 0,
+           identifier_type  = 'phone'`,
+    [phone_number, full_name, phone_number, email || null, gender, birth_date || null, otpHashPhone, otpTtlPhone]
   );
-  const customer = inserted.rows[0];
 
-  const token = issueCustomerToken(customer);
-
-  fireWebhook('/webhook/customer-registered', {
-    customer_id:  customer.customer_id,
-    full_name:    customer.full_name,
-    phone_number: customer.phone_number || null,
-    email:        null,
-    gender:       customer.gender       || null,
-  });
-
-  if (customer.phone_number) {
-    sendGreeting(customer.phone_number, customer.full_name).catch(() => {});
-  }
-  if (customer.email) {
-    sendCustomerGreetingEmail(customer.email, customer.full_name).catch(() => {});
+  const waResult = await sendOTP(phone_number, otpCodePhone, full_name);
+  if (waResult.status === 'FAILED') {
+    logger.warn('[REG-WA-OTP] Gagal kirim WA OTP', { error: waResult.error });
   }
 
-  return { token, customer };
+  const tempTokenPhone = signTempToken({ _regIdentifier: phone_number });
+  const maskedPhone    = maskPhone(phone_number);
+  return { requiresOtp: true, tempToken: tempTokenPhone, maskedPhone, identifierType: 'phone' };
 }
 
 // Step 2 registrasi: verifikasi OTP → buat akun → issue token
@@ -393,21 +404,34 @@ async function loginCustomer({ phone_number, email, deviceId = null }) {
     throw new AppError('Akun tidak ditemukan. Silakan daftar terlebih dahulu.', 404);
   }
 
-  // Email mode → OTP verification via email required
+  // Email mode → OTP via email + juga via WA jika ada nomor HP
   if (isEmailMode) {
     const otpCode    = customerOtpSvc.generateOTP();
     const otpHash    = await customerOtpSvc.hashOTP(otpCode);
     await customerOtpSvc.storeOTP(customer.customer_id, otpHash);
     await sendCustomerOTPEmail(customer.email, otpCode, customer.full_name);
+    if (customer.phone_number) {
+      sendOTP(customer.phone_number, otpCode, customer.full_name).catch(() => {});
+    }
 
     const tempToken   = signTempToken({ customerId: customer.customer_id, deviceId: deviceId || null });
     const maskedEmail = customer.email.replace(/(.{2}).+(@.+)/, '$1***$2');
     return { requiresOtp: true, tempToken, maskedEmail, identifierType: 'email' };
   }
 
-  // Phone mode → direct login (no OTP)
-  const token = issueCustomerToken(customer, deviceId || null);
-  return { requiresOtp: false, token, customer };
+  // Phone mode → OTP via WhatsApp
+  const otpCode    = customerOtpSvc.generateOTP();
+  const otpHash    = await customerOtpSvc.hashOTP(otpCode);
+  await customerOtpSvc.storeOTP(customer.customer_id, otpHash);
+
+  const waResult = await sendOTP(customer.phone_number, otpCode, customer.full_name);
+  if (waResult.status === 'FAILED') {
+    logger.warn('[LOGIN-WA-OTP] Gagal kirim WA OTP', { error: waResult.error });
+  }
+
+  const tempToken   = signTempToken({ customerId: customer.customer_id, deviceId: deviceId || null });
+  const maskedPhone = maskPhone(customer.phone_number);
+  return { requiresOtp: true, tempToken, maskedPhone, identifierType: 'phone' };
 }
 
 async function verifyCustomerOtp({ tempToken, otpCode, deviceId, deviceInfo = {} }) {
