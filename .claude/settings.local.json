@@ -134,7 +134,16 @@
       "PowerShell(docker exec hybrid_postgres psql -U postgres -d amazing_toys_hybrid -c \"SELECT column_name FROM information_schema.columns WHERE table_name='products' AND column_name='discount_percent';\" 2>&1)",
       "Read(//c/Users/arist/AppData/Local/Roaming/Claude/local-agent-mode-sessions/skills-plugin/605749a9-85b7-40e2-b061-75506500d06e/46749590-c3c9-4e21-9c2a-b01ae7daaa68/skills/**)",
       "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Dev-amazing-toys-odoo-online---Hybrid\\\\eab0b057-8796-4928-b917-e2f3be36ccd5\\\\scratchpad\\\\create_master_template.py\")",
-      "PowerShell(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Dev-amazing-toys-odoo-online---Hybrid\\\\eab0b057-8796-4928-b917-e2f3be36ccd5\\\\scratchpad\\\\create_master_template.py\" 2>&1)"
+      "PowerShell(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Dev-amazing-toys-odoo-online---Hybrid\\\\eab0b057-8796-4928-b917-e2f3be36ccd5\\\\scratchpad\\\\create_master_template.py\" 2>&1)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\backend\" -Recurse | Select-Object -First 30 | ForEach-Object { $_.FullName })",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Dev\\\\amazing_toys_odoo_online\\\\database\" -Recurse | Select-Object -First 30 | ForEach-Object { $_.FullName })",
+      "Bash(ls \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\\")",
+      "PowerShell(ls \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\\")",
+      "PowerShell($skillDir = \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\605749a9-85b7-40e2-b061-75506500d06e\\\\46749590-c3c9-4e21-9c2a-b01ae7daaa68\\\\skills\\\\xlsx\")",
+      "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; python \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\create_update_template.py\")",
+      "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\605749a9-85b7-40e2-b061-75506500d06e\\\\46749590-c3c9-4e21-9c2a-b01ae7daaa68\\\\skills\\\\xlsx\\\\scripts\\\\recalc.py\" \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\Customer_Migration_Queries.xlsx\")",
+      "Bash(python create_customer_template.py)",
+      "Bash(python gen_customers.py)"
     ]
   }
 }
