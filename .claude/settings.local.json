@@ -143,7 +143,9 @@
       "PowerShell($env:PYTHONIOENCODING = \"utf-8\"; python \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\create_update_template.py\")",
       "Bash(python \"C:\\\\Users\\\\arist\\\\AppData\\\\Roaming\\\\Claude\\\\local-agent-mode-sessions\\\\skills-plugin\\\\605749a9-85b7-40e2-b061-75506500d06e\\\\46749590-c3c9-4e21-9c2a-b01ae7daaa68\\\\skills\\\\xlsx\\\\scripts\\\\recalc.py\" \"C:\\\\Dev\\\\amazing_toys_odoo_online - Hybrid\\\\Customer_Migration_Queries.xlsx\")",
       "Bash(python create_customer_template.py)",
-      "Bash(python gen_customers.py)"
+      "Bash(python gen_customers.py)",
+      "Skill(artifact-design)",
+      "Skill(artifact-design:*)"
     ]
   }
 }

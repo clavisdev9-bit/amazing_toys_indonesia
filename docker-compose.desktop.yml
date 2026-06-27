@@ -1,0 +1,33 @@
+# docker-compose.desktop.yml
+#
+# Jalankan BERSAMAAN dengan docker-compose.yml (stack existing tetap hidup).
+# Service ini hanya menambah frontend versi desktop di port 8090.
+# Backend, database, WAHA, integration — semua dari stack existing.
+#
+# Cara menjalankan:
+#   docker compose -f docker-compose.desktop.yml up -d --build
+#
+# Cara menghentikan:
+#   docker compose -f docker-compose.desktop.yml down
+
+services:
+
+  # ── Frontend Desktop (React → Nginx) ────────────────────────────────────────
+  frontend-desktop:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_APP_MODE: desktop
+    container_name: hybrid_frontend_desktop
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_DESKTOP_PORT:-8090}:80"
+    # Bergabung ke network yang sudah ada agar bisa reach backend
+    networks:
+      - hybrid-net
+
+# Gunakan network yang sudah dibuat oleh docker-compose.yml
+networks:
+  hybrid-net:
+    external: true

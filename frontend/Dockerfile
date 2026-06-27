@@ -7,6 +7,9 @@ RUN npm ci
 
 COPY . .
 ENV NODE_ENV=production
+# VITE_APP_MODE: "desktop" untuk versi desktop, kosong untuk mobile (default)
+ARG VITE_APP_MODE=
+ENV VITE_APP_MODE=$VITE_APP_MODE
 RUN npm run build
 
 # ── Serve stage ───────────────────────────────────────────────────────────────

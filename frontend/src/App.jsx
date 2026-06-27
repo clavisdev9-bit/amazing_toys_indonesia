@@ -19,7 +19,10 @@ import RequireAuth from './components/guards/RequireAuth';
 import RequireRole from './components/guards/RequireRole';
 import MaintenanceGuard from './components/guards/MaintenanceGuard';
 import CustomerShell from './components/layout/CustomerShell';
+import CustomerShellDesktop from './components/layout/CustomerShellDesktop';
 import StaffShell from './components/layout/StaffShell';
+
+const IS_DESKTOP = import.meta.env.VITE_APP_MODE === 'desktop';
 
 // Public pages
 import LoginCustomerPage from './pages/customer/LoginCustomerPage';
@@ -32,6 +35,7 @@ import MaintenancePage from './pages/public/MaintenancePage';
 
 // Customer pages
 import BrowsePage from './pages/customer/BrowsePage';
+import BrowsePageDesktop from './pages/customer/BrowsePageDesktop';
 import ProductDetailPage from './pages/customer/ProductDetailPage';
 import MockProductDetailPage from './pages/customer/MockProductDetailPage';
 import ProductCartPage from './pages/customer/ProductCartPage';
@@ -209,13 +213,13 @@ function AppRoutes() {
 
           {/* Customer routes — gated behind order_mode in HELPER_INPUT mode */}
           <Route element={<RequireRole allowedRoles={['CUSTOMER']} />}>
-            <Route element={<CustomerShell />}>
+            <Route element={IS_DESKTOP ? <CustomerShellDesktop /> : <CustomerShell />}>
               {/* Read-only tracking always accessible */}
               <Route path="/pesanan" element={<OrderHistoryPage />} />
               <Route path="/pesanan/:transactionId/confirmed" element={<PaymentConfirmedPage />} />
               <Route path="/pesanan/:transactionId/pickup" element={<PickupStatusPage />} />
               {/* Self-order routes: still present for rollback; backend enforces mode */}
-              <Route path="/katalog" element={<BrowsePage />} />
+              <Route path="/katalog" element={IS_DESKTOP ? <BrowsePageDesktop /> : <BrowsePage />} />
               <Route path="/katalog/:productId" element={<ProductDetailPage />} />
               <Route path="/product/:id" element={<MockProductDetailPage />} />
               <Route path="/product_cart/:id" element={<ProductCartPage />} />
